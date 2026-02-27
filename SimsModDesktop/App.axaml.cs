@@ -4,6 +4,7 @@ using Avalonia.Markup.Xaml;
 using Microsoft.Extensions.DependencyInjection;
 using SimsModDesktop.Application.Cli;
 using SimsModDesktop.Application.Execution;
+using SimsModDesktop.Application.Presets;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Application.Validation;
@@ -47,7 +48,14 @@ public partial class App : Avalonia.Application
 
         services.AddSingleton<ISimsPowerShellRunner, SimsPowerShellRunner>();
         services.AddSingleton<ISimsTrayPreviewService, SimsTrayPreviewService>();
+        services.AddSingleton<IQuickPresetCatalog, QuickPresetCatalog>();
 
+        services.AddSingleton<IActionCliArgumentMapper, OrganizeCliArgumentMapper>();
+        services.AddSingleton<IActionCliArgumentMapper, FlattenCliArgumentMapper>();
+        services.AddSingleton<IActionCliArgumentMapper, NormalizeCliArgumentMapper>();
+        services.AddSingleton<IActionCliArgumentMapper, MergeCliArgumentMapper>();
+        services.AddSingleton<IActionCliArgumentMapper, FindDupCliArgumentMapper>();
+        services.AddSingleton<IActionCliArgumentMapper, TrayDependenciesCliArgumentMapper>();
         services.AddSingleton<ISimsCliArgumentBuilder, SimsCliArgumentBuilder>();
         services.AddSingleton<IActionInputValidator<SharedFileOpsInput>, SharedFileOpsInputValidator>();
         services.AddSingleton<IActionInputValidator<OrganizeInput>, OrganizeInputValidator>();
@@ -57,6 +65,36 @@ public partial class App : Avalonia.Application
         services.AddSingleton<IActionInputValidator<FindDupInput>, FindDupInputValidator>();
         services.AddSingleton<IActionInputValidator<TrayDependenciesInput>, TrayDependenciesInputValidator>();
         services.AddSingleton<IActionInputValidator<TrayPreviewInput>, TrayPreviewInputValidator>();
+        services.AddSingleton<IActionExecutionStrategy>(sp =>
+            new ActionExecutionStrategy<OrganizeInput>(
+                Models.SimsAction.Organize,
+                sp.GetRequiredService<IActionInputValidator<OrganizeInput>>(),
+                sp.GetRequiredService<ISimsCliArgumentBuilder>()));
+        services.AddSingleton<IActionExecutionStrategy>(sp =>
+            new ActionExecutionStrategy<FlattenInput>(
+                Models.SimsAction.Flatten,
+                sp.GetRequiredService<IActionInputValidator<FlattenInput>>(),
+                sp.GetRequiredService<ISimsCliArgumentBuilder>()));
+        services.AddSingleton<IActionExecutionStrategy>(sp =>
+            new ActionExecutionStrategy<NormalizeInput>(
+                Models.SimsAction.Normalize,
+                sp.GetRequiredService<IActionInputValidator<NormalizeInput>>(),
+                sp.GetRequiredService<ISimsCliArgumentBuilder>()));
+        services.AddSingleton<IActionExecutionStrategy>(sp =>
+            new ActionExecutionStrategy<MergeInput>(
+                Models.SimsAction.Merge,
+                sp.GetRequiredService<IActionInputValidator<MergeInput>>(),
+                sp.GetRequiredService<ISimsCliArgumentBuilder>()));
+        services.AddSingleton<IActionExecutionStrategy>(sp =>
+            new ActionExecutionStrategy<FindDupInput>(
+                Models.SimsAction.FindDuplicates,
+                sp.GetRequiredService<IActionInputValidator<FindDupInput>>(),
+                sp.GetRequiredService<ISimsCliArgumentBuilder>()));
+        services.AddSingleton<IActionExecutionStrategy>(sp =>
+            new ActionExecutionStrategy<TrayDependenciesInput>(
+                Models.SimsAction.TrayDependencies,
+                sp.GetRequiredService<IActionInputValidator<TrayDependenciesInput>>(),
+                sp.GetRequiredService<ISimsCliArgumentBuilder>()));
 
         services.AddSingleton<IExecutionCoordinator, ExecutionCoordinator>();
         services.AddSingleton<ITrayPreviewCoordinator, TrayPreviewCoordinator>();

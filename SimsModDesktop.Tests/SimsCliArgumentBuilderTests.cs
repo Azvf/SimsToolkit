@@ -8,7 +8,7 @@ public sealed class SimsCliArgumentBuilderTests
     [Fact]
     public void Build_MergeInput_MapsExpectedArgumentsInOrder()
     {
-        var builder = new SimsCliArgumentBuilder();
+        var builder = CreateBuilder();
         var input = new MergeInput
         {
             ScriptPath = "C:\\tools\\sims-mod-cli.ps1",
@@ -43,5 +43,18 @@ public sealed class SimsCliArgumentBuilderTests
         Assert.Contains("-HashWorkerCount", command.Arguments);
         Assert.Contains("8", command.Arguments);
         Assert.Contains("-WhatIf", command.Arguments);
+    }
+
+    private static SimsCliArgumentBuilder CreateBuilder()
+    {
+        return new SimsCliArgumentBuilder(new IActionCliArgumentMapper[]
+        {
+            new OrganizeCliArgumentMapper(),
+            new FlattenCliArgumentMapper(),
+            new NormalizeCliArgumentMapper(),
+            new MergeCliArgumentMapper(),
+            new FindDupCliArgumentMapper(),
+            new TrayDependenciesCliArgumentMapper()
+        });
     }
 }

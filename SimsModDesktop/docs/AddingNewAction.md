@@ -1,20 +1,24 @@
 # Adding a New Action
 
-This project now follows a fixed workflow for adding actions.
+This project now follows a module-registry workflow for adding actions.
 
 ## Required touch points
 1. Add a new action input model in `Application/Requests`.
 2. Add a validator in `Application/Validation` and register it in `App.axaml.cs` DI.
-3. Add CLI mapping in `Application/Cli/SimsCliArgumentBuilder.cs`.
-4. Add panel UI + panel ViewModel and wire it into `MainWindowViewModel` + `MainWindow.axaml`.
+3. Add a CLI mapper in `Application/Cli/*CliArgumentMapper.cs` and register it in `App.axaml.cs` DI.
+4. Register an execution strategy (`ActionExecutionStrategy<TInput>`) for the action in `App.axaml.cs`.
+5. Add an action module in `Application/Modules` and register it in `MainWindowViewModel` module registry bootstrap.
+6. Add panel UI + panel ViewModel and bind through the module implementation.
 
 ## Optional touch points
-- Add tray-preview style paging logic only if the action is client-side preview.
+- Add client-only execution plan (`ModuleExecutionKind.Client`) if the action is not CLI-backed.
 - Add settings fields to `Models/AppSettings.cs` when persistence is needed.
+- Add preset patch support in module `TryApplyActionPatch` for quick templates.
 
 ## Required tests
 - Validator test: required fields, path checks, range checks.
-- CLI mapping test: switches/arguments for the new action.
+- CLI mapping test: switches/arguments for the new action mapper.
+- Module plan test: `TryBuildPlan` success/failure paths.
 - If output parsing logic is touched, add parser tests.
 
 ## Acceptance checklist

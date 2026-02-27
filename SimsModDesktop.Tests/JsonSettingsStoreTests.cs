@@ -17,6 +17,7 @@ public sealed class JsonSettingsStoreTests
             var settings = new AppSettings
             {
                 ScriptPath = "C:\\tools\\sims-mod-cli.ps1",
+                SelectedWorkspace = AppWorkspace.TrayPreview,
                 SelectedAction = SimsAction.FindDuplicates,
                 WhatIf = true
             };
@@ -25,6 +26,7 @@ public sealed class JsonSettingsStoreTests
             var loaded = await store.LoadAsync();
 
             Assert.Equal(settings.ScriptPath, loaded.ScriptPath);
+            Assert.Equal(settings.SelectedWorkspace, loaded.SelectedWorkspace);
             Assert.Equal(settings.SelectedAction, loaded.SelectedAction);
             Assert.True(loaded.WhatIf);
         }

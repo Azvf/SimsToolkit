@@ -1,25 +1,60 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:SimsModDesktop.ViewModels"
+             xmlns:panelVm="clr-namespace:SimsModDesktop.ViewModels.Panels"
              x:Class="SimsModDesktop.Views.Panels.MergePanelView"
              x:DataType="vm:MainWindowViewModel">
     <Border Padding="10" BorderBrush="#24313B" BorderThickness="1" CornerRadius="6" IsVisible="{Binding IsMergeVisible}">
         <StackPanel Spacing="10">
-            <TextBlock FontWeight="SemiBold" Text="merge" />
-            <Grid ColumnDefinitions="180,*,Auto" RowDefinitions="Auto,Auto" RowSpacing="8" ColumnSpacing="8">
-                <TextBlock Grid.Row="0" VerticalAlignment="Top" Text="MergeSourcePaths" />
-                <TextBox Grid.Row="0"
-                         Grid.Column="1"
-                         MinHeight="84"
-                         AcceptsReturn="True"
-                         TextWrapping="Wrap"
-                         Watermark="One path per line (or comma/semicolon separated)"
-                         Text="{Binding Merge.SourcePathsText}" />
-                <Button Grid.Row="0" Grid.Column="2" VerticalAlignment="Top" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="MergeSourcePaths" />
+            <StackPanel Spacing="2">
+                <TextBlock FontWeight="SemiBold" FontSize="15" Text="merge" />
+                <TextBlock Foreground="#9EB0BD" FontSize="12" Text="Add one source folder per row. Use + and - to manage rows quickly." />
+            </StackPanel>
 
-                <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="MergeTargetPath" />
-                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Merge.TargetPath}" />
-                <Button Grid.Row="1" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="MergeTargetPath" />
+            <Border BorderBrush="#3B4A55" BorderThickness="1" CornerRadius="6" Padding="10">
+                <StackPanel Spacing="8">
+                    <TextBlock FontWeight="SemiBold" Text="MergeSourcePaths" />
+                    <ScrollViewer MaxHeight="220"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding Merge.SourcePaths}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="panelVm:MergeSourcePathEntryViewModel">
+                                    <Grid Margin="0,0,0,8" ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
+                                        <TextBox Grid.Column="0"
+                                                 Text="{Binding Path}"
+                                                 Watermark="Select source folder path" />
+                                        <Button Grid.Column="1"
+                                                MinWidth="82"
+                                                Content="Browse"
+                                                Command="{Binding $parent[UserControl].DataContext.BrowseMergeSourcePathCommand}"
+                                                CommandParameter="{Binding}" />
+                                        <Button Grid.Column="2"
+                                                Width="32"
+                                                Height="32"
+                                                FontWeight="Bold"
+                                                Content="+"
+                                                Command="{Binding $parent[UserControl].DataContext.AddMergeSourcePathCommand}"
+                                                CommandParameter="{Binding}" />
+                                        <Button Grid.Column="3"
+                                                Width="32"
+                                                Height="32"
+                                                FontWeight="Bold"
+                                                Content="-"
+                                                Command="{Binding $parent[UserControl].DataContext.RemoveMergeSourcePathCommand}"
+                                                CommandParameter="{Binding}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </StackPanel>
+            </Border>
+
+            <Grid ColumnDefinitions="180,*,Auto" RowDefinitions="Auto" RowSpacing="8" ColumnSpacing="8">
+                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="MergeTargetPath" />
+                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding Merge.TargetPath}" />
+                <Button Grid.Row="0" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="MergeTargetPath" />
             </Grid>
         </StackPanel>
     </Border>

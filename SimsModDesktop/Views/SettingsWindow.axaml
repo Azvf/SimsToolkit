@@ -1,0 +1,54 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:SimsModDesktop.ViewModels"
+        mc:Ignorable="d"
+        x:Class="SimsModDesktop.Views.SettingsWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="Option Settings"
+        Width="760"
+        Height="420"
+        MinWidth="700"
+        MinHeight="360"
+        WindowStartupLocation="CenterOwner"
+        CanResize="True">
+    <Border Margin="16" Padding="12" BorderBrush="#2F3E4A" BorderThickness="1" CornerRadius="8">
+        <StackPanel Spacing="12">
+            <TextBlock FontSize="16" FontWeight="SemiBold" Text="Shared Options (Flatten / Merge / FindDup)" />
+            <TextBlock Foreground="#9EB0BD" Text="These options are global and applied when running Flatten, Merge and FindDuplicates." />
+
+            <Grid ColumnDefinitions="220,*"
+                  RowDefinitions="Auto,Auto,Auto,Auto,Auto"
+                  RowSpacing="8"
+                  ColumnSpacing="8">
+                <CheckBox Grid.Row="0" Grid.Column="1" Content="SkipPruneEmptyDirs" IsChecked="{Binding SharedFileOps.SkipPruneEmptyDirs}" />
+                <CheckBox Grid.Row="1" Grid.Column="1" Content="ModFilesOnly" IsChecked="{Binding SharedFileOps.ModFilesOnly}" />
+                <CheckBox Grid.Row="2" Grid.Column="1" Content="VerifyContentOnNameConflict" IsChecked="{Binding SharedFileOps.VerifyContentOnNameConflict}" />
+
+                <TextBlock Grid.Row="3" VerticalAlignment="Center" Text="ModExtensions" />
+                <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding SharedFileOps.ModExtensionsText}" />
+
+                <Grid Grid.Row="4" Grid.ColumnSpan="2" ColumnDefinitions="220,*,220,*" ColumnSpacing="8">
+                    <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="PrefixHashBytes" />
+                    <TextBox Grid.Column="1" Text="{Binding SharedFileOps.PrefixHashBytesText}" />
+
+                    <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="HashWorkerCount" />
+                    <TextBox Grid.Column="3" Text="{Binding SharedFileOps.HashWorkerCountText}" />
+                </Grid>
+            </Grid>
+
+            <Border BorderBrush="#3B4A55" BorderThickness="1" CornerRadius="6" Padding="10">
+                <StackPanel Spacing="8">
+                    <TextBlock FontWeight="SemiBold" Text="Quick Presets" />
+                    <TextBlock Foreground="#9EB0BD" Text="Preset templates are loaded from built-in defaults and %LocalAppData%\\SimsModDesktop\\quick-presets.json." />
+                    <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="8">
+                        <Button Content="Reload Presets" Command="{Binding ReloadQuickPresetsCommand}" />
+                        <Button Grid.Column="1" Content="Open Preset Folder" Command="{Binding OpenQuickPresetFolderCommand}" />
+                        <TextBlock Grid.Column="2" VerticalAlignment="Center" Foreground="#9EB0BD" Text="{Binding QuickPresetStatusText}" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </Border>
+</Window>

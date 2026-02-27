@@ -12,25 +12,6 @@ public sealed class AvaloniaFileDialogService : IFileDialogService
         _windowHostService = windowHostService;
     }
 
-    public async Task<string?> PickScriptPathAsync()
-    {
-        var storageProvider = GetStorageProviderOrThrow();
-        var files = await storageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title = "Select sims-mod-cli.ps1",
-            AllowMultiple = false,
-            FileTypeFilter = new[]
-            {
-                new FilePickerFileType("PowerShell script")
-                {
-                    Patterns = new[] { "*.ps1" }
-                }
-            }
-        });
-
-        return files.Count == 0 ? null : files[0].TryGetLocalPath();
-    }
-
     public async Task<IReadOnlyList<string>> PickFolderPathsAsync(string title, bool allowMultiple)
     {
         var storageProvider = GetStorageProviderOrThrow();

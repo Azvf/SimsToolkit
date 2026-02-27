@@ -3,6 +3,7 @@ namespace SimsModDesktop.Models;
 public sealed class AppSettings
 {
     public string ScriptPath { get; set; } = string.Empty;
+    public AppWorkspace SelectedWorkspace { get; set; } = AppWorkspace.Toolkit;
     public SimsAction SelectedAction { get; set; } = SimsAction.Organize;
     public bool WhatIf { get; set; }
     public OrganizeSettings Organize { get; set; } = new();
@@ -13,6 +14,7 @@ public sealed class AppSettings
     public TrayDependenciesSettings TrayDependencies { get; set; } = new();
     public TrayPreviewSettings TrayPreview { get; set; } = new();
     public SharedFileOpsSettings SharedFileOps { get; set; } = new();
+    public QuickPresetSettings QuickPresets { get; set; } = new();
 
     public sealed class OrganizeSettings
     {
@@ -83,5 +85,11 @@ public sealed class AppSettings
         public string ModExtensionsText { get; set; } = ".package,.ts4script";
         public string PrefixHashBytesText { get; set; } = "102400";
         public string HashWorkerCountText { get; set; } = "8";
+    }
+
+    public sealed class QuickPresetSettings
+    {
+        public bool EnableExternalModules { get; set; }
+        public string LastPresetId { get; set; } = string.Empty;
     }
 }

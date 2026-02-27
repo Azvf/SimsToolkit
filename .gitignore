@@ -30,3 +30,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Local temporary build outputs
+build_tmp/
+**/build_tmp/

@@ -3,6 +3,8 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using Avalonia.Threading;
 using SimsModDesktop.Application.Execution;
+using SimsModDesktop.Application.Modules;
+using SimsModDesktop.Application.Presets;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Application.Validation;
@@ -20,11 +22,15 @@ public sealed class MainWindowViewModel : ObservableObject
     private readonly ITrayPreviewCoordinator _trayPreviewCoordinator;
     private readonly IFileDialogService _fileDialogService;
     private readonly ISettingsStore _settingsStore;
+    private readonly IActionModuleRegistry _moduleRegistry;
+    private readonly IQuickPresetCatalog _quickPresetCatalog;
+    private readonly IQuickPresetApplier _quickPresetApplier;
 
     private readonly StringWriter _logWriter = new();
     private CancellationTokenSource? _executionCts;
     private bool _isTrayPreviewPageLoading;
     private bool _isBusy;
+    private AppWorkspace _workspace = AppWorkspace.Toolkit;
     private SimsAction _selectedAction = SimsAction.Organize;
     private string _scriptPath = string.Empty;
     private bool _whatIf;
@@ -33,7 +39,6 @@ public sealed class MainWindowViewModel : ObservableObject
     private int _progressValue;
     private string _progressMessage = "Idle";
     private string _logText = string.Empty;
-    private int _outputTabIndex;
     private int _trayPreviewCurrentPage = 1;
     private int _trayPreviewTotalPages = 1;
     private string _previewSummaryText = "No preview data loaded.";
@@ -43,34 +48,69 @@ public sealed class MainWindowViewModel : ObservableObject
     private string _previewDashboardLatestWrite = "-";
     private string _previewPageText = "Page 0/0";
     private string _previewLazyLoadText = "Lazy cache 0/0 pages";
+    private string _quickPresetStatusText = "Preset templates not loaded.";
+    private AppSettings.QuickPresetSettings _quickPresetSettings = new();
     private bool _isInitialized;
 
     public MainWindowViewModel(
         IExecutionCoordinator executionCoordinator,
         ITrayPreviewCoordinator trayPreviewCoordinator,
         IFileDialogService fileDialogService,
-        ISettingsStore settingsStore)
+        ISettingsStore settingsStore,
+        IQuickPresetCatalog quickPresetCatalog)
     {
         _executionCoordinator = executionCoordinator;
         _trayPreviewCoordinator = trayPreviewCoordinator;
         _fileDialogService = fileDialogService;
         _settingsStore = settingsStore;
+        _quickPresetCatalog = quickPresetCatalog;
 
         Organize = new OrganizePanelViewModel();
         Flatten = new FlattenPanelViewModel();
         Normalize = new NormalizePanelViewModel();
         Merge = new MergePanelViewModel();
+        Merge.SourcePaths.CollectionChanged += (_, _) => NotifyCommandStates();
         FindDup = new FindDupPanelViewModel();
         TrayDependencies = new TrayDependenciesPanelViewModel();
         TrayPreview = new TrayPreviewPanelViewModel();
         SharedFileOps = new SharedFileOpsPanelViewModel();
         PreviewItems = new ObservableCollection<SimsTrayPreviewItem>();
-        AvailableActions = Enum.GetValues<SimsAction>();
+        QuickPresets = new ObservableCollection<QuickPresetDefinition>();
 
-        BrowseScriptPathCommand = new AsyncRelayCommand(BrowseScriptPathAsync, () => !IsBusy);
+        _moduleRegistry = new ActionModuleRegistry(new IActionModule[]
+        {
+            new OrganizeActionModule(Organize),
+            new FlattenActionModule(Flatten),
+            new NormalizeActionModule(Normalize),
+            new MergeActionModule(Merge),
+            new FindDupActionModule(FindDup),
+            new TrayDependenciesActionModule(TrayDependencies),
+            new TrayPreviewActionModule(TrayPreview)
+        });
+        _quickPresetApplier = new QuickPresetApplier(_moduleRegistry, SharedFileOps);
+
+        AvailableToolkitActions = Enum.GetValues<SimsAction>()
+            .Where(action => action != SimsAction.TrayPreview)
+            .ToArray();
+
         BrowseFolderCommand = new AsyncRelayCommand<string>(BrowseFolderAsync, _ => !IsBusy);
         BrowseCsvPathCommand = new AsyncRelayCommand<string>(BrowseCsvPathAsync, _ => !IsBusy);
-        RunCommand = new AsyncRelayCommand(RunAsync, () => !IsBusy);
+        SwitchToToolkitWorkspaceCommand = new RelayCommand(
+            () => Workspace = AppWorkspace.Toolkit,
+            () => !IsBusy && Workspace != AppWorkspace.Toolkit);
+        SwitchToTrayPreviewWorkspaceCommand = new RelayCommand(
+            () => Workspace = AppWorkspace.TrayPreview,
+            () => !IsBusy && Workspace != AppWorkspace.TrayPreview);
+        AddMergeSourcePathCommand = new RelayCommand<MergeSourcePathEntryViewModel>(AddMergeSourcePath, _ => !IsBusy);
+        BrowseMergeSourcePathCommand = new AsyncRelayCommand<MergeSourcePathEntryViewModel>(BrowseMergeSourcePathAsync, _ => !IsBusy);
+        RemoveMergeSourcePathCommand = new RelayCommand<MergeSourcePathEntryViewModel>(
+            RemoveMergeSourcePath,
+            _ => !IsBusy && Merge.SourcePaths.Count > 1);
+        RunCommand = new AsyncRelayCommand(RunToolkitAsync, () => !IsBusy && IsToolkitWorkspace);
+        RunTrayPreviewCommand = new AsyncRelayCommand(() => RunTrayPreviewAsync(), () => !IsBusy && IsTrayPreviewWorkspace);
+        RunQuickPresetCommand = new AsyncRelayCommand<QuickPresetDefinition>(RunQuickPresetAsync, preset => !IsBusy && preset is not null);
+        ReloadQuickPresetsCommand = new AsyncRelayCommand(ReloadQuickPresetsAsync, () => !IsBusy);
+        OpenQuickPresetFolderCommand = new RelayCommand(OpenQuickPresetFolder, () => !IsBusy);
         CancelCommand = new RelayCommand(CancelExecution, () => IsBusy);
         PreviewPrevPageCommand = new AsyncRelayCommand(LoadPreviousTrayPreviewPageAsync, () => CanGoPrevPage);
         PreviewNextPageCommand = new AsyncRelayCommand(LoadNextTrayPreviewPageAsync, () => CanGoNextPage);
@@ -85,16 +125,47 @@ public sealed class MainWindowViewModel : ObservableObject
     public TrayPreviewPanelViewModel TrayPreview { get; }
     public SharedFileOpsPanelViewModel SharedFileOps { get; }
     public ObservableCollection<SimsTrayPreviewItem> PreviewItems { get; }
+    public ObservableCollection<QuickPresetDefinition> QuickPresets { get; }
 
-    public IReadOnlyList<SimsAction> AvailableActions { get; }
+    public IReadOnlyList<SimsAction> AvailableToolkitActions { get; }
 
-    public AsyncRelayCommand BrowseScriptPathCommand { get; }
     public AsyncRelayCommand<string> BrowseFolderCommand { get; }
     public AsyncRelayCommand<string> BrowseCsvPathCommand { get; }
+    public RelayCommand SwitchToToolkitWorkspaceCommand { get; }
+    public RelayCommand SwitchToTrayPreviewWorkspaceCommand { get; }
+    public RelayCommand<MergeSourcePathEntryViewModel> AddMergeSourcePathCommand { get; }
+    public AsyncRelayCommand<MergeSourcePathEntryViewModel> BrowseMergeSourcePathCommand { get; }
+    public RelayCommand<MergeSourcePathEntryViewModel> RemoveMergeSourcePathCommand { get; }
     public AsyncRelayCommand RunCommand { get; }
+    public AsyncRelayCommand RunTrayPreviewCommand { get; }
+    public AsyncRelayCommand<QuickPresetDefinition> RunQuickPresetCommand { get; }
+    public AsyncRelayCommand ReloadQuickPresetsCommand { get; }
+    public RelayCommand OpenQuickPresetFolderCommand { get; }
     public RelayCommand CancelCommand { get; }
     public AsyncRelayCommand PreviewPrevPageCommand { get; }
     public AsyncRelayCommand PreviewNextPageCommand { get; }
+
+    public AppWorkspace Workspace
+    {
+        get => _workspace;
+        set
+        {
+            if (!SetProperty(ref _workspace, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(IsToolkitWorkspace));
+            OnPropertyChanged(nameof(IsTrayPreviewWorkspace));
+            StatusMessage = "Ready.";
+            NotifyCommandStates();
+
+            if (_isInitialized && value == AppWorkspace.TrayPreview)
+            {
+                _ = TryAutoLoadTrayPreviewAsync();
+            }
+        }
+    }
 
     public SimsAction SelectedAction
     {
@@ -112,15 +183,7 @@ public sealed class MainWindowViewModel : ObservableObject
             OnPropertyChanged(nameof(IsMergeVisible));
             OnPropertyChanged(nameof(IsFindDupVisible));
             OnPropertyChanged(nameof(IsTrayDependenciesVisible));
-            OnPropertyChanged(nameof(IsTrayPreviewVisible));
-            OnPropertyChanged(nameof(IsSharedFileOpsVisible));
-            OutputTabIndex = value == SimsAction.TrayPreview ? 1 : 0;
             StatusMessage = "Ready.";
-
-            if (value == SimsAction.TrayPreview)
-            {
-                _ = TryAutoLoadTrayPreviewAsync();
-            }
         }
     }
 
@@ -180,12 +243,6 @@ public sealed class MainWindowViewModel : ObservableObject
         private set => SetProperty(ref _logText, value);
     }
 
-    public int OutputTabIndex
-    {
-        get => _outputTabIndex;
-        set => SetProperty(ref _outputTabIndex, value);
-    }
-
     public string PreviewSummaryText
     {
         get => _previewSummaryText;
@@ -228,17 +285,20 @@ public sealed class MainWindowViewModel : ObservableObject
         private set => SetProperty(ref _previewLazyLoadText, value);
     }
 
+    public string QuickPresetStatusText
+    {
+        get => _quickPresetStatusText;
+        private set => SetProperty(ref _quickPresetStatusText, value);
+    }
+
     public bool IsOrganizeVisible => SelectedAction == SimsAction.Organize;
     public bool IsFlattenVisible => SelectedAction == SimsAction.Flatten;
     public bool IsNormalizeVisible => SelectedAction == SimsAction.Normalize;
     public bool IsMergeVisible => SelectedAction == SimsAction.Merge;
     public bool IsFindDupVisible => SelectedAction == SimsAction.FindDuplicates;
     public bool IsTrayDependenciesVisible => SelectedAction == SimsAction.TrayDependencies;
-    public bool IsTrayPreviewVisible => SelectedAction == SimsAction.TrayPreview;
-    public bool IsSharedFileOpsVisible =>
-        SelectedAction == SimsAction.Flatten ||
-        SelectedAction == SimsAction.Merge ||
-        SelectedAction == SimsAction.FindDuplicates;
+    public bool IsToolkitWorkspace => Workspace == AppWorkspace.Toolkit;
+    public bool IsTrayPreviewWorkspace => Workspace == AppWorkspace.TrayPreview;
 
     public bool CanGoPrevPage => !IsBusy && !_isTrayPreviewPageLoading && _trayPreviewCurrentPage > 1;
     public bool CanGoNextPage => !IsBusy && !_isTrayPreviewPageLoading && _trayPreviewCurrentPage < _trayPreviewTotalPages;
@@ -252,19 +312,25 @@ public sealed class MainWindowViewModel : ObservableObject
 
         var settings = await _settingsStore.LoadAsync();
         ApplySettings(settings);
+        await ReloadQuickPresetsAsync();
 
-        if (string.IsNullOrWhiteSpace(ScriptPath))
+        ScriptPath = ResolveFixedScriptPath();
+        if (!File.Exists(ScriptPath))
         {
-            var defaultScriptPath = TryFindScriptPath();
-            if (!string.IsNullOrWhiteSpace(defaultScriptPath))
-            {
-                ScriptPath = defaultScriptPath;
-            }
+            StatusMessage = $"Script not found: {ScriptPath}";
         }
 
         ClearTrayPreview();
-        StatusMessage = "Ready.";
+        if (File.Exists(ScriptPath))
+        {
+            StatusMessage = "Ready.";
+        }
         _isInitialized = true;
+
+        if (Workspace == AppWorkspace.TrayPreview)
+        {
+            _ = TryAutoLoadTrayPreviewAsync();
+        }
     }
 
     public async Task PersistSettingsAsync()
@@ -275,25 +341,23 @@ public sealed class MainWindowViewModel : ObservableObject
 
     private void NotifyCommandStates()
     {
-        BrowseScriptPathCommand.NotifyCanExecuteChanged();
         BrowseFolderCommand.NotifyCanExecuteChanged();
         BrowseCsvPathCommand.NotifyCanExecuteChanged();
+        SwitchToToolkitWorkspaceCommand.NotifyCanExecuteChanged();
+        SwitchToTrayPreviewWorkspaceCommand.NotifyCanExecuteChanged();
+        AddMergeSourcePathCommand.NotifyCanExecuteChanged();
+        BrowseMergeSourcePathCommand.NotifyCanExecuteChanged();
+        RemoveMergeSourcePathCommand.NotifyCanExecuteChanged();
         RunCommand.NotifyCanExecuteChanged();
+        RunTrayPreviewCommand.NotifyCanExecuteChanged();
+        RunQuickPresetCommand.NotifyCanExecuteChanged();
+        ReloadQuickPresetsCommand.NotifyCanExecuteChanged();
+        OpenQuickPresetFolderCommand.NotifyCanExecuteChanged();
         CancelCommand.NotifyCanExecuteChanged();
         PreviewPrevPageCommand.NotifyCanExecuteChanged();
         PreviewNextPageCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(CanGoPrevPage));
         OnPropertyChanged(nameof(CanGoNextPage));
-    }
-
-    private async Task BrowseScriptPathAsync()
-    {
-        var path = await _fileDialogService.PickScriptPathAsync();
-        if (!string.IsNullOrWhiteSpace(path))
-        {
-            ScriptPath = path;
-            StatusMessage = "Script path updated.";
-        }
     }
 
     private async Task BrowseFolderAsync(string? target)
@@ -319,9 +383,6 @@ public sealed class MainWindowViewModel : ObservableObject
                 break;
             case "NormalizeRootPath":
                 await BrowseSingleFolderAsync("Select NormalizeRootPath", path => Normalize.RootPath = path);
-                break;
-            case "MergeSourcePaths":
-                await BrowseMergeSourcePathsAsync();
                 break;
             case "MergeTargetPath":
                 await BrowseSingleFolderAsync("Select MergeTargetPath", path => Merge.TargetPath = path);
@@ -370,26 +431,132 @@ public sealed class MainWindowViewModel : ObservableObject
         }
     }
 
-    private async Task BrowseMergeSourcePathsAsync()
+    private void AddMergeSourcePath(MergeSourcePathEntryViewModel? anchorEntry)
     {
-        var selectedPaths = await _fileDialogService.PickFolderPathsAsync("Select MergeSourcePaths", allowMultiple: true);
+        Merge.AddSourcePathAfter(anchorEntry);
+    }
+
+    private async Task BrowseMergeSourcePathAsync(MergeSourcePathEntryViewModel? entry)
+    {
+        if (entry is null)
+        {
+            return;
+        }
+
+        var selectedPaths = await _fileDialogService.PickFolderPathsAsync("Select Merge SourcePath", allowMultiple: false);
         if (selectedPaths.Count == 0)
         {
             return;
         }
 
-        var merged = ParsePathList(Merge.SourcePathsText);
-        foreach (var path in selectedPaths)
+        entry.Path = selectedPaths[0];
+    }
+
+    private void RemoveMergeSourcePath(MergeSourcePathEntryViewModel? entry)
+    {
+        Merge.RemoveSourcePath(entry);
+    }
+
+    private async Task ReloadQuickPresetsAsync()
+    {
+        await _quickPresetCatalog.ReloadAsync();
+
+        ExecuteOnUi(() =>
         {
-            if (!merged.Contains(path, StringComparer.OrdinalIgnoreCase))
+            QuickPresets.Clear();
+            foreach (var preset in _quickPresetCatalog.GetAll())
             {
-                merged.Add(path);
+                QuickPresets.Add(preset);
             }
+
+            if (QuickPresets.Count == 0)
+            {
+                QuickPresetStatusText = "No quick presets found.";
+            }
+            else
+            {
+                QuickPresetStatusText = $"Loaded {QuickPresets.Count} preset(s).";
+            }
+        });
+
+        var warnings = _quickPresetCatalog.LastWarnings;
+        foreach (var warning in warnings)
+        {
+            AppendLog("[preset] " + warning);
+        }
+    }
+
+    private async Task RunQuickPresetAsync(QuickPresetDefinition? preset)
+    {
+        if (preset is null)
+        {
+            return;
         }
 
-        Merge.SourcePathsText = string.Join(Environment.NewLine, merged);
+        if (!_quickPresetApplier.TryApply(preset, out var error))
+        {
+            StatusMessage = "Quick preset apply failed.";
+            AppendLog("[preset-error] " + error);
+            return;
+        }
+
+        if (preset.Action == SimsAction.TrayPreview)
+        {
+            Workspace = AppWorkspace.TrayPreview;
+        }
+        else
+        {
+            Workspace = AppWorkspace.Toolkit;
+            SelectedAction = preset.Action;
+        }
+
+        QuickPresetStatusText = $"Applied preset: {preset.Name}";
+        _quickPresetSettings.LastPresetId = preset.Id;
+        AppendLog($"[preset] applied {preset.Id} ({preset.Name})");
+
+        if (!preset.AutoRun)
+        {
+            StatusMessage = $"Preset applied: {preset.Name}";
+            return;
+        }
+
+        if (preset.Action == SimsAction.TrayPreview)
+        {
+            await RunTrayPreviewAsync();
+            return;
+        }
+
+        await RunToolkitAsync();
     }
-    private async Task RunAsync()
+
+    private void OpenQuickPresetFolder()
+    {
+        var directory = _quickPresetCatalog.UserPresetDirectory;
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            StatusMessage = "Preset folder is unavailable.";
+            return;
+        }
+
+        Directory.CreateDirectory(directory);
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = directory,
+                UseShellExecute = true
+            });
+            StatusMessage = $"Preset folder opened: {directory}";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = "Failed to open preset folder.";
+            AppendLog("[preset-error] " + ex.Message);
+        }
+    }
+
+    private async Task RunToolkitAsync()
     {
         if (_executionCts is not null)
         {
@@ -397,18 +564,29 @@ public sealed class MainWindowViewModel : ObservableObject
             return;
         }
 
-        if (SelectedAction == SimsAction.TrayPreview)
-        {
-            await RunTrayPreviewAsync();
-            return;
-        }
-
-        if (!TryBuildExecutionInput(out var input, out var error))
+        var module = _moduleRegistry.Get(SelectedAction);
+        if (!TryBuildGlobalExecutionOptions(requireScriptPath: true, includeShared: module.UsesSharedFileOps, out var options, out var error))
         {
             StatusMessage = error;
             AppendLog("[validation] " + error);
             return;
         }
+
+        if (!module.TryBuildPlan(options, out var plan, out error))
+        {
+            StatusMessage = error;
+            AppendLog("[validation] " + error);
+            return;
+        }
+
+        if (plan is not CliExecutionPlan cliPlan)
+        {
+            StatusMessage = $"Action {SelectedAction} is not a CLI action.";
+            AppendLog("[validation] " + StatusMessage);
+            return;
+        }
+
+        var input = cliPlan.Input;
 
         _executionCts = new CancellationTokenSource();
         var startedAt = DateTimeOffset.Now;
@@ -585,7 +763,7 @@ public sealed class MainWindowViewModel : ObservableObject
 
     private async Task TryAutoLoadTrayPreviewAsync()
     {
-        if (SelectedAction != SimsAction.TrayPreview || IsBusy || _isTrayPreviewPageLoading)
+        if (!IsTrayPreviewWorkspace || IsBusy || _isTrayPreviewPageLoading)
         {
             return;
         }
@@ -628,155 +806,66 @@ public sealed class MainWindowViewModel : ObservableObject
             // Ignore cancellation race when operation has already completed.
         }
     }
-    private bool TryBuildExecutionInput(out ISimsExecutionInput input, out string error)
+
+    private bool TryBuildGlobalExecutionOptions(
+        bool requireScriptPath,
+        bool includeShared,
+        out GlobalExecutionOptions options,
+        out string error)
     {
-        input = null!;
+        options = null!;
         error = string.Empty;
 
         var scriptPath = ScriptPath.Trim();
-        if (string.IsNullOrWhiteSpace(scriptPath))
+        if (requireScriptPath && string.IsNullOrWhiteSpace(scriptPath))
         {
             error = "Script path is required.";
             return false;
         }
 
-        if (!TryBuildSharedFileOpsInput(out var shared, out error))
+        SharedFileOpsInput shared;
+        if (includeShared)
         {
-            return false;
-        }
-
-        switch (SelectedAction)
-        {
-            case SimsAction.Organize:
-                input = new OrganizeInput
-                {
-                    ScriptPath = Path.GetFullPath(scriptPath),
-                    WhatIf = WhatIf,
-                    SourceDir = ToNullIfWhiteSpace(Organize.SourceDir),
-                    ZipNamePattern = ToNullIfWhiteSpace(Organize.ZipNamePattern),
-                    ModsRoot = ToNullIfWhiteSpace(Organize.ModsRoot),
-                    UnifiedModsFolder = ToNullIfWhiteSpace(Organize.UnifiedModsFolder),
-                    TrayRoot = ToNullIfWhiteSpace(Organize.TrayRoot),
-                    KeepZip = Organize.KeepZip
-                };
-                return true;
-
-            case SimsAction.Flatten:
-                input = new FlattenInput
-                {
-                    ScriptPath = Path.GetFullPath(scriptPath),
-                    WhatIf = WhatIf,
-                    FlattenRootPath = ToNullIfWhiteSpace(Flatten.RootPath),
-                    FlattenToRoot = Flatten.FlattenToRoot,
-                    Shared = shared
-                };
-                return true;
-
-            case SimsAction.Normalize:
-                input = new NormalizeInput
-                {
-                    ScriptPath = Path.GetFullPath(scriptPath),
-                    WhatIf = WhatIf,
-                    NormalizeRootPath = ToNullIfWhiteSpace(Normalize.RootPath)
-                };
-                return true;
-
-            case SimsAction.Merge:
-                input = new MergeInput
-                {
-                    ScriptPath = Path.GetFullPath(scriptPath),
-                    WhatIf = WhatIf,
-                    MergeSourcePaths = InputParsing.ParseDelimitedList(Merge.SourcePathsText),
-                    MergeTargetPath = ToNullIfWhiteSpace(Merge.TargetPath),
-                    Shared = shared
-                };
-                return true;
-
-            case SimsAction.FindDuplicates:
-                input = new FindDupInput
-                {
-                    ScriptPath = Path.GetFullPath(scriptPath),
-                    WhatIf = WhatIf,
-                    FindDupRootPath = ToNullIfWhiteSpace(FindDup.RootPath),
-                    FindDupOutputCsv = ToNullIfWhiteSpace(FindDup.OutputCsv),
-                    FindDupRecurse = FindDup.Recurse,
-                    FindDupCleanup = FindDup.Cleanup,
-                    Shared = shared
-                };
-                return true;
-
-            case SimsAction.TrayDependencies:
-                if (!InputParsing.TryParseOptionalInt(TrayDependencies.MinMatchCountText, 1, 1000, out var minMatchCount, out error))
-                {
-                    return false;
-                }
-
-                if (!InputParsing.TryParseOptionalInt(TrayDependencies.TopNText, 1, 10000, out var topN, out error))
-                {
-                    return false;
-                }
-
-                if (!InputParsing.TryParseOptionalInt(TrayDependencies.MaxPackageCountText, 0, 1000000, out var maxPackageCount, out error))
-                {
-                    return false;
-                }
-
-                input = new TrayDependenciesInput
-                {
-                    ScriptPath = Path.GetFullPath(scriptPath),
-                    WhatIf = WhatIf,
-                    TrayPath = ToNullIfWhiteSpace(TrayDependencies.TrayPath),
-                    ModsPath = ToNullIfWhiteSpace(TrayDependencies.ModsPath),
-                    TrayItemKey = ToNullIfWhiteSpace(TrayDependencies.TrayItemKey),
-                    AnalysisMode = ToNullIfWhiteSpace(TrayDependencies.AnalysisMode) ?? "StrictS4TI",
-                    S4tiPath = ToNullIfWhiteSpace(TrayDependencies.S4tiPath),
-                    MinMatchCount = minMatchCount,
-                    TopN = topN,
-                    MaxPackageCount = maxPackageCount,
-                    ExportUnusedPackages = TrayDependencies.ExportUnusedPackages,
-                    ExportMatchedPackages = TrayDependencies.ExportMatchedPackages,
-                    OutputCsv = ToNullIfWhiteSpace(TrayDependencies.OutputCsv),
-                    UnusedOutputCsv = ToNullIfWhiteSpace(TrayDependencies.UnusedOutputCsv),
-                    ExportTargetPath = ToNullIfWhiteSpace(TrayDependencies.ExportTargetPath),
-                    ExportMinConfidence = ToNullIfWhiteSpace(TrayDependencies.ExportMinConfidence) ?? "Low"
-                };
-                return true;
-            default:
-                error = "Unsupported action for execution.";
+            if (!TryBuildSharedFileOpsInput(out shared, out error))
+            {
                 return false;
+            }
         }
+        else
+        {
+            shared = new SharedFileOpsInput();
+        }
+
+        options = new GlobalExecutionOptions
+        {
+            ScriptPath = scriptPath,
+            WhatIf = WhatIf,
+            Shared = shared
+        };
+        return true;
     }
 
     private bool TryBuildTrayPreviewInput(out TrayPreviewInput input, out string error)
     {
         input = null!;
-        error = string.Empty;
-
-        var trayPath = TrayPreview.TrayRoot.Trim();
-        if (string.IsNullOrWhiteSpace(trayPath))
-        {
-            error = "TrayPath is required for tray preview.";
-            return false;
-        }
-
-        if (!InputParsing.TryParseOptionalInt(TrayPreview.TopNText, 1, 50000, out var topN, out error))
+        if (!TryBuildGlobalExecutionOptions(requireScriptPath: false, includeShared: false, out var options, out error))
         {
             return false;
         }
 
-        if (!InputParsing.TryParseOptionalInt(TrayPreview.FilesPerItemText, 1, 200, out var filesPerItem, out error))
+        var module = _moduleRegistry.Get(SimsAction.TrayPreview);
+        if (!module.TryBuildPlan(options, out var plan, out error))
         {
             return false;
         }
 
-        input = new TrayPreviewInput
+        if (plan is not TrayPreviewExecutionPlan trayPreviewPlan)
         {
-            TrayPath = Path.GetFullPath(trayPath),
-            TrayItemKey = TrayPreview.TrayItemKey.Trim(),
-            TopN = topN,
-            MaxFilesPerItem = filesPerItem ?? 12,
-            PageSize = 50
-        };
+            error = "Tray preview module returned unsupported execution plan.";
+            return false;
+        }
+
+        input = trayPreviewPlan.Input;
         return true;
     }
 
@@ -888,7 +977,6 @@ public sealed class MainWindowViewModel : ObservableObject
                 ? "Type: n/a"
                 : $"Type: {dashboard.PresetTypeBreakdown}";
             PreviewSummaryText = $"Dashboard ready. {breakdown}";
-            OutputTabIndex = 1;
         });
     }
 
@@ -909,7 +997,6 @@ public sealed class MainWindowViewModel : ObservableObject
             PreviewSummaryText = $"Showing {firstItemIndex}-{lastItemIndex} / {page.TotalItems} tray presets.";
             PreviewPageText = $"Page {page.PageIndex}/{Math.Max(page.TotalPages, 1)}";
             PreviewLazyLoadText = $"Lazy cache {loadedPageCount}/{Math.Max(page.TotalPages, 1)} pages";
-            OutputTabIndex = 1;
             NotifyCommandStates();
         });
     }
@@ -924,65 +1011,12 @@ public sealed class MainWindowViewModel : ObservableObject
     }
     private AppSettings CaptureSettings()
     {
-        return new AppSettings
+        var settings = new AppSettings
         {
             ScriptPath = ScriptPath,
+            SelectedWorkspace = Workspace,
             SelectedAction = SelectedAction,
             WhatIf = WhatIf,
-            Organize = new AppSettings.OrganizeSettings
-            {
-                SourceDir = Organize.SourceDir,
-                ZipNamePattern = Organize.ZipNamePattern,
-                ModsRoot = Organize.ModsRoot,
-                UnifiedModsFolder = Organize.UnifiedModsFolder,
-                TrayRoot = Organize.TrayRoot,
-                KeepZip = Organize.KeepZip
-            },
-            Flatten = new AppSettings.FlattenSettings
-            {
-                RootPath = Flatten.RootPath,
-                FlattenToRoot = Flatten.FlattenToRoot
-            },
-            Normalize = new AppSettings.NormalizeSettings
-            {
-                RootPath = Normalize.RootPath
-            },
-            Merge = new AppSettings.MergeSettings
-            {
-                SourcePathsText = Merge.SourcePathsText,
-                TargetPath = Merge.TargetPath
-            },
-            FindDup = new AppSettings.FindDupSettings
-            {
-                RootPath = FindDup.RootPath,
-                OutputCsv = FindDup.OutputCsv,
-                Recurse = FindDup.Recurse,
-                Cleanup = FindDup.Cleanup
-            },
-            TrayDependencies = new AppSettings.TrayDependenciesSettings
-            {
-                TrayPath = TrayDependencies.TrayPath,
-                ModsPath = TrayDependencies.ModsPath,
-                TrayItemKey = TrayDependencies.TrayItemKey,
-                AnalysisMode = TrayDependencies.AnalysisMode,
-                S4tiPath = TrayDependencies.S4tiPath,
-                MinMatchCountText = TrayDependencies.MinMatchCountText,
-                TopNText = TrayDependencies.TopNText,
-                MaxPackageCountText = TrayDependencies.MaxPackageCountText,
-                ExportUnusedPackages = TrayDependencies.ExportUnusedPackages,
-                ExportMatchedPackages = TrayDependencies.ExportMatchedPackages,
-                OutputCsv = TrayDependencies.OutputCsv,
-                UnusedOutputCsv = TrayDependencies.UnusedOutputCsv,
-                ExportTargetPath = TrayDependencies.ExportTargetPath,
-                ExportMinConfidence = TrayDependencies.ExportMinConfidence
-            },
-            TrayPreview = new AppSettings.TrayPreviewSettings
-            {
-                TrayRoot = TrayPreview.TrayRoot,
-                TrayItemKey = TrayPreview.TrayItemKey,
-                TopNText = TrayPreview.TopNText,
-                FilesPerItemText = TrayPreview.FilesPerItemText
-            },
             SharedFileOps = new AppSettings.SharedFileOpsSettings
             {
                 SkipPruneEmptyDirs = SharedFileOps.SkipPruneEmptyDirs,
@@ -991,8 +1025,20 @@ public sealed class MainWindowViewModel : ObservableObject
                 ModExtensionsText = SharedFileOps.ModExtensionsText,
                 PrefixHashBytesText = SharedFileOps.PrefixHashBytesText,
                 HashWorkerCountText = SharedFileOps.HashWorkerCountText
+            },
+            QuickPresets = new AppSettings.QuickPresetSettings
+            {
+                EnableExternalModules = _quickPresetSettings.EnableExternalModules,
+                LastPresetId = _quickPresetSettings.LastPresetId
             }
         };
+
+        foreach (var module in _moduleRegistry.All)
+        {
+            module.SaveToSettings(settings);
+        }
+
+        return settings;
     }
 
     private void ApplySettings(AppSettings settings)
@@ -1000,94 +1046,73 @@ public sealed class MainWindowViewModel : ObservableObject
         ScriptPath = settings.ScriptPath;
         WhatIf = settings.WhatIf;
 
-        Organize.SourceDir = settings.Organize.SourceDir;
-        Organize.ZipNamePattern = settings.Organize.ZipNamePattern;
-        Organize.ModsRoot = settings.Organize.ModsRoot;
-        Organize.UnifiedModsFolder = settings.Organize.UnifiedModsFolder;
-        Organize.TrayRoot = settings.Organize.TrayRoot;
-        Organize.KeepZip = settings.Organize.KeepZip;
-
-        Flatten.RootPath = settings.Flatten.RootPath;
-        Flatten.FlattenToRoot = settings.Flatten.FlattenToRoot;
-
-        Normalize.RootPath = settings.Normalize.RootPath;
-
-        Merge.SourcePathsText = settings.Merge.SourcePathsText;
-        Merge.TargetPath = settings.Merge.TargetPath;
-
-        FindDup.RootPath = settings.FindDup.RootPath;
-        FindDup.OutputCsv = settings.FindDup.OutputCsv;
-        FindDup.Recurse = settings.FindDup.Recurse;
-        FindDup.Cleanup = settings.FindDup.Cleanup;
-
-        TrayDependencies.TrayPath = settings.TrayDependencies.TrayPath;
-        TrayDependencies.ModsPath = settings.TrayDependencies.ModsPath;
-        TrayDependencies.TrayItemKey = settings.TrayDependencies.TrayItemKey;
-        TrayDependencies.AnalysisMode = settings.TrayDependencies.AnalysisMode;
-        TrayDependencies.S4tiPath = settings.TrayDependencies.S4tiPath;
-        TrayDependencies.MinMatchCountText = settings.TrayDependencies.MinMatchCountText;
-        TrayDependencies.TopNText = settings.TrayDependencies.TopNText;
-        TrayDependencies.MaxPackageCountText = settings.TrayDependencies.MaxPackageCountText;
-        TrayDependencies.ExportUnusedPackages = settings.TrayDependencies.ExportUnusedPackages;
-        TrayDependencies.ExportMatchedPackages = settings.TrayDependencies.ExportMatchedPackages;
-        TrayDependencies.OutputCsv = settings.TrayDependencies.OutputCsv;
-        TrayDependencies.UnusedOutputCsv = settings.TrayDependencies.UnusedOutputCsv;
-        TrayDependencies.ExportTargetPath = settings.TrayDependencies.ExportTargetPath;
-        TrayDependencies.ExportMinConfidence = settings.TrayDependencies.ExportMinConfidence;
-
-        TrayPreview.TrayRoot = settings.TrayPreview.TrayRoot;
-        TrayPreview.TrayItemKey = settings.TrayPreview.TrayItemKey;
-        TrayPreview.TopNText = settings.TrayPreview.TopNText;
-        TrayPreview.FilesPerItemText = settings.TrayPreview.FilesPerItemText;
-
         SharedFileOps.SkipPruneEmptyDirs = settings.SharedFileOps.SkipPruneEmptyDirs;
         SharedFileOps.ModFilesOnly = settings.SharedFileOps.ModFilesOnly;
         SharedFileOps.VerifyContentOnNameConflict = settings.SharedFileOps.VerifyContentOnNameConflict;
         SharedFileOps.ModExtensionsText = settings.SharedFileOps.ModExtensionsText;
         SharedFileOps.PrefixHashBytesText = settings.SharedFileOps.PrefixHashBytesText;
         SharedFileOps.HashWorkerCountText = settings.SharedFileOps.HashWorkerCountText;
-
-        SelectedAction = settings.SelectedAction;
-    }
-
-    private static string? ToNullIfWhiteSpace(string? value)
-    {
-        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-    }
-
-    private static List<string> ParsePathList(string? rawValue)
-    {
-        if (string.IsNullOrWhiteSpace(rawValue))
+        _quickPresetSettings = new AppSettings.QuickPresetSettings
         {
-            return new List<string>();
+            EnableExternalModules = settings.QuickPresets.EnableExternalModules,
+            LastPresetId = settings.QuickPresets.LastPresetId
+        };
+
+        foreach (var module in _moduleRegistry.All)
+        {
+            module.LoadFromSettings(settings);
         }
 
-        return rawValue
-            .Split(new[] { '\r', '\n', ';', ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(path => !string.IsNullOrWhiteSpace(path))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-    }
-
-    private static string? TryFindScriptPath()
-    {
-        var currentDirectoryCandidate = Path.Combine(Directory.GetCurrentDirectory(), "sims-mod-cli.ps1");
-        if (File.Exists(currentDirectoryCandidate))
+        var resolvedAction = settings.SelectedAction == SimsAction.TrayPreview
+            ? SimsAction.Organize
+            : settings.SelectedAction;
+        if (!AvailableToolkitActions.Contains(resolvedAction))
         {
-            return currentDirectoryCandidate;
+            resolvedAction = SimsAction.Organize;
         }
 
-        var baseDirectory = AppContext.BaseDirectory;
-        var directory = new DirectoryInfo(baseDirectory);
-        for (var depth = 0; depth < 10 && directory is not null; depth++)
+        SelectedAction = resolvedAction;
+        var resolvedWorkspace = Enum.IsDefined(settings.SelectedWorkspace)
+            ? settings.SelectedWorkspace
+            : AppWorkspace.Toolkit;
+
+        Workspace = settings.SelectedAction == SimsAction.TrayPreview
+            ? AppWorkspace.TrayPreview
+            : resolvedWorkspace;
+    }
+
+    private static string ResolveFixedScriptPath()
+    {
+        var root = FindToolkitRootDirectory();
+        if (string.IsNullOrWhiteSpace(root))
         {
-            var candidate = Path.Combine(directory.FullName, "sims-mod-cli.ps1");
-            if (File.Exists(candidate))
+            return string.Empty;
+        }
+
+        return Path.GetFullPath(Path.Combine(root, "sims-mod-cli.ps1"));
+    }
+
+    private static string? FindToolkitRootDirectory()
+    {
+        var startDirectories = new[]
+        {
+            new DirectoryInfo(Directory.GetCurrentDirectory()),
+            new DirectoryInfo(AppContext.BaseDirectory)
+        };
+
+        foreach (var start in startDirectories)
+        {
+            var directory = start;
+            for (var depth = 0; depth < 12 && directory is not null; depth++)
             {
-                return candidate;
-            }
+                var solutionCandidate = Path.Combine(directory.FullName, "src.sln");
+                if (File.Exists(solutionCandidate))
+                {
+                    return directory.Parent?.FullName;
+                }
 
-            directory = directory.Parent;
+                directory = directory.Parent;
+            }
         }
 
         return null;
