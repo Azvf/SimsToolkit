@@ -44,6 +44,7 @@ public partial class App : Avalonia.Application
 
         services.AddSingleton<IWindowHostService, WindowHostService>();
         services.AddSingleton<IFileDialogService, AvaloniaFileDialogService>();
+        services.AddSingleton<IConfirmationDialogService, AvaloniaConfirmationDialogService>();
         services.AddSingleton<ISettingsStore, JsonSettingsStore>();
 
         services.AddSingleton<ISimsPowerShellRunner, SimsPowerShellRunner>();

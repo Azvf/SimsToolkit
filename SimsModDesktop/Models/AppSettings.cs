@@ -15,6 +15,7 @@ public sealed class AppSettings
     public TrayPreviewSettings TrayPreview { get; set; } = new();
     public SharedFileOpsSettings SharedFileOps { get; set; } = new();
     public QuickPresetSettings QuickPresets { get; set; } = new();
+    public UiStateSettings UiState { get; set; } = new();
 
     public sealed class OrganizeSettings
     {
@@ -91,5 +92,13 @@ public sealed class AppSettings
     {
         public bool EnableExternalModules { get; set; }
         public string LastPresetId { get; set; } = string.Empty;
+    }
+
+    public sealed class UiStateSettings
+    {
+        public bool ToolkitLogDrawerOpen { get; set; }
+        public bool TrayPreviewLogDrawerOpen { get; set; }
+        public bool ToolkitAdvancedOpen { get; set; }
+        public bool TrayPreviewAdvancedOpen { get; set; }
     }
 }

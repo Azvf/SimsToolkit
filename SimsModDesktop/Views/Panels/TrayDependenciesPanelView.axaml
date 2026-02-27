@@ -1,69 +1,72 @@
-<UserControl xmlns="https://github.com/avaloniaui"
+﻿<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:SimsModDesktop.ViewModels"
              x:Class="SimsModDesktop.Views.Panels.TrayDependenciesPanelView"
              x:DataType="vm:MainWindowViewModel">
-    <Border Padding="10" BorderBrush="#24313B" BorderThickness="1" CornerRadius="6" IsVisible="{Binding IsTrayDependenciesVisible}">
+    <Border Classes="card-muted" Padding="10" IsVisible="{Binding IsTrayDependenciesVisible}">
         <StackPanel Spacing="10">
-            <TextBlock FontWeight="SemiBold" Text="tray dependencies" />
-            <Grid ColumnDefinitions="180,*,Auto"
-                  RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto"
-                  RowSpacing="8"
-                  ColumnSpacing="8">
-                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="TrayPath" />
-                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding TrayDependencies.TrayPath}" />
-                <Button Grid.Row="0" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="ProbeTrayPath" />
-
-                <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="ModsPath" />
-                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding TrayDependencies.ModsPath}" />
-                <Button Grid.Row="1" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="ProbeModsPath" />
-
-                <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="TrayItemKey (optional)" />
-                <TextBox Grid.Row="2" Grid.Column="1" Watermark="0x1234567890ABCDEF" Text="{Binding TrayDependencies.TrayItemKey}" />
-
-                <TextBlock Grid.Row="3" VerticalAlignment="Center" Text="AnalysisMode" />
-                <ComboBox Grid.Row="3"
-                          Grid.Column="1"
-                          ItemsSource="{Binding TrayDependencies.AvailableAnalysisModes}"
-                          SelectedItem="{Binding TrayDependencies.AnalysisMode}" />
-
-                <TextBlock Grid.Row="4" VerticalAlignment="Center" Text="S4TI Path" />
-                <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding TrayDependencies.S4tiPath}" />
-                <Button Grid.Row="4" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="ProbeS4tiPath" />
-
-                <TextBlock Grid.Row="5" VerticalAlignment="Center" Text="MinMatchCount" />
-                <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding TrayDependencies.MinMatchCountText}" />
-
-                <TextBlock Grid.Row="6" VerticalAlignment="Center" Text="TopN" />
-                <TextBox Grid.Row="6" Grid.Column="1" Text="{Binding TrayDependencies.TopNText}" />
-
-                <TextBlock Grid.Row="7" VerticalAlignment="Center" Text="MaxPackageCount" />
-                <TextBox Grid.Row="7" Grid.Column="1" Text="{Binding TrayDependencies.MaxPackageCountText}" />
-
-                <CheckBox Grid.Row="8" Grid.Column="1" Content="ExportUnusedPackages" IsChecked="{Binding TrayDependencies.ExportUnusedPackages}" />
-                <CheckBox Grid.Row="9" Grid.Column="1" Content="ExportMatchedPackages" IsChecked="{Binding TrayDependencies.ExportMatchedPackages}" />
-
-                <TextBlock Grid.Row="10" VerticalAlignment="Center" Text="ExportMinConfidence" />
-                <ComboBox Grid.Row="10"
-                          Grid.Column="1"
-                          ItemsSource="{Binding TrayDependencies.AvailableExportMinConfidence}"
-                          SelectedItem="{Binding TrayDependencies.ExportMinConfidence}" />
-            </Grid>
-
+            <TextBlock Classes="section-title" Text="托盘依赖分析 (tray dependencies)" />
             <Grid ColumnDefinitions="180,*,Auto"
                   RowDefinitions="Auto,Auto,Auto"
                   RowSpacing="8"
                   ColumnSpacing="8">
-                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="OutputCsv (optional)" />
-                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding TrayDependencies.OutputCsv}" />
+                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="托盘路径 (TrayPath)" />
+                <TextBox Grid.Row="0" Grid.Column="1" Classes="path-field" Text="{Binding TrayDependencies.TrayPath}" />
+                <Button Grid.Row="0" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="ProbeTrayPath" />
 
-                <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="UnusedOutputCsv (optional)" />
-                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding TrayDependencies.UnusedOutputCsv}" />
+                <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="Mods 路径 (ModsPath)" />
+                <TextBox Grid.Row="1" Grid.Column="1" Classes="path-field" Text="{Binding TrayDependencies.ModsPath}" />
+                <Button Grid.Row="1" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="ProbeModsPath" />
 
-                <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="ExportTargetPath (optional)" />
-                <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding TrayDependencies.ExportTargetPath}" />
-                <Button Grid.Row="2" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="ProbeExportTargetPath" />
+                <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="分析模式 (AnalysisMode)" />
+                <ComboBox Grid.Row="2"
+                          Grid.Column="1"
+                          ItemsSource="{Binding TrayDependencies.AvailableAnalysisModes}"
+                          SelectedItem="{Binding TrayDependencies.AnalysisMode}" />
             </Grid>
+
+            <Border Classes="card" Padding="10" Margin="0,8,0,0" IsVisible="{Binding IsToolkitAdvancedOpen}">
+                <Grid ColumnDefinitions="180,*,180,*"
+                      RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto"
+                      RowSpacing="8"
+                      ColumnSpacing="8">
+                    <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="托盘项目键 (TrayItemKey)" />
+                    <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding TrayDependencies.TrayItemKey}" />
+
+                    <TextBlock Grid.Row="0" Grid.Column="2" VerticalAlignment="Center" Text="S4TI 路径 (S4TI Path)" />
+                    <TextBox Grid.Row="0" Grid.Column="3" Classes="path-field" Text="{Binding TrayDependencies.S4tiPath}" />
+
+                    <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="最小匹配数 (MinMatchCount)" />
+                    <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding TrayDependencies.MinMatchCountText}" />
+
+                    <TextBlock Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" Text="TopN" />
+                    <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding TrayDependencies.TopNText}" />
+
+                    <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="最大包数 (MaxPackageCount)" />
+                    <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding TrayDependencies.MaxPackageCountText}" />
+
+                    <TextBlock Grid.Row="2" Grid.Column="2" VerticalAlignment="Center" Text="导出置信度 (ExportMinConfidence)" />
+                    <ComboBox Grid.Row="2"
+                              Grid.Column="3"
+                              ItemsSource="{Binding TrayDependencies.AvailableExportMinConfidence}"
+                              SelectedItem="{Binding TrayDependencies.ExportMinConfidence}" />
+
+                    <CheckBox Grid.Row="3" Grid.Column="1" Content="导出未使用包 (ExportUnusedPackages)" IsChecked="{Binding TrayDependencies.ExportUnusedPackages}" />
+                    <CheckBox Grid.Row="3" Grid.Column="3" Content="导出匹配包 (ExportMatchedPackages)" IsChecked="{Binding TrayDependencies.ExportMatchedPackages}" />
+
+                    <TextBlock Grid.Row="4" VerticalAlignment="Center" Text="输出 CSV (OutputCsv)" />
+                    <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding TrayDependencies.OutputCsv}" />
+
+                    <TextBlock Grid.Row="4" Grid.Column="2" VerticalAlignment="Center" Text="Unused CSV" />
+                    <TextBox Grid.Row="4" Grid.Column="3" Text="{Binding TrayDependencies.UnusedOutputCsv}" />
+
+                    <TextBlock Grid.Row="5" VerticalAlignment="Center" Text="导出目录 (ExportTargetPath)" />
+                    <TextBox Grid.Row="5" Grid.Column="1" Classes="path-field" Text="{Binding TrayDependencies.ExportTargetPath}" />
+                    <Button Grid.Row="5" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="ProbeExportTargetPath" />
+                </Grid>
+            </Border>
         </StackPanel>
     </Border>
 </UserControl>
+
+

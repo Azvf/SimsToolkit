@@ -1,10 +1,9 @@
-<Window xmlns="https://github.com/avaloniaui"
+﻿<Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:models="clr-namespace:SimsModDesktop.Models"
         xmlns:panels="clr-namespace:SimsModDesktop.Views.Panels"
-        xmlns:presets="clr-namespace:SimsModDesktop.Application.Presets"
         xmlns:vm="clr-namespace:SimsModDesktop.ViewModels"
         mc:Ignorable="d"
         x:Class="SimsModDesktop.Views.MainWindow"
@@ -16,75 +15,44 @@
         MinHeight="720"
         d:DesignWidth="1320"
         d:DesignHeight="860">
-    <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,*,Auto" RowSpacing="10">
-        <Border Padding="12" BorderBrush="#2F3E4A" BorderThickness="1" CornerRadius="8">
-            <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto" ColumnSpacing="8">
-                <TextBlock VerticalAlignment="Center" FontSize="16" FontWeight="SemiBold" Text="Sims Toolkit Desktop" />
-                <Button Grid.Column="1" Content="Toolkit" Command="{Binding SwitchToToolkitWorkspaceCommand}" />
-                <Button Grid.Column="2" Content="Tray Preview" Command="{Binding SwitchToTrayPreviewWorkspaceCommand}" />
-                <Button Grid.Column="4" Content="Settings" Click="SettingsButton_OnClick" />
-                <Button Grid.Column="5" Content="Cancel" Command="{Binding CancelCommand}" />
+    <Grid Margin="16" RowDefinitions="Auto,*,Auto" RowSpacing="12">
+        <Border Classes="card" Padding="12">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="8">
+                <TextBlock Classes="app-title" VerticalAlignment="Center" Text="Sims Toolkit Desktop" />
+                <Button Grid.Column="1"
+                        Classes="secondary"
+                        Classes.nav-active="{Binding IsToolkitWorkspace}"
+                        Content="Toolkit"
+                        Command="{Binding SwitchToToolkitWorkspaceCommand}" />
+                <Button Grid.Column="2"
+                        Classes="secondary"
+                        Classes.nav-active="{Binding IsTrayPreviewWorkspace}"
+                        Content="Tray Preview"
+                        Command="{Binding SwitchToTrayPreviewWorkspaceCommand}" />
+                <Button Grid.Column="4" Classes="secondary" Content="Settings" Click="SettingsButton_OnClick" />
             </Grid>
         </Border>
 
-        <Border Grid.Row="1" Padding="10" BorderBrush="#2F3E4A" BorderThickness="1" CornerRadius="8">
-            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                <ProgressBar Height="10"
-                             Minimum="0"
-                             Maximum="100"
-                             IsIndeterminate="{Binding IsProgressIndeterminate}"
-                             Value="{Binding ProgressValue}" />
-                <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="{Binding ProgressMessage}" />
-            </Grid>
-        </Border>
-
-        <Border Grid.Row="2" Padding="10" BorderBrush="#2F3E4A" BorderThickness="1" CornerRadius="8">
-            <StackPanel Spacing="8">
-                <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="8">
-                    <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="Quick Presets" />
-                    <Button Grid.Column="1" Content="Reload" Command="{Binding ReloadQuickPresetsCommand}" />
-                    <TextBlock Grid.Column="2" VerticalAlignment="Center" Foreground="#9EB0BD" Text="{Binding QuickPresetStatusText}" />
-                </Grid>
-
-                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
-                    <ItemsControl ItemsSource="{Binding QuickPresets}">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <WrapPanel Orientation="Horizontal" />
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="presets:QuickPresetDefinition">
-                                <Button Margin="0,0,8,8"
-                                        MinWidth="180"
-                                        Padding="10,6"
-                                        Command="{Binding $parent[Window].DataContext.RunQuickPresetCommand}"
-                                        CommandParameter="{Binding}">
-                                    <StackPanel>
-                                        <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />
-                                        <TextBlock FontSize="11" Foreground="#9EB0BD" Text="{Binding Description}" TextWrapping="Wrap" />
-                                    </StackPanel>
-                                </Button>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </ScrollViewer>
-            </StackPanel>
-        </Border>
-
-        <Border Grid.Row="3" Padding="12" BorderBrush="#2F3E4A" BorderThickness="1" CornerRadius="8" IsVisible="{Binding IsToolkitWorkspace}">
-            <Grid ColumnDefinitions="3*,2*" ColumnSpacing="12">
-                <Grid RowDefinitions="Auto,*" RowSpacing="12">
-                    <Border Padding="10" BorderBrush="#3B4A55" BorderThickness="1" CornerRadius="6">
-                        <Grid ColumnDefinitions="Auto,180,Auto,Auto,*" ColumnSpacing="8">
-                            <TextBlock VerticalAlignment="Center" Text="Action" />
-                            <ComboBox Grid.Column="1" Width="160" ItemsSource="{Binding AvailableToolkitActions}" SelectedItem="{Binding SelectedAction}" />
-                            <CheckBox Grid.Column="2" VerticalAlignment="Center" Content="WhatIf" IsChecked="{Binding WhatIf}" />
-                            <Button Grid.Column="3" Classes="accent" Content="Run" Command="{Binding RunCommand}" />
+        <Grid Grid.Row="1">
+            <Border Classes="card" IsVisible="{Binding IsToolkitWorkspace}" Padding="12">
+                <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="12">
+                    <Border Classes="card-muted" Padding="10">
+                        <Grid ColumnDefinitions="Auto,190,Auto,*" ColumnSpacing="8">
+                            <TextBlock VerticalAlignment="Center" Text="动作 (Action)" />
+                            <ComboBox Grid.Column="1" Width="180" ItemsSource="{Binding AvailableToolkitActions}" SelectedItem="{Binding SelectedAction}" />
+                            <Button Grid.Column="2" Classes="secondary" Content="高级选项" Command="{Binding ToggleToolkitAdvancedCommand}" />
+                            <TextBlock Grid.Column="3" VerticalAlignment="Center" Classes="helper-text" Text="选中动作后编辑参数并执行。" />
                         </Grid>
                     </Border>
 
-                    <ScrollViewer Grid.Row="1">
+                    <Border Grid.Row="1" Classes="card-muted" Padding="10">
+                        <StackPanel Spacing="6">
+                            <TextBlock Classes="sub-title" Text="预检状态" />
+                            <TextBlock TextWrapping="Wrap" Text="{Binding ValidationSummaryText}" />
+                        </StackPanel>
+                    </Border>
+
+                    <ScrollViewer Grid.Row="2">
                         <StackPanel Spacing="12">
                             <panels:OrganizePanelView />
                             <panels:FlattenPanelView />
@@ -94,93 +62,94 @@
                             <panels:TrayDependenciesPanelView />
                         </StackPanel>
                     </ScrollViewer>
+
+                    <Border Grid.Row="3"
+                            Classes="card-muted"
+                            Padding="10"
+                            Margin="0,8,0,0"
+                            IsVisible="{Binding IsToolkitAdvancedOpen}">
+                        <StackPanel Spacing="8">
+                            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                                <TextBlock VerticalAlignment="Center" Classes="sub-title" Text="Quick Presets" />
+                                <TextBox Grid.Column="1" Watermark="搜索预设 (名称/ID/描述)" Text="{Binding QuickPresetSearchText}" />
+                                <Button Grid.Column="2" Classes="secondary" Content="Reload" Command="{Binding ReloadQuickPresetsCommand}" />
+                            </Grid>
+                            <TextBlock Classes="helper-text" Text="{Binding QuickPresetStatusText}" />
+                            <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                                <ItemsControl ItemsSource="{Binding QuickPresets}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel Orientation="Horizontal" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:QuickPresetListItem">
+                                            <Border Classes="card-muted" Margin="0,0,8,8" Padding="8" Width="230">
+                                                <StackPanel Spacing="6">
+                                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                                        <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />
+                                                        <TextBlock Grid.Column="1" IsVisible="{Binding IsLastApplied}" Classes="success-text helper-text" Text="最近应用" />
+                                                    </Grid>
+                                                    <TextBlock Classes="helper-text" TextWrapping="Wrap" Text="{Binding Description}" />
+                                                    <Button Classes="primary"
+                                                            Content="应用预设"
+                                                            Command="{Binding $parent[Window].DataContext.RunQuickPresetCommand}"
+                                                            CommandParameter="{Binding Definition}" />
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </StackPanel>
+                    </Border>
                 </Grid>
+            </Border>
 
-                <Border Grid.Column="1" Padding="10" BorderBrush="#3B4A55" BorderThickness="1" CornerRadius="6">
-                    <StackPanel Spacing="8">
-                        <TextBlock FontWeight="SemiBold" Text="Toolkit Log" />
-                        <TextBox IsReadOnly="True"
-                                 AcceptsReturn="True"
-                                 TextWrapping="Wrap"
-                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                 Text="{Binding LogText}" />
-                    </StackPanel>
-                </Border>
-            </Grid>
-        </Border>
-
-        <Border Grid.Row="3" Padding="12" BorderBrush="#2F3E4A" BorderThickness="1" CornerRadius="8" IsVisible="{Binding IsTrayPreviewWorkspace}">
-            <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="12">
-                <Border Padding="10" BorderBrush="#3B4A55" BorderThickness="1" CornerRadius="6">
-                    <StackPanel Spacing="10">
-                        <TextBlock FontSize="17" FontWeight="SemiBold" Text="Tray Preview Dashboard" />
-                        <TextBlock Foreground="#9EB0BD" Text="Tray file inspection workspace. Build a dashboard, inspect presets, and page through results." />
-
-                        <Grid RowDefinitions="Auto,Auto,Auto" RowSpacing="8">
-                            <Grid ColumnDefinitions="110,*,Auto,Auto" ColumnSpacing="8">
-                                <TextBlock VerticalAlignment="Center" Text="TrayPath" />
-                                <TextBox Grid.Column="1" Text="{Binding TrayPreview.TrayRoot}" />
-                                <Button Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="PreviewTrayRoot" />
-                                <Button Grid.Column="3" Classes="accent" Content="Load Dashboard" Command="{Binding RunTrayPreviewCommand}" />
+            <Border Classes="card" IsVisible="{Binding IsTrayPreviewWorkspace}" Padding="12">
+                <Grid RowDefinitions="Auto,Auto,*" RowSpacing="12">
+                    <Border Classes="card-muted" Padding="10">
+                        <Grid RowDefinitions="Auto,Auto" RowSpacing="8">
+                            <Grid ColumnDefinitions="130,*,Auto,Auto,Auto" ColumnSpacing="8">
+                                <TextBlock VerticalAlignment="Center" Text="托盘目录 (TrayPath)" />
+                                <TextBox Grid.Column="1" Classes="path-field" Text="{Binding TrayPreview.TrayRoot}" />
+                                <Button Grid.Column="2" Classes="secondary" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="PreviewTrayRoot" />
+                                <Button Grid.Column="3" Classes="primary" Content="加载仪表盘" Command="{Binding RunTrayPreviewCommand}" />
+                                <Button Grid.Column="4" Classes="secondary" Content="高级选项" Command="{Binding ToggleTrayPreviewAdvancedCommand}" />
                             </Grid>
-
-                            <Grid Grid.Row="1" ColumnDefinitions="110,*,110,*" ColumnSpacing="8">
-                                <TextBlock VerticalAlignment="Center" Text="TrayItemKey" />
-                                <TextBox Grid.Column="1" Watermark="0x1234567890ABCDEF" Text="{Binding TrayPreview.TrayItemKey}" />
-                                <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="TopN" />
-                                <TextBox Grid.Column="3" Watermark="Empty = all presets" Text="{Binding TrayPreview.TopNText}" />
-                            </Grid>
-
-                            <Grid Grid.Row="2" ColumnDefinitions="110,*,110,*" ColumnSpacing="8">
-                                <TextBlock VerticalAlignment="Center" Text="FilesPerItem" />
-                                <TextBox Grid.Column="1" Text="{Binding TrayPreview.FilesPerItemText}" />
-                                <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="Paging" />
-                                <TextBlock Grid.Column="3" VerticalAlignment="Center" Foreground="#9EB0BD" Text="Fixed 50 items/page, lazy page cache enabled." />
-                            </Grid>
+                            <TextBlock Grid.Row="1" Classes="helper-text" Text="支持分页和懒加载缓存，默认每页 50 条。" />
                         </Grid>
-                    </StackPanel>
-                </Border>
+                    </Border>
 
-                <Grid Grid.Row="1" ColumnDefinitions="*,*,*,*" ColumnSpacing="8">
-                    <Border Padding="8" BorderBrush="#3B4A55" BorderThickness="1" CornerRadius="6">
-                        <StackPanel>
-                            <TextBlock Foreground="#9EB0BD" Text="Total Presets" />
-                            <TextBlock FontSize="18" FontWeight="SemiBold" Text="{Binding PreviewDashboardTotalItems}" />
-                        </StackPanel>
-                    </Border>
-                    <Border Grid.Column="1" Padding="8" BorderBrush="#3B4A55" BorderThickness="1" CornerRadius="6">
-                        <StackPanel>
-                            <TextBlock Foreground="#9EB0BD" Text="Total Files" />
-                            <TextBlock FontSize="18" FontWeight="SemiBold" Text="{Binding PreviewDashboardTotalFiles}" />
-                        </StackPanel>
-                    </Border>
-                    <Border Grid.Column="2" Padding="8" BorderBrush="#3B4A55" BorderThickness="1" CornerRadius="6">
-                        <StackPanel>
-                            <TextBlock Foreground="#9EB0BD" Text="Total Size" />
-                            <TextBlock FontSize="18" FontWeight="SemiBold" Text="{Binding PreviewDashboardTotalSize}" />
-                        </StackPanel>
-                    </Border>
-                    <Border Grid.Column="3" Padding="8" BorderBrush="#3B4A55" BorderThickness="1" CornerRadius="6">
-                        <StackPanel>
-                            <TextBlock Foreground="#9EB0BD" Text="Latest Write" />
-                            <TextBlock FontSize="14" FontWeight="SemiBold" Text="{Binding PreviewDashboardLatestWrite}" />
-                        </StackPanel>
-                    </Border>
-                </Grid>
+                    <Border Grid.Row="1"
+                            Classes="card-muted"
+                            Padding="10"
+                            Margin="0,8,0,0"
+                            IsVisible="{Binding IsTrayPreviewAdvancedOpen}">
+                        <Grid ColumnDefinitions="130,*,130,*" RowDefinitions="Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                            <TextBlock VerticalAlignment="Center" Text="项目键 (TrayItemKey)" />
+                            <TextBox Grid.Column="1" Watermark="0x1234567890ABCDEF" Text="{Binding TrayPreview.TrayItemKey}" />
+                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="TopN" />
+                            <TextBox Grid.Column="3" Watermark="空值=全部" Text="{Binding TrayPreview.TopNText}" />
 
-                <Grid Grid.Row="2" ColumnDefinitions="3*,2*" ColumnSpacing="10">
-                    <Border Padding="10" BorderBrush="#3B4A55" BorderThickness="1" CornerRadius="6">
-                        <Grid RowDefinitions="Auto,*" RowSpacing="8">
+                            <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="文件预览数 (FilesPerItem)" />
+                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding TrayPreview.FilesPerItemText}" />
+                            <TextBlock Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" Classes="helper-text" Text="分页" />
+                            <TextBlock Grid.Row="1" Grid.Column="3" VerticalAlignment="Center" Classes="helper-text" Text="固定 50 项/页，懒加载缓存开启。" />
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Row="2" Classes="card-muted" Padding="10">
+                        <Grid RowDefinitions="Auto,*,Auto" RowSpacing="8">
                             <TextBlock Text="{Binding PreviewSummaryText}" />
                             <ListBox Grid.Row="1" ItemsSource="{Binding PreviewItems}">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate x:DataType="models:SimsTrayPreviewItem">
-                                        <Border Margin="0,0,0,8" Padding="8" BorderBrush="#3B4A55" BorderThickness="1" CornerRadius="6">
+                                        <Border Classes="card" Margin="0,0,0,8" Padding="8">
                                             <StackPanel Spacing="4">
-                                                <Grid ColumnDefinitions="*,Auto">
+                                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
                                                     <TextBlock FontWeight="SemiBold" Text="{Binding TrayItemKey}" />
-                                                    <TextBlock Grid.Column="1" Foreground="#9EB0BD" Text="{Binding PresetType}" />
+                                                    <TextBlock Grid.Column="1" Classes="helper-text" Text="{Binding PresetType}" />
                                                 </Grid>
                                                 <Grid ColumnDefinitions="Auto,Auto,Auto,*" ColumnSpacing="8">
                                                     <TextBlock Text="Files:" />
@@ -188,40 +157,50 @@
                                                     <TextBlock Grid.Column="2" Text="Size(MB):" />
                                                     <TextBlock Grid.Column="3" Text="{Binding TotalMB}" />
                                                 </Grid>
-                                                <TextBlock Foreground="#AFC2D0" Text="{Binding LatestWriteTimeLocal}" />
-                                                <TextBlock Foreground="#AFC2D0" Text="{Binding Extensions}" />
-                                                <TextBlock Foreground="#AFC2D0" Text="{Binding ResourceTypes}" />
-                                                <TextBlock Text="{Binding FileListPreview}" TextWrapping="Wrap" />
+                                                <TextBlock Classes="helper-text" Text="{Binding LatestWriteTimeLocal}" />
+                                                <TextBlock Classes="helper-text" Text="{Binding Extensions}" />
+                                                <TextBlock Classes="helper-text" Text="{Binding ResourceTypes}" />
+                                                <TextBlock TextWrapping="Wrap" Text="{Binding FileListPreview}" />
                                             </StackPanel>
                                         </Border>
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>
+                            <Grid Grid.Row="2" ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="8">
+                                <Button Content="Prev Page" Command="{Binding PreviewPrevPageCommand}" />
+                                <Button Grid.Column="1" Content="Next Page" Command="{Binding PreviewNextPageCommand}" />
+                                <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="{Binding PreviewPageText}" />
+                                <TextBlock Grid.Column="4" VerticalAlignment="Center" Classes="helper-text" Text="{Binding PreviewLazyLoadText}" />
+                            </Grid>
                         </Grid>
                     </Border>
+                </Grid>
+            </Border>
+        </Grid>
 
-                    <Border Grid.Column="1" Padding="10" BorderBrush="#3B4A55" BorderThickness="1" CornerRadius="6">
-                        <StackPanel Spacing="8">
-                            <TextBlock FontWeight="SemiBold" Text="Preview Log" />
-                            <TextBox IsReadOnly="True"
-                                     AcceptsReturn="True"
-                                     TextWrapping="Wrap"
-                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                     Text="{Binding LogText}" />
-                        </StackPanel>
-                    </Border>
+        <Border Grid.Row="2" Classes="card" Padding="12" IsVisible="{Binding IsToolkitWorkspace}">
+            <Grid RowDefinitions="Auto,Auto,Auto" RowSpacing="8">
+                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*" ColumnSpacing="10">
+                    <Button Classes="primary" MinWidth="150" Content="Run" Command="{Binding RunActiveWorkspaceCommand}" />
+                    <Button Grid.Column="1" Classes="danger" Content="Cancel" Command="{Binding CancelCommand}" />
+                    <CheckBox Grid.Column="2" VerticalAlignment="Center" Content="WhatIf" IsChecked="{Binding WhatIf}" />
+                    <Button Grid.Column="3" Classes="secondary" Content="Open Preset Folder" Command="{Binding OpenQuickPresetFolderCommand}" />
+                    <TextBlock Grid.Column="4" VerticalAlignment="Center" Classes="helper-text" Text="{Binding StatusMessage}" />
                 </Grid>
 
-                <Grid Grid.Row="3" ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="8">
-                    <Button Content="Prev Page" Command="{Binding PreviewPrevPageCommand}" />
-                    <Button Grid.Column="1" Content="Next Page" Command="{Binding PreviewNextPageCommand}" />
-                    <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="{Binding PreviewPageText}" />
-                    <TextBlock Grid.Column="4" VerticalAlignment="Center" Foreground="#9EB0BD" Text="{Binding PreviewLazyLoadText}" />
+                <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <ProgressBar Height="10"
+                                 Minimum="0"
+                                 Maximum="100"
+                                 IsIndeterminate="{Binding IsProgressIndeterminate}"
+                                 Value="{Binding ProgressValue}" />
+                    <TextBlock Grid.Column="1" VerticalAlignment="Center" Classes="helper-text" Text="{Binding ProgressMessage}" />
                 </Grid>
+
+                <Border Grid.Row="2" Classes="card-muted" Padding="8">
+                    <TextBlock TextWrapping="Wrap" Text="{Binding ValidationSummaryText}" />
+                </Border>
             </Grid>
         </Border>
-
-        <TextBlock Grid.Row="4" VerticalAlignment="Center" Text="{Binding StatusMessage}" />
     </Grid>
 </Window>

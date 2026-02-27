@@ -1,26 +1,33 @@
-<UserControl xmlns="https://github.com/avaloniaui"
+﻿<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:SimsModDesktop.ViewModels"
              x:Class="SimsModDesktop.Views.Panels.FindDupPanelView"
              x:DataType="vm:MainWindowViewModel">
-    <Border Padding="10" BorderBrush="#24313B" BorderThickness="1" CornerRadius="6" IsVisible="{Binding IsFindDupVisible}">
+    <Border Classes="card-muted" Padding="10" IsVisible="{Binding IsFindDupVisible}">
         <StackPanel Spacing="10">
-            <TextBlock FontWeight="SemiBold" Text="finddup (MD5 duplicate scan)" />
+            <TextBlock Classes="section-title" Text="重复文件扫描 (finddup)" />
             <Grid ColumnDefinitions="180,*,Auto"
-                  RowDefinitions="Auto,Auto,Auto,Auto"
+                  RowDefinitions="Auto,Auto"
                   RowSpacing="8"
                   ColumnSpacing="8">
-                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="FindDupRootPath" />
-                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding FindDup.RootPath}" />
+                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="扫描目录 (RootPath)" />
+                <TextBox Grid.Row="0" Grid.Column="1" Classes="path-field" Text="{Binding FindDup.RootPath}" />
                 <Button Grid.Row="0" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="FindDupRootPath" />
 
-                <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="OutputCsv (optional)" />
+                <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="输出 CSV (OutputCsv, 可选)" />
                 <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding FindDup.OutputCsv}" />
                 <Button Grid.Row="1" Grid.Column="2" Content="Browse" Command="{Binding BrowseCsvPathCommand}" CommandParameter="FindDupOutputCsv" />
-
-                <CheckBox Grid.Row="2" Grid.Column="1" Content="Recurse subdirectories" IsChecked="{Binding FindDup.Recurse}" />
-                <CheckBox Grid.Row="3" Grid.Column="1" Content="Cleanup: remove duplicate files (keep first by path)" IsChecked="{Binding FindDup.Cleanup}" />
             </Grid>
+
+            <Border Classes="card" Padding="10" Margin="0,8,0,0" IsVisible="{Binding IsToolkitAdvancedOpen}">
+                <StackPanel Spacing="8">
+                    <CheckBox Content="递归子目录 (Recurse)" IsChecked="{Binding FindDup.Recurse}" />
+                    <CheckBox Content="清理重复文件 (Cleanup)" IsChecked="{Binding FindDup.Cleanup}" />
+                    <TextBlock Classes="danger-text" TextWrapping="Wrap" Text="危险: 启用 Cleanup 会删除重复文件（保留首个路径），运行前会二次确认。" />
+                </StackPanel>
+            </Border>
         </StackPanel>
     </Border>
 </UserControl>
+
+

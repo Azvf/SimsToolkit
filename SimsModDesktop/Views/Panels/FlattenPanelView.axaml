@@ -1,18 +1,22 @@
-<UserControl xmlns="https://github.com/avaloniaui"
+﻿<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:SimsModDesktop.ViewModels"
              x:Class="SimsModDesktop.Views.Panels.FlattenPanelView"
              x:DataType="vm:MainWindowViewModel">
-    <Border Padding="10" BorderBrush="#24313B" BorderThickness="1" CornerRadius="6" IsVisible="{Binding IsFlattenVisible}">
+    <Border Classes="card-muted" Padding="10" IsVisible="{Binding IsFlattenVisible}">
         <StackPanel Spacing="10">
-            <TextBlock FontWeight="SemiBold" Text="flatten" />
-            <Grid ColumnDefinitions="180,*,Auto" RowDefinitions="Auto,Auto" RowSpacing="8" ColumnSpacing="8">
-                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="FlattenRootPath" />
-                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding Flatten.RootPath}" />
+            <TextBlock Classes="section-title" Text="扁平化目录 (flatten)" />
+            <Grid ColumnDefinitions="180,*,Auto" RowDefinitions="Auto" RowSpacing="8" ColumnSpacing="8">
+                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="根目录 (RootPath)" />
+                <TextBox Grid.Row="0" Grid.Column="1" Classes="path-field" Text="{Binding Flatten.RootPath}" />
                 <Button Grid.Row="0" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="FlattenRootPath" />
-
-                <CheckBox Grid.Row="1" Grid.Column="1" Content="FlattenToRoot" IsChecked="{Binding Flatten.FlattenToRoot}" />
             </Grid>
+
+            <Border Classes="card" Padding="10" Margin="0,8,0,0" IsVisible="{Binding IsToolkitAdvancedOpen}">
+                <CheckBox Content="扁平到根目录 (FlattenToRoot)" IsChecked="{Binding Flatten.FlattenToRoot}" />
+            </Border>
         </StackPanel>
     </Border>
 </UserControl>
+
+

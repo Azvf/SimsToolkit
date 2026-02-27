@@ -1,19 +1,19 @@
-<UserControl xmlns="https://github.com/avaloniaui"
+﻿<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:SimsModDesktop.ViewModels"
              xmlns:panelVm="clr-namespace:SimsModDesktop.ViewModels.Panels"
              x:Class="SimsModDesktop.Views.Panels.MergePanelView"
              x:DataType="vm:MainWindowViewModel">
-    <Border Padding="10" BorderBrush="#24313B" BorderThickness="1" CornerRadius="6" IsVisible="{Binding IsMergeVisible}">
+    <Border Classes="card-muted" Padding="10" IsVisible="{Binding IsMergeVisible}">
         <StackPanel Spacing="10">
             <StackPanel Spacing="2">
-                <TextBlock FontWeight="SemiBold" FontSize="15" Text="merge" />
-                <TextBlock Foreground="#9EB0BD" FontSize="12" Text="Add one source folder per row. Use + and - to manage rows quickly." />
+                <TextBlock Classes="section-title" Text="合并目录 (merge)" />
+                <TextBlock Classes="helper-text" Text="每行一个源目录，使用 + 和 - 快速增删。" />
             </StackPanel>
 
-            <Border BorderBrush="#3B4A55" BorderThickness="1" CornerRadius="6" Padding="10">
+            <Border Classes="card" Padding="10">
                 <StackPanel Spacing="8">
-                    <TextBlock FontWeight="SemiBold" Text="MergeSourcePaths" />
+                    <TextBlock Classes="sub-title" Text="源目录列表 (MergeSourcePaths)" />
                     <ScrollViewer MaxHeight="220"
                                   HorizontalScrollBarVisibility="Disabled"
                                   VerticalScrollBarVisibility="Auto">
@@ -22,8 +22,9 @@
                                 <DataTemplate x:DataType="panelVm:MergeSourcePathEntryViewModel">
                                     <Grid Margin="0,0,0,8" ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
                                         <TextBox Grid.Column="0"
+                                                 Classes="path-field"
                                                  Text="{Binding Path}"
-                                                 Watermark="Select source folder path" />
+                                                 Watermark="选择源目录路径" />
                                         <Button Grid.Column="1"
                                                 MinWidth="82"
                                                 Content="Browse"
@@ -52,10 +53,11 @@
             </Border>
 
             <Grid ColumnDefinitions="180,*,Auto" RowDefinitions="Auto" RowSpacing="8" ColumnSpacing="8">
-                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="MergeTargetPath" />
-                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding Merge.TargetPath}" />
+                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="目标目录 (MergeTargetPath)" />
+                <TextBox Grid.Row="0" Grid.Column="1" Classes="path-field" Text="{Binding Merge.TargetPath}" />
                 <Button Grid.Row="0" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="MergeTargetPath" />
             </Grid>
         </StackPanel>
     </Border>
 </UserControl>
+

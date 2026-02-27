@@ -1,0 +1,124 @@
+﻿<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Styles.Resources>
+        <ResourceDictionary>
+            <x:Double x:Key="Size.ControlHeight">34</x:Double>
+            <CornerRadius x:Key="Radius.Small">6</CornerRadius>
+            <CornerRadius x:Key="Radius.Medium">10</CornerRadius>
+            <CornerRadius x:Key="Radius.Large">14</CornerRadius>
+            <Thickness x:Key="Thickness.CardPadding">12</Thickness>
+            <Thickness x:Key="Thickness.SectionPadding">10</Thickness>
+
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <Color x:Key="Color.AppBackground">#F2F5F8</Color>
+                    <Color x:Key="Color.Surface">#FFFFFFFF</Color>
+                    <Color x:Key="Color.SurfaceMuted">#EDF3F8</Color>
+                    <Color x:Key="Color.SurfaceHover">#F3F8FD</Color>
+                    <Color x:Key="Color.SurfacePressed">#E5F0FA</Color>
+                    <Color x:Key="Color.Border">#D4DEE7</Color>
+                    <Color x:Key="Color.BorderHover">#A9C0D8</Color>
+                    <Color x:Key="Color.BorderFocus">#0F5FA8</Color>
+                    <Color x:Key="Color.TextPrimary">#102236</Color>
+                    <Color x:Key="Color.TextSecondary">#4E657C</Color>
+                    <Color x:Key="Color.Accent">#0F5FA8</Color>
+                    <Color x:Key="Color.AccentHover">#136FC2</Color>
+                    <Color x:Key="Color.AccentPressed">#0A4F8C</Color>
+                    <Color x:Key="Color.AccentMuted">#DCEAF8</Color>
+                    <Color x:Key="Color.AccentMutedHover">#CFE3F8</Color>
+                    <Color x:Key="Color.AccentMutedPressed">#C2DCF7</Color>
+                    <Color x:Key="Color.Danger">#B22424</Color>
+                    <Color x:Key="Color.DangerHover">#9E1F1F</Color>
+                    <Color x:Key="Color.DangerPressed">#861919</Color>
+                    <Color x:Key="Color.Warning">#A66300</Color>
+                    <Color x:Key="Color.Success">#1F7A48</Color>
+                    <Color x:Key="Color.LogBackground">#F7FBFF</Color>
+                    <Color x:Key="Color.ListItemHover">#EAF3FD</Color>
+                    <Color x:Key="Color.ListItemPressed">#DBEBFC</Color>
+                    <Color x:Key="Color.ListItemSelected">#CCE2F9</Color>
+
+                    <SolidColorBrush x:Key="Brush.AppBackground" Color="{DynamicResource Color.AppBackground}" />
+                    <SolidColorBrush x:Key="Brush.Surface" Color="{DynamicResource Color.Surface}" />
+                    <SolidColorBrush x:Key="Brush.SurfaceMuted" Color="{DynamicResource Color.SurfaceMuted}" />
+                    <SolidColorBrush x:Key="Brush.SurfaceHover" Color="{DynamicResource Color.SurfaceHover}" />
+                    <SolidColorBrush x:Key="Brush.SurfacePressed" Color="{DynamicResource Color.SurfacePressed}" />
+                    <SolidColorBrush x:Key="Brush.Border" Color="{DynamicResource Color.Border}" />
+                    <SolidColorBrush x:Key="Brush.BorderHover" Color="{DynamicResource Color.BorderHover}" />
+                    <SolidColorBrush x:Key="Brush.BorderFocus" Color="{DynamicResource Color.BorderFocus}" />
+                    <SolidColorBrush x:Key="Brush.TextPrimary" Color="{DynamicResource Color.TextPrimary}" />
+                    <SolidColorBrush x:Key="Brush.TextSecondary" Color="{DynamicResource Color.TextSecondary}" />
+                    <SolidColorBrush x:Key="Brush.Accent" Color="{DynamicResource Color.Accent}" />
+                    <SolidColorBrush x:Key="Brush.AccentHover" Color="{DynamicResource Color.AccentHover}" />
+                    <SolidColorBrush x:Key="Brush.AccentPressed" Color="{DynamicResource Color.AccentPressed}" />
+                    <SolidColorBrush x:Key="Brush.AccentMuted" Color="{DynamicResource Color.AccentMuted}" />
+                    <SolidColorBrush x:Key="Brush.AccentMutedHover" Color="{DynamicResource Color.AccentMutedHover}" />
+                    <SolidColorBrush x:Key="Brush.AccentMutedPressed" Color="{DynamicResource Color.AccentMutedPressed}" />
+                    <SolidColorBrush x:Key="Brush.Danger" Color="{DynamicResource Color.Danger}" />
+                    <SolidColorBrush x:Key="Brush.DangerHover" Color="{DynamicResource Color.DangerHover}" />
+                    <SolidColorBrush x:Key="Brush.DangerPressed" Color="{DynamicResource Color.DangerPressed}" />
+                    <SolidColorBrush x:Key="Brush.Warning" Color="{DynamicResource Color.Warning}" />
+                    <SolidColorBrush x:Key="Brush.Success" Color="{DynamicResource Color.Success}" />
+                    <SolidColorBrush x:Key="Brush.LogBackground" Color="{DynamicResource Color.LogBackground}" />
+                    <SolidColorBrush x:Key="Brush.ListItemHover" Color="{DynamicResource Color.ListItemHover}" />
+                    <SolidColorBrush x:Key="Brush.ListItemPressed" Color="{DynamicResource Color.ListItemPressed}" />
+                    <SolidColorBrush x:Key="Brush.ListItemSelected" Color="{DynamicResource Color.ListItemSelected}" />
+                </ResourceDictionary>
+
+                <ResourceDictionary x:Key="Dark">
+                    <Color x:Key="Color.AppBackground">#111820</Color>
+                    <Color x:Key="Color.Surface">#18222D</Color>
+                    <Color x:Key="Color.SurfaceMuted">#1F2D3A</Color>
+                    <Color x:Key="Color.SurfaceHover">#243545</Color>
+                    <Color x:Key="Color.SurfacePressed">#2A3E51</Color>
+                    <Color x:Key="Color.Border">#2E3F50</Color>
+                    <Color x:Key="Color.BorderHover">#4A647D</Color>
+                    <Color x:Key="Color.BorderFocus">#63B1F3</Color>
+                    <Color x:Key="Color.TextPrimary">#E8F0F8</Color>
+                    <Color x:Key="Color.TextSecondary">#9FB2C4</Color>
+                    <Color x:Key="Color.Accent">#4EA4F0</Color>
+                    <Color x:Key="Color.AccentHover">#66B4F4</Color>
+                    <Color x:Key="Color.AccentPressed">#3A8FD3</Color>
+                    <Color x:Key="Color.AccentMuted">#19324A</Color>
+                    <Color x:Key="Color.AccentMutedHover">#21405D</Color>
+                    <Color x:Key="Color.AccentMutedPressed">#285079</Color>
+                    <Color x:Key="Color.Danger">#FF6B6B</Color>
+                    <Color x:Key="Color.DangerHover">#FF8383</Color>
+                    <Color x:Key="Color.DangerPressed">#E45A5A</Color>
+                    <Color x:Key="Color.Warning">#F5B14C</Color>
+                    <Color x:Key="Color.Success">#56C98A</Color>
+                    <Color x:Key="Color.LogBackground">#10171F</Color>
+                    <Color x:Key="Color.ListItemHover">#223447</Color>
+                    <Color x:Key="Color.ListItemPressed">#2A4057</Color>
+                    <Color x:Key="Color.ListItemSelected">#21405A</Color>
+
+                    <SolidColorBrush x:Key="Brush.AppBackground" Color="{DynamicResource Color.AppBackground}" />
+                    <SolidColorBrush x:Key="Brush.Surface" Color="{DynamicResource Color.Surface}" />
+                    <SolidColorBrush x:Key="Brush.SurfaceMuted" Color="{DynamicResource Color.SurfaceMuted}" />
+                    <SolidColorBrush x:Key="Brush.SurfaceHover" Color="{DynamicResource Color.SurfaceHover}" />
+                    <SolidColorBrush x:Key="Brush.SurfacePressed" Color="{DynamicResource Color.SurfacePressed}" />
+                    <SolidColorBrush x:Key="Brush.Border" Color="{DynamicResource Color.Border}" />
+                    <SolidColorBrush x:Key="Brush.BorderHover" Color="{DynamicResource Color.BorderHover}" />
+                    <SolidColorBrush x:Key="Brush.BorderFocus" Color="{DynamicResource Color.BorderFocus}" />
+                    <SolidColorBrush x:Key="Brush.TextPrimary" Color="{DynamicResource Color.TextPrimary}" />
+                    <SolidColorBrush x:Key="Brush.TextSecondary" Color="{DynamicResource Color.TextSecondary}" />
+                    <SolidColorBrush x:Key="Brush.Accent" Color="{DynamicResource Color.Accent}" />
+                    <SolidColorBrush x:Key="Brush.AccentHover" Color="{DynamicResource Color.AccentHover}" />
+                    <SolidColorBrush x:Key="Brush.AccentPressed" Color="{DynamicResource Color.AccentPressed}" />
+                    <SolidColorBrush x:Key="Brush.AccentMuted" Color="{DynamicResource Color.AccentMuted}" />
+                    <SolidColorBrush x:Key="Brush.AccentMutedHover" Color="{DynamicResource Color.AccentMutedHover}" />
+                    <SolidColorBrush x:Key="Brush.AccentMutedPressed" Color="{DynamicResource Color.AccentMutedPressed}" />
+                    <SolidColorBrush x:Key="Brush.Danger" Color="{DynamicResource Color.Danger}" />
+                    <SolidColorBrush x:Key="Brush.DangerHover" Color="{DynamicResource Color.DangerHover}" />
+                    <SolidColorBrush x:Key="Brush.DangerPressed" Color="{DynamicResource Color.DangerPressed}" />
+                    <SolidColorBrush x:Key="Brush.Warning" Color="{DynamicResource Color.Warning}" />
+                    <SolidColorBrush x:Key="Brush.Success" Color="{DynamicResource Color.Success}" />
+                    <SolidColorBrush x:Key="Brush.LogBackground" Color="{DynamicResource Color.LogBackground}" />
+                    <SolidColorBrush x:Key="Brush.ListItemHover" Color="{DynamicResource Color.ListItemHover}" />
+                    <SolidColorBrush x:Key="Brush.ListItemPressed" Color="{DynamicResource Color.ListItemPressed}" />
+                    <SolidColorBrush x:Key="Brush.ListItemSelected" Color="{DynamicResource Color.ListItemSelected}" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+        </ResourceDictionary>
+    </Styles.Resources>
+</Styles>
+
