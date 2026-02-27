@@ -83,8 +83,10 @@ param(
     [string]$ExportMinConfidence = 'Low'
 )
 
+$projectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+
 # SSOT: apply defaults from SimsConfig
-. (Join-Path $PSScriptRoot 'modules\SimsConfig.ps1')
+. (Join-Path $projectRoot 'modules\SimsConfig.ps1')
 $cfg = $Script:SimsConfigDefault
 if ([string]::IsNullOrEmpty($TrayPath)) { $TrayPath = $cfg.TrayRoot }
 if ([string]::IsNullOrEmpty($ModsPath)) { $ModsPath = $cfg.ModsPath }
@@ -92,14 +94,14 @@ if ([string]::IsNullOrEmpty($ModsPath)) { $ModsPath = $cfg.ModsPath }
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$modulePath = Join-Path $PSScriptRoot 'modules\SimsTrayDependencyProbe.psm1'
+$modulePath = Join-Path $projectRoot 'modules\SimsTrayDependencyProbe.psm1'
 if (-not (Test-Path -LiteralPath $modulePath)) {
     throw "Module not found: $modulePath"
 }
 Import-Module -Name $modulePath -Force
 
 function Get-SimsDefaultOutputRoot {
-    $defaultOutputRoot = Join-Path $PSScriptRoot 'output'
+    $defaultOutputRoot = Join-Path $projectRoot 'output'
     if (-not (Test-Path -LiteralPath $defaultOutputRoot)) {
         [System.IO.Directory]::CreateDirectory($defaultOutputRoot) | Out-Null
     }

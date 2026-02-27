@@ -6,7 +6,7 @@
 参数注入共享逻辑：`modules/SimsInvokeUtils.psm1`（参数透传、WhatIf/Confirm 统一处理）
 
 独立测试模块：`modules/SimsTrayDependencyProbe.psm1`（Tray -> 可能依赖的 package 候选探针）
-独立测试脚本：`tray-mod-dependency-probe.ps1`
+独立测试脚本：`scripts\analysis\tray-mod-dependency-probe.ps1`
 
 ## 仓库目录约定
 
@@ -155,7 +155,7 @@
   - `-VerifyContentOnNameConflict`
   - `-PrefixHashBytes`
   - `-HashWorkerCount`（默认 8）
-- `trayprobe`（参数与 `tray-mod-dependency-probe.ps1` 基本一致）：
+- `trayprobe`（参数与 `scripts\analysis\tray-mod-dependency-probe.ps1` 基本一致）：
   - `-TrayPath`
   - `-ModsPath`
   - `-TrayItemKey`
@@ -179,7 +179,7 @@
 说明：下列命令可直接运行独立脚本；同等能力也可通过统一入口 `sims-mod-cli.ps1 trayprobe ...` 调用。
 
 ```powershell
-& .\tray-mod-dependency-probe.ps1 `
+& .\scripts\analysis\tray-mod-dependency-probe.ps1 `
   -TrayPath 'J:\Sims Mods\The Sims 4\Tray' `
   -ModsPath 'J:\Sims Mods\The Sims 4\Mods\[房屋家建]\!Mod资源' `
   -AnalysisMode StrictS4TI `
@@ -191,7 +191,7 @@
 
 ```powershell
 # 先列可选 TrayItemKey（按实例ID分组，更接近一个完整预设）
-& .\tray-mod-dependency-probe.ps1 `
+& .\scripts\analysis\tray-mod-dependency-probe.ps1 `
   -TrayPath 'J:\Sims Mods\The Sims 4\Tray' `
   -ListTrayItems `
   -ListTopN 200
@@ -199,7 +199,7 @@
 
 ```powershell
 # 仅分析单个 Tray 项（降低噪声）
-& .\tray-mod-dependency-probe.ps1 `
+& .\scripts\analysis\tray-mod-dependency-probe.ps1 `
   -TrayPath 'J:\Sims Mods\The Sims 4\Tray' `
   -ModsPath 'J:\Sims Mods\The Sims 4\Mods\[房屋家建]\!Mod资源' `
   -TrayItemKey '0x1234567890ABCDEF' `
@@ -211,7 +211,7 @@
 
 ```powershell
 # 同时导出“未被 Tray 命中”的 package（MatchInstanceCount=0）
-& .\tray-mod-dependency-probe.ps1 `
+& .\scripts\analysis\tray-mod-dependency-probe.ps1 `
   -TrayPath 'J:\Sims Mods\The Sims 4\Tray' `
   -ModsPath 'J:\Sims Mods\The Sims 4\Mods\[房屋家建]' `
   -ExportUnusedPackages `
@@ -220,7 +220,7 @@
 
 ```powershell
 # 生成离线 Tray 预览（CSV + HTML 卡片页）
-& .\tray-mod-dependency-probe.ps1 `
+& .\scripts\analysis\tray-mod-dependency-probe.ps1 `
   -TrayPath 'J:\Sims Mods\The Sims 4\Tray' `
   -PreviewTrayItems `
   -PreviewTopN 500 `

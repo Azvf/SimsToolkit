@@ -27,8 +27,10 @@ param(
     [int]$HashWorkerCount = 0
 )
 
+$projectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+
 # SSOT: apply defaults from SimsConfig
-. (Join-Path $PSScriptRoot 'modules\SimsConfig.ps1')
+. (Join-Path $projectRoot 'modules\SimsConfig.ps1')
 $cfg = $Script:SimsConfigDefault
 if ([string]::IsNullOrEmpty($TargetPath)) { $TargetPath = $cfg.MergeTargetPath }
 if ($ModExtensions.Count -eq 0) { $ModExtensions = $cfg.ModExtensions }
@@ -38,7 +40,7 @@ if ($HashWorkerCount -eq 0) { $HashWorkerCount = $cfg.HashWorkerCount }
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$coreModulePath = Join-Path $PSScriptRoot 'modules\SimsFileOpsCore.psm1'
+$coreModulePath = Join-Path $projectRoot 'modules\SimsFileOpsCore.psm1'
 if (-not (Test-Path -LiteralPath $coreModulePath)) {
     throw "Core module not found: $coreModulePath"
 }

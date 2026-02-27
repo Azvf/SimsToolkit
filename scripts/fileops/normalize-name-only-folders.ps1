@@ -4,16 +4,18 @@ param(
     [string]$RootPath = ''
 )
 
+$projectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$coreModulePath = Join-Path $PSScriptRoot 'modules\SimsFileOpsCore.psm1'
+$coreModulePath = Join-Path $projectRoot 'modules\SimsFileOpsCore.psm1'
 if (Test-Path -LiteralPath $coreModulePath) {
     Import-Module -Name $coreModulePath -Force
 }
 
 # SSOT: apply defaults from SimsConfig
-. (Join-Path $PSScriptRoot 'modules\SimsConfig.ps1')
+. (Join-Path $projectRoot 'modules\SimsConfig.ps1')
 if ([string]::IsNullOrWhiteSpace($RootPath)) {
     $RootPath = $Script:SimsConfigDefault.NormalizeRootPath
 }

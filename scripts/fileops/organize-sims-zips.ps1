@@ -39,8 +39,10 @@ param(
     [int]$PrefixHashBytes = 0
 )
 
+$projectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+
 # SSOT: apply defaults from SimsConfig
-. (Join-Path $PSScriptRoot 'modules\SimsConfig.ps1')
+. (Join-Path $projectRoot 'modules\SimsConfig.ps1')
 $cfg = $Script:SimsConfigDefault
 if ($ArchiveExtensions.Count -eq 0) { $ArchiveExtensions = $cfg.ArchiveExtensions }
 if ([string]::IsNullOrEmpty($ModsRoot)) { $ModsRoot = $cfg.ModsRoot }
@@ -53,7 +55,7 @@ $ErrorActionPreference = 'Stop'
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
-$coreModulePath = Join-Path $PSScriptRoot 'modules\SimsFileOpsCore.psm1'
+$coreModulePath = Join-Path $projectRoot 'modules\SimsFileOpsCore.psm1'
 if (-not (Test-Path -LiteralPath $coreModulePath)) {
     throw "Core module not found: $coreModulePath"
 }
