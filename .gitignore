@@ -1,3 +1,7 @@
+# Workspace data and generated artifacts (top-level only)
+/modules/
+/output/
+
 # Build output
 **/bin/
 **/obj/
