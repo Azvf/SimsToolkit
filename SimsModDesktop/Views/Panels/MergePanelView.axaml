@@ -1,0 +1,26 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:SimsModDesktop.ViewModels"
+             x:Class="SimsModDesktop.Views.Panels.MergePanelView"
+             x:DataType="vm:MainWindowViewModel">
+    <Border Padding="10" BorderBrush="#24313B" BorderThickness="1" CornerRadius="6" IsVisible="{Binding IsMergeVisible}">
+        <StackPanel Spacing="10">
+            <TextBlock FontWeight="SemiBold" Text="merge" />
+            <Grid ColumnDefinitions="180,*,Auto" RowDefinitions="Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                <TextBlock Grid.Row="0" VerticalAlignment="Top" Text="MergeSourcePaths" />
+                <TextBox Grid.Row="0"
+                         Grid.Column="1"
+                         MinHeight="84"
+                         AcceptsReturn="True"
+                         TextWrapping="Wrap"
+                         Watermark="One path per line (or comma/semicolon separated)"
+                         Text="{Binding Merge.SourcePathsText}" />
+                <Button Grid.Row="0" Grid.Column="2" VerticalAlignment="Top" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="MergeSourcePaths" />
+
+                <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="MergeTargetPath" />
+                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Merge.TargetPath}" />
+                <Button Grid.Row="1" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="MergeTargetPath" />
+            </Grid>
+        </StackPanel>
+    </Border>
+</UserControl>

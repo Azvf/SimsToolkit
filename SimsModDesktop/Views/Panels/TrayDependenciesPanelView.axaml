@@ -1,0 +1,69 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:SimsModDesktop.ViewModels"
+             x:Class="SimsModDesktop.Views.Panels.TrayDependenciesPanelView"
+             x:DataType="vm:MainWindowViewModel">
+    <Border Padding="10" BorderBrush="#24313B" BorderThickness="1" CornerRadius="6" IsVisible="{Binding IsTrayDependenciesVisible}">
+        <StackPanel Spacing="10">
+            <TextBlock FontWeight="SemiBold" Text="tray dependencies" />
+            <Grid ColumnDefinitions="180,*,Auto"
+                  RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto"
+                  RowSpacing="8"
+                  ColumnSpacing="8">
+                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="TrayPath" />
+                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding TrayDependencies.TrayPath}" />
+                <Button Grid.Row="0" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="ProbeTrayPath" />
+
+                <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="ModsPath" />
+                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding TrayDependencies.ModsPath}" />
+                <Button Grid.Row="1" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="ProbeModsPath" />
+
+                <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="TrayItemKey (optional)" />
+                <TextBox Grid.Row="2" Grid.Column="1" Watermark="0x1234567890ABCDEF" Text="{Binding TrayDependencies.TrayItemKey}" />
+
+                <TextBlock Grid.Row="3" VerticalAlignment="Center" Text="AnalysisMode" />
+                <ComboBox Grid.Row="3"
+                          Grid.Column="1"
+                          ItemsSource="{Binding TrayDependencies.AvailableAnalysisModes}"
+                          SelectedItem="{Binding TrayDependencies.AnalysisMode}" />
+
+                <TextBlock Grid.Row="4" VerticalAlignment="Center" Text="S4TI Path" />
+                <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding TrayDependencies.S4tiPath}" />
+                <Button Grid.Row="4" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="ProbeS4tiPath" />
+
+                <TextBlock Grid.Row="5" VerticalAlignment="Center" Text="MinMatchCount" />
+                <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding TrayDependencies.MinMatchCountText}" />
+
+                <TextBlock Grid.Row="6" VerticalAlignment="Center" Text="TopN" />
+                <TextBox Grid.Row="6" Grid.Column="1" Text="{Binding TrayDependencies.TopNText}" />
+
+                <TextBlock Grid.Row="7" VerticalAlignment="Center" Text="MaxPackageCount" />
+                <TextBox Grid.Row="7" Grid.Column="1" Text="{Binding TrayDependencies.MaxPackageCountText}" />
+
+                <CheckBox Grid.Row="8" Grid.Column="1" Content="ExportUnusedPackages" IsChecked="{Binding TrayDependencies.ExportUnusedPackages}" />
+                <CheckBox Grid.Row="9" Grid.Column="1" Content="ExportMatchedPackages" IsChecked="{Binding TrayDependencies.ExportMatchedPackages}" />
+
+                <TextBlock Grid.Row="10" VerticalAlignment="Center" Text="ExportMinConfidence" />
+                <ComboBox Grid.Row="10"
+                          Grid.Column="1"
+                          ItemsSource="{Binding TrayDependencies.AvailableExportMinConfidence}"
+                          SelectedItem="{Binding TrayDependencies.ExportMinConfidence}" />
+            </Grid>
+
+            <Grid ColumnDefinitions="180,*,Auto"
+                  RowDefinitions="Auto,Auto,Auto"
+                  RowSpacing="8"
+                  ColumnSpacing="8">
+                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="OutputCsv (optional)" />
+                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding TrayDependencies.OutputCsv}" />
+
+                <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="UnusedOutputCsv (optional)" />
+                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding TrayDependencies.UnusedOutputCsv}" />
+
+                <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="ExportTargetPath (optional)" />
+                <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding TrayDependencies.ExportTargetPath}" />
+                <Button Grid.Row="2" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="ProbeExportTargetPath" />
+            </Grid>
+        </StackPanel>
+    </Border>
+</UserControl>

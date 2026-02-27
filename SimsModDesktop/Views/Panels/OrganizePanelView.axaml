@@ -1,0 +1,35 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:SimsModDesktop.ViewModels"
+             x:Class="SimsModDesktop.Views.Panels.OrganizePanelView"
+             x:DataType="vm:MainWindowViewModel">
+    <Border Padding="10" BorderBrush="#24313B" BorderThickness="1" CornerRadius="6" IsVisible="{Binding IsOrganizeVisible}">
+        <StackPanel Spacing="10">
+            <TextBlock FontWeight="SemiBold" Text="organize" />
+            <Grid ColumnDefinitions="180,*,Auto"
+                  RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto"
+                  RowSpacing="8"
+                  ColumnSpacing="8">
+                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="SourceDir" />
+                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding Organize.SourceDir}" />
+                <Button Grid.Row="0" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="SourceDir" />
+
+                <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="ZipNamePattern" />
+                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Organize.ZipNamePattern}" />
+
+                <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="ModsRoot" />
+                <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Organize.ModsRoot}" />
+                <Button Grid.Row="2" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="ModsRoot" />
+
+                <TextBlock Grid.Row="3" VerticalAlignment="Center" Text="UnifiedModsFolder" />
+                <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding Organize.UnifiedModsFolder}" />
+
+                <TextBlock Grid.Row="4" VerticalAlignment="Center" Text="TrayRoot" />
+                <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding Organize.TrayRoot}" />
+                <Button Grid.Row="4" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="TrayRoot" />
+
+                <CheckBox Grid.Row="5" Grid.Column="1" Content="KeepZip" IsChecked="{Binding Organize.KeepZip}" />
+            </Grid>
+        </StackPanel>
+    </Border>
+</UserControl>

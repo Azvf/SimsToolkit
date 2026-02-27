@@ -1,0 +1,128 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:models="clr-namespace:SimsModDesktop.Models"
+        xmlns:panels="clr-namespace:SimsModDesktop.Views.Panels"
+        xmlns:vm="clr-namespace:SimsModDesktop.ViewModels"
+        mc:Ignorable="d"
+        x:Class="SimsModDesktop.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="Sims Mod Desktop"
+        Width="1200"
+        Height="820"
+        MinWidth="960"
+        MinHeight="680"
+        d:DesignWidth="1200"
+        d:DesignHeight="820">
+    <Grid Margin="16" RowDefinitions="Auto,*,Auto">
+        <Border Padding="12" BorderBrush="#2F3E4A" BorderThickness="1" CornerRadius="8">
+            <StackPanel Spacing="8">
+                <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
+                    <TextBlock VerticalAlignment="Center" Text="Script" />
+                    <TextBox Grid.Column="1" MinWidth="460" Watermark="Path to sims-mod-cli.ps1" Text="{Binding ScriptPath}" />
+                    <Button Grid.Column="2" Content="Browse" Command="{Binding BrowseScriptPathCommand}" />
+                    <ComboBox Grid.Column="3" Width="140" ItemsSource="{Binding AvailableActions}" SelectedItem="{Binding SelectedAction}" />
+                    <CheckBox Grid.Column="4" VerticalAlignment="Center" Content="WhatIf" IsChecked="{Binding WhatIf}" />
+                    <Button Grid.Column="5" Classes="accent" Content="Run" Command="{Binding RunCommand}" />
+                    <Button Grid.Column="6" Content="Cancel" Command="{Binding CancelCommand}" />
+                </Grid>
+
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <ProgressBar Height="10"
+                                 Minimum="0"
+                                 Maximum="100"
+                                 IsIndeterminate="{Binding IsProgressIndeterminate}"
+                                 Value="{Binding ProgressValue}" />
+                    <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="{Binding ProgressMessage}" />
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <Grid Grid.Row="1" Margin="0,12,0,12" ColumnDefinitions="3*,2*" ColumnSpacing="12">
+            <Border Grid.Column="0" Padding="12" BorderBrush="#2F3E4A" BorderThickness="1" CornerRadius="8">
+                <ScrollViewer>
+                    <StackPanel Spacing="12">
+                        <panels:OrganizePanelView />
+                        <panels:FlattenPanelView />
+                        <panels:NormalizePanelView />
+                        <panels:MergePanelView />
+                        <panels:FindDupPanelView />
+                        <panels:TrayDependenciesPanelView />
+                        <panels:TrayPreviewPanelView />
+                        <panels:SharedFileOpsPanelView />
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+
+            <Border Grid.Column="1" Padding="12" BorderBrush="#2F3E4A" BorderThickness="1" CornerRadius="8">
+                <TabControl SelectedIndex="{Binding OutputTabIndex}">
+                    <TabItem Header="Log">
+                        <TextBox IsReadOnly="True"
+                                 AcceptsReturn="True"
+                                 TextWrapping="Wrap"
+                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                 Text="{Binding LogText}" />
+                    </TabItem>
+                    <TabItem Header="Tray Preview">
+                        <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="8">
+                            <Grid ColumnDefinitions="*,*,*,*" ColumnSpacing="8">
+                                <Border Padding="8" BorderBrush="#3B4A55" BorderThickness="1" CornerRadius="6">
+                                    <StackPanel>
+                                        <TextBlock Foreground="#9EB0BD" Text="Total Presets" />
+                                        <TextBlock FontSize="18" FontWeight="SemiBold" Text="{Binding PreviewDashboardTotalItems}" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Grid.Column="1" Padding="8" BorderBrush="#3B4A55" BorderThickness="1" CornerRadius="6">
+                                    <StackPanel>
+                                        <TextBlock Foreground="#9EB0BD" Text="Total Files" />
+                                        <TextBlock FontSize="18" FontWeight="SemiBold" Text="{Binding PreviewDashboardTotalFiles}" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Grid.Column="2" Padding="8" BorderBrush="#3B4A55" BorderThickness="1" CornerRadius="6">
+                                    <StackPanel>
+                                        <TextBlock Foreground="#9EB0BD" Text="Total Size" />
+                                        <TextBlock FontSize="18" FontWeight="SemiBold" Text="{Binding PreviewDashboardTotalSize}" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Grid.Column="3" Padding="8" BorderBrush="#3B4A55" BorderThickness="1" CornerRadius="6">
+                                    <StackPanel>
+                                        <TextBlock Foreground="#9EB0BD" Text="Latest Write" />
+                                        <TextBlock FontSize="14" FontWeight="SemiBold" Text="{Binding PreviewDashboardLatestWrite}" />
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+
+                            <TextBlock Text="{Binding PreviewSummaryText}" />
+                            <ListBox Grid.Row="2" ItemsSource="{Binding PreviewItems}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="models:SimsTrayPreviewItem">
+                                        <Border Margin="0,0,0,8" Padding="8" BorderBrush="#3B4A55" BorderThickness="1" CornerRadius="6">
+                                            <StackPanel Spacing="4">
+                                                <TextBlock FontWeight="SemiBold" Text="{Binding TrayItemKey}" />
+                                                <TextBlock Text="{Binding PresetType}" />
+                                                <TextBlock Text="{Binding Extensions}" />
+                                                <TextBlock Text="{Binding ResourceTypes}" />
+                                                <TextBlock Text="{Binding FileListPreview}" TextWrapping="Wrap" />
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+
+                            <Grid Grid.Row="3" ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="8">
+                                <Button Content="Prev" Command="{Binding PreviewPrevPageCommand}" />
+                                <Button Grid.Column="1" Content="Next" Command="{Binding PreviewNextPageCommand}" />
+                                <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="{Binding PreviewPageText}" />
+                                <TextBlock Grid.Column="3" VerticalAlignment="Center" Foreground="#9EB0BD" Text="{Binding PreviewLazyLoadText}" />
+                            </Grid>
+                        </Grid>
+                    </TabItem>
+                </TabControl>
+            </Border>
+        </Grid>
+
+        <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="{Binding StatusMessage}" />
+    </Grid>
+</Window>
