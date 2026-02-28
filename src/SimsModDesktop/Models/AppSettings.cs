@@ -16,6 +16,10 @@ public sealed class AppSettings
     public TrayPreviewSettings TrayPreview { get; set; } = new();
     public SharedFileOpsSettings SharedFileOps { get; set; } = new();
     public UiStateSettings UiState { get; set; } = new();
+    public NavigationSettings Navigation { get; set; } = new();
+    public FeatureFlagsSettings FeatureFlags { get; set; } = new();
+    public GameLaunchSettings GameLaunch { get; set; } = new();
+    public ThemeSettings Theme { get; set; } = new();
 
     public sealed class OrganizeSettings
     {
@@ -94,5 +98,32 @@ public sealed class AppSettings
         public bool TrayPreviewLogDrawerOpen { get; set; }
         public bool ToolkitAdvancedOpen { get; set; }
         public bool TrayPreviewAdvancedOpen { get; set; }
+    }
+
+    public sealed class NavigationSettings
+    {
+        public AppSection SelectedSection { get; set; } = AppSection.Mods;
+        public string SelectedModuleKey { get; set; } = "organize";
+    }
+
+    public sealed class FeatureFlagsSettings
+    {
+        public bool EnableGlobalSidebarShell { get; set; } = true;
+        public bool EnableStructuredResults { get; set; } = true;
+        public bool EnableInspectorPane { get; set; } = true;
+        public bool EnableLaunchGame { get; set; } = true;
+    }
+
+    public sealed class GameLaunchSettings
+    {
+        public string GameExecutablePath { get; set; } = string.Empty;
+        public string ModsPath { get; set; } = string.Empty;
+        public string TrayPath { get; set; } = string.Empty;
+        public string SavesPath { get; set; } = string.Empty;
+    }
+
+    public sealed class ThemeSettings
+    {
+        public string RequestedTheme { get; set; } = "Dark";
     }
 }

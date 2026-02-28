@@ -1,0 +1,169 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:models="clr-namespace:SimsModDesktop.Models"
+             xmlns:results="clr-namespace:SimsModDesktop.Application.Results"
+             xmlns:shell="clr-namespace:SimsModDesktop.ViewModels.Shell"
+             xmlns:legacy="clr-namespace:SimsModDesktop.Views.Legacy"
+             xmlns:inspector="clr-namespace:SimsModDesktop.ViewModels.Inspector"
+             mc:Ignorable="d"
+             x:Class="SimsModDesktop.Views.Shell.MainShellView"
+             x:DataType="shell:MainShellViewModel">
+    <Grid>
+        <Grid Margin="14" ColumnDefinitions="230,*,340" ColumnSpacing="12" IsVisible="{Binding EnableGlobalSidebarShell}">
+        <Border Classes="card" Padding="12">
+            <Grid RowDefinitions="Auto,*,Auto" RowSpacing="10">
+                <StackPanel Spacing="8">
+                    <TextBlock Classes="app-title" Text="Sims Toolkit" />
+                    <TextBlock Classes="helper-text" Text="TS4 Workspace" />
+                </StackPanel>
+
+                <StackPanel Grid.Row="1" Spacing="8">
+                    <Button Classes="secondary" Content="Dashboard" Command="{Binding SelectSectionCommand}" CommandParameter="Dashboard" />
+                    <Button Classes="secondary" Content="Mods" Command="{Binding SelectSectionCommand}" CommandParameter="Mods" />
+                    <Button Classes="secondary" Content="Tray" Command="{Binding SelectSectionCommand}" CommandParameter="Tray" />
+                    <Button Classes="secondary" Content="Saves" Command="{Binding SelectSectionCommand}" CommandParameter="Saves" />
+                    <Button Classes="secondary" Content="Settings" Command="{Binding SelectSectionCommand}" CommandParameter="Settings" />
+                </StackPanel>
+
+                <StackPanel Grid.Row="2" Spacing="6">
+                    <Button Classes="primary" Height="42" Content="Launch Game" IsEnabled="{Binding EnableLaunchGame}" Command="{Binding LaunchGameCommand}" />
+                    <TextBlock Classes="helper-text" TextWrapping="Wrap" Text="{Binding LaunchGameStatus}" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto" RowSpacing="10">
+            <Border Classes="card" Padding="10">
+                <StackPanel Spacing="8">
+                    <TextBlock Classes="section-title" Text="{Binding SelectedSection}" />
+
+                    <WrapPanel IsVisible="{Binding IsModsSectionVisible}" ItemWidth="130" ItemHeight="34">
+                        <Button Classes="secondary" Content="Organize" Command="{Binding SelectModuleCommand}" CommandParameter="organize" />
+                        <Button Classes="secondary" Content="Flatten" Command="{Binding SelectModuleCommand}" CommandParameter="flatten" />
+                        <Button Classes="secondary" Content="Normalize" Command="{Binding SelectModuleCommand}" CommandParameter="normalize" />
+                        <Button Classes="secondary" Content="Merge" Command="{Binding SelectModuleCommand}" CommandParameter="merge" />
+                        <Button Classes="secondary" Content="Find Duplicates" Command="{Binding SelectModuleCommand}" CommandParameter="finddup" />
+                    </WrapPanel>
+
+                    <WrapPanel IsVisible="{Binding IsTraySectionVisible}" ItemWidth="160" ItemHeight="34">
+                        <Button Classes="secondary" Content="Tray Preview" Command="{Binding SelectModuleCommand}" CommandParameter="traypreview" />
+                        <Button Classes="secondary" Content="Tray Dependencies" Command="{Binding SelectModuleCommand}" CommandParameter="traydeps" />
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+
+            <Grid Grid.Row="1">
+                <Border Classes="card" Padding="12" IsVisible="{Binding IsDashboardVisible}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Classes="section-title" Text="Dashboard" />
+                        <Grid ColumnDefinitions="220,*" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                            <TextBlock Text="Game Executable" />
+                            <TextBox Grid.Column="1" Classes="path-field" Text="{Binding GameExecutablePath}" />
+                            <TextBlock Grid.Row="1" Text="Mods Path" />
+                            <TextBox Grid.Row="1" Grid.Column="1" Classes="path-field" Text="{Binding ModsPath}" />
+                            <TextBlock Grid.Row="2" Text="Tray Path" />
+                            <TextBox Grid.Row="2" Grid.Column="1" Classes="path-field" Text="{Binding TrayPath}" />
+                            <TextBlock Grid.Row="3" Text="Saves Path" />
+                            <TextBox Grid.Row="3" Grid.Column="1" Classes="path-field" Text="{Binding SavesPath}" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Classes="card" Padding="12" IsVisible="{Binding IsSavesVisible}">
+                    <StackPanel Spacing="8">
+                        <TextBlock Classes="section-title" Text="Saves (MVP Placeholder)" />
+                        <TextBlock TextWrapping="Wrap" Text="Saves workflow is reserved in this phase. Use Dashboard paths to verify save root health." />
+                    </StackPanel>
+                </Border>
+
+                <Border Classes="card" Padding="12" IsVisible="{Binding IsSettingsVisible}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Classes="section-title" Text="Shell Settings" />
+                        <Grid ColumnDefinitions="240,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                            <TextBlock VerticalAlignment="Center" Text="Theme" />
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                <Button Classes="secondary" Content="Dark" Command="{Binding SetDarkThemeCommand}" />
+                                <Button Classes="secondary" Content="Light" Command="{Binding SetLightThemeCommand}" />
+                            </StackPanel>
+
+                            <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="Enable Global Sidebar Shell" />
+                            <CheckBox Grid.Row="1" Grid.Column="1" IsChecked="{Binding EnableGlobalSidebarShell}" />
+
+                            <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="Enable Structured Results" />
+                            <CheckBox Grid.Row="2" Grid.Column="1" IsChecked="{Binding EnableStructuredResults}" />
+
+                            <TextBlock Grid.Row="3" VerticalAlignment="Center" Text="Enable Inspector Pane" />
+                            <CheckBox Grid.Row="3" Grid.Column="1" IsChecked="{Binding EnableInspectorPane}" />
+
+                            <TextBlock Grid.Row="4" VerticalAlignment="Center" Text="Enable Launch Game" />
+                            <CheckBox Grid.Row="4" Grid.Column="1" IsChecked="{Binding EnableLaunchGame}" />
+
+                            <TextBlock Grid.Row="5" VerticalAlignment="Center" Text="Current Theme" />
+                            <TextBlock Grid.Row="5" Grid.Column="1" VerticalAlignment="Center" Text="{Binding RequestedTheme}" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Grid IsVisible="{Binding IsLegacyVisible}" RowDefinitions="*,Auto" RowSpacing="10">
+                    <legacy:LegacyWorkspaceView DataContext="{Binding Legacy}" />
+
+                    <Border Grid.Row="1" Classes="card" Padding="10" IsVisible="{Binding EnableStructuredResults}">
+                        <Grid RowDefinitions="Auto,Auto,*" RowSpacing="8">
+                            <TextBlock Classes="sub-title" Text="Structured Results" />
+
+                            <Grid Grid.Row="1" ColumnDefinitions="*,*,*,*,Auto" ColumnSpacing="8">
+                                <ComboBox ItemsSource="{Binding AvailableTypeFilters}" SelectedItem="{Binding SelectedTypeFilter}" />
+                                <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableStatusFilters}" SelectedItem="{Binding SelectedStatusFilter}" />
+                                <ComboBox Grid.Column="2" ItemsSource="{Binding AvailableDateFilters}" SelectedItem="{Binding SelectedDateFilter}" />
+                                <ComboBox Grid.Column="3" ItemsSource="{Binding AvailableConfidenceFilters}" SelectedItem="{Binding SelectedConfidenceFilter}" />
+                                <Button Grid.Column="4" Classes="secondary" Content="Clear Filters" Command="{Binding ClearFiltersCommand}" />
+                            </Grid>
+
+                            <ListBox Grid.Row="2" ItemsSource="{Binding ResultRows}" SelectedItem="{Binding SelectedResultRow}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="results:ActionResultRow">
+                                        <Border Classes="card" Margin="0,0,0,6" Padding="8">
+                                            <Grid ColumnDefinitions="2*,Auto,Auto,Auto" ColumnSpacing="8">
+                                                <TextBlock Text="{Binding Name}" />
+                                                <TextBlock Grid.Column="1" Classes="helper-text" Text="{Binding Status}" />
+                                                <TextBlock Grid.Column="2" Classes="helper-text" Text="{Binding Confidence}" />
+                                                <TextBlock Grid.Column="3" Classes="helper-text" Text="{Binding UpdatedLocal}" />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Grid>
+
+            <Border Grid.Row="2" Classes="card" Padding="8">
+                <TextBlock Classes="helper-text" TextWrapping="Wrap" Text="{Binding ShellStatusMessage}" />
+            </Border>
+        </Grid>
+
+        <Border Grid.Column="2" Classes="card" Padding="10" IsVisible="{Binding IsInspectorVisible}">
+            <Grid RowDefinitions="Auto,*,Auto" RowSpacing="8" DataContext="{Binding Inspector}">
+                <TextBlock Classes="section-title" Text="Inspector" />
+                <ListBox Grid.Row="1" ItemsSource="{Binding Details}" />
+                <StackPanel Grid.Row="2" Spacing="8">
+                    <WrapPanel ItemWidth="120" ItemHeight="32">
+                        <Button Classes="secondary" Content="Open Path" Command="{Binding OpenPathCommand}" />
+                        <Button Classes="secondary" Content="Copy Path" Command="{Binding CopyPathCommand}" />
+                        <Button Classes="secondary" Content="Export" Command="{Binding ExportSelectionCommand}" />
+                        <Button Classes="secondary" Content="Related Action" Command="{Binding RunRelatedActionCommand}" />
+                    </WrapPanel>
+                    <TextBlock Classes="helper-text" TextWrapping="Wrap" Text="{Binding Status}" />
+                </StackPanel>
+            </Grid>
+        </Border>
+        </Grid>
+
+        <Border Margin="14" Classes="card" Padding="10" IsVisible="{Binding IsLegacyShellMode}">
+            <legacy:LegacyWorkspaceView DataContext="{Binding Legacy}" />
+        </Border>
+    </Grid>
+</UserControl>

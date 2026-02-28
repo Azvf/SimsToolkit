@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using SimsModDesktop.Application.Cli;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Modules;
+using SimsModDesktop.Application.Results;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Application.TrayPreview;
@@ -12,6 +13,8 @@ using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Infrastructure.Windowing;
 using SimsModDesktop.Models;
 using SimsModDesktop.Services;
+using SimsModDesktop.ViewModels.Inspector;
+using SimsModDesktop.ViewModels.Shell;
 using SimsModDesktop.ViewModels;
 using SimsModDesktop.ViewModels.Panels;
 using SimsModDesktop.Views;
@@ -31,6 +34,9 @@ internal static class ServiceCollectionExtensions
 
         services.AddSingleton<ISimsPowerShellRunner, SimsPowerShellRunner>();
         services.AddSingleton<ISimsTrayPreviewService, SimsTrayPreviewService>();
+        services.AddSingleton<INavigationService, NavigationService>();
+        services.AddSingleton<ITS4PathDiscoveryService, TS4PathDiscoveryService>();
+        services.AddSingleton<IGameLaunchService, GameLaunchService>();
         return services;
     }
 
@@ -65,6 +71,12 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<IMainWindowPlanBuilder, MainWindowPlanBuilder>();
         services.AddSingleton<IToolkitExecutionRunner, ToolkitExecutionRunner>();
         services.AddSingleton<ITrayPreviewRunner, TrayPreviewRunner>();
+
+        services.AddSingleton<IExecutionOutputParser, TrayPreviewOutputParser>();
+        services.AddSingleton<IExecutionOutputParser, TrayDependenciesOutputParser>();
+        services.AddSingleton<IExecutionOutputParser, FindDupOutputParser>();
+        services.AddSingleton<IExecutionOutputParserRegistry, ExecutionOutputParserRegistry>();
+        services.AddSingleton<IActionResultRepository, ActionResultRepository>();
         return services;
     }
 
@@ -102,6 +114,11 @@ internal static class ServiceCollectionExtensions
     public static IServiceCollection AddSimsDesktopPresentation(this IServiceCollection services)
     {
         services.AddSingleton<MainWindowViewModel>();
+        services.AddSingleton<IInspectorPresenter, TrayPreviewInspectorPresenter>();
+        services.AddSingleton<IInspectorPresenter, TrayDependenciesInspectorPresenter>();
+        services.AddSingleton<IInspectorPresenter, FindDupInspectorPresenter>();
+        services.AddSingleton<InspectorViewModel>();
+        services.AddSingleton<MainShellViewModel>();
         services.AddTransient<MainWindow>();
         return services;
     }

@@ -11,6 +11,10 @@ public sealed record MainWindowSettingsSnapshot
     public bool WhatIf { get; init; }
     public AppSettings.SharedFileOpsSettings SharedFileOps { get; init; } = new();
     public AppSettings.UiStateSettings UiState { get; init; } = new();
+    public AppSettings.NavigationSettings Navigation { get; init; } = new();
+    public AppSettings.FeatureFlagsSettings FeatureFlags { get; init; } = new();
+    public AppSettings.GameLaunchSettings GameLaunch { get; init; } = new();
+    public AppSettings.ThemeSettings Theme { get; init; } = new();
 }
 
 public sealed record MainWindowResolvedSettings
@@ -20,6 +24,10 @@ public sealed record MainWindowResolvedSettings
     public bool WhatIf { get; init; }
     public AppSettings.SharedFileOpsSettings SharedFileOps { get; init; } = new();
     public AppSettings.UiStateSettings UiState { get; init; } = new();
+    public AppSettings.NavigationSettings Navigation { get; init; } = new();
+    public AppSettings.FeatureFlagsSettings FeatureFlags { get; init; } = new();
+    public AppSettings.GameLaunchSettings GameLaunch { get; init; } = new();
+    public AppSettings.ThemeSettings Theme { get; init; } = new();
     public SimsAction SelectedAction { get; init; } = SimsAction.Organize;
     public AppWorkspace Workspace { get; init; } = AppWorkspace.Toolkit;
 }

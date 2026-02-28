@@ -18,7 +18,11 @@ public sealed class MainWindowSettingsProjection : IMainWindowSettingsProjection
             SelectedAction = snapshot.SelectedAction,
             WhatIf = snapshot.WhatIf,
             SharedFileOps = CloneShared(snapshot.SharedFileOps),
-            UiState = CloneUiState(snapshot.UiState)
+            UiState = CloneUiState(snapshot.UiState),
+            Navigation = CloneNavigation(snapshot.Navigation),
+            FeatureFlags = CloneFeatureFlags(snapshot.FeatureFlags),
+            GameLaunch = CloneGameLaunch(snapshot.GameLaunch),
+            Theme = CloneTheme(snapshot.Theme)
         };
 
         foreach (var module in moduleRegistry.All)
@@ -53,6 +57,10 @@ public sealed class MainWindowSettingsProjection : IMainWindowSettingsProjection
             WhatIf = settings.WhatIf,
             SharedFileOps = CloneShared(settings.SharedFileOps),
             UiState = CloneUiState(settings.UiState),
+            Navigation = CloneNavigation(settings.Navigation),
+            FeatureFlags = CloneFeatureFlags(settings.FeatureFlags),
+            GameLaunch = CloneGameLaunch(settings.GameLaunch),
+            Theme = CloneTheme(settings.Theme),
             SelectedAction = resolvedAction,
             Workspace = settings.SelectedAction == SimsAction.TrayPreview
                 ? AppWorkspace.TrayPreview
@@ -94,6 +102,49 @@ public sealed class MainWindowSettingsProjection : IMainWindowSettingsProjection
             TrayPreviewLogDrawerOpen = source.TrayPreviewLogDrawerOpen,
             ToolkitAdvancedOpen = source.ToolkitAdvancedOpen,
             TrayPreviewAdvancedOpen = source.TrayPreviewAdvancedOpen
+        };
+    }
+
+    private static AppSettings.NavigationSettings CloneNavigation(AppSettings.NavigationSettings? value)
+    {
+        var source = value ?? new AppSettings.NavigationSettings();
+        return new AppSettings.NavigationSettings
+        {
+            SelectedSection = source.SelectedSection,
+            SelectedModuleKey = source.SelectedModuleKey
+        };
+    }
+
+    private static AppSettings.FeatureFlagsSettings CloneFeatureFlags(AppSettings.FeatureFlagsSettings? value)
+    {
+        var source = value ?? new AppSettings.FeatureFlagsSettings();
+        return new AppSettings.FeatureFlagsSettings
+        {
+            EnableGlobalSidebarShell = source.EnableGlobalSidebarShell,
+            EnableStructuredResults = source.EnableStructuredResults,
+            EnableInspectorPane = source.EnableInspectorPane,
+            EnableLaunchGame = source.EnableLaunchGame
+        };
+    }
+
+    private static AppSettings.GameLaunchSettings CloneGameLaunch(AppSettings.GameLaunchSettings? value)
+    {
+        var source = value ?? new AppSettings.GameLaunchSettings();
+        return new AppSettings.GameLaunchSettings
+        {
+            GameExecutablePath = source.GameExecutablePath,
+            ModsPath = source.ModsPath,
+            TrayPath = source.TrayPath,
+            SavesPath = source.SavesPath
+        };
+    }
+
+    private static AppSettings.ThemeSettings CloneTheme(AppSettings.ThemeSettings? value)
+    {
+        var source = value ?? new AppSettings.ThemeSettings();
+        return new AppSettings.ThemeSettings
+        {
+            RequestedTheme = source.RequestedTheme
         };
     }
 }
