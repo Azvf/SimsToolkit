@@ -19,6 +19,14 @@
         <Setter Property="CornerRadius" Value="{DynamicResource Radius.Small}" />
     </Style>
 
+    <Style Selector="Border.tray-preview-empty-state">
+        <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderHover}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Radius.Small}" />
+        <Setter Property="Padding" Value="20" />
+    </Style>
+
     <Style Selector="Border.sidebar-shell">
         <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
         <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
@@ -45,6 +53,20 @@
         <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="{DynamicResource Radius.Small}" />
+    </Style>
+
+    <Style Selector="Border.path-health-interactive">
+        <Setter Property="Cursor" Value="Hand" />
+    </Style>
+
+    <Style Selector="Border.path-health-interactive:pointerover">
+        <Setter Property="Background" Value="{DynamicResource Brush.SurfaceHover}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderFocus}" />
+    </Style>
+
+    <Style Selector="Border.path-health-interactive:pressed">
+        <Setter Property="Background" Value="{DynamicResource Brush.SurfacePressed}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderFocus}" />
     </Style>
 
     <Style Selector="Border.inspector-shell">

@@ -7,6 +7,8 @@ public sealed class TrayPreviewPanelViewModel : ObservableObject, ITrayPreviewMo
 {
     private string _trayRoot = string.Empty;
     private string _presetTypeFilter = "All";
+    private string _buildSizeFilter = "All";
+    private string _householdSizeFilter = "All";
     private string _authorFilter = string.Empty;
     private string _timeFilter = "All";
     private string _searchQuery = string.Empty;
@@ -27,6 +29,18 @@ public sealed class TrayPreviewPanelViewModel : ObservableObject, ITrayPreviewMo
     {
         get => _authorFilter;
         set => SetProperty(ref _authorFilter, value);
+    }
+
+    public string BuildSizeFilter
+    {
+        get => _buildSizeFilter;
+        set => SetProperty(ref _buildSizeFilter, value);
+    }
+
+    public string HouseholdSizeFilter
+    {
+        get => _householdSizeFilter;
+        set => SetProperty(ref _householdSizeFilter, value);
     }
 
     public string TimeFilter

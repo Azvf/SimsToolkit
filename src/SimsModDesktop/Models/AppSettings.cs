@@ -74,6 +74,8 @@ public sealed class AppSettings
     public sealed class TrayPreviewSettings
     {
         public string PresetTypeFilter { get; set; } = "All";
+        public string BuildSizeFilter { get; set; } = "All";
+        public string HouseholdSizeFilter { get; set; } = "All";
         public string AuthorFilter { get; set; } = string.Empty;
         public string TimeFilter { get; set; } = "All";
         public string SearchQuery { get; set; } = string.Empty;

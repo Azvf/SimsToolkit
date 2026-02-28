@@ -9,6 +9,12 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
     private static readonly Regex TrayIdentityRegex = new(
         "^0x([0-9a-fA-F]{1,8})!0x([0-9a-fA-F]{1,16})$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex BuildSizeRegex = new(
+        @"(?<!\d)(\d{1,2})\s*[xX]\s*(\d{1,2})(?!\d)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex HouseholdSizeRegex = new(
+        @"(?:(\d{1,2})\s*(?:sim|sims|member|members|人|口)|(?:household|family)\s*(\d{1,2}))",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -196,6 +202,8 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
             .ThenBy(item => item.TrayItemKey, StringComparer.OrdinalIgnoreCase);
 
         orderedRows = ApplyPresetTypeFilter(orderedRows, request.PresetTypeFilter);
+        orderedRows = ApplyBuildSizeFilter(orderedRows, request.BuildSizeFilter);
+        orderedRows = ApplyHouseholdSizeFilter(orderedRows, request.HouseholdSizeFilter);
         orderedRows = ApplyAuthorFilter(orderedRows, request.AuthorFilter);
         orderedRows = ApplyTimeFilter(orderedRows, request.TimeFilter);
         orderedRows = ApplySearchFilter(orderedRows, request.SearchQuery);
@@ -234,11 +242,22 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
     {
         var normalizedTrayPath = Path.GetFullPath(request.TrayPath.Trim()).TrimEnd(Path.DirectorySeparatorChar).ToLowerInvariant();
         var normalizedPresetTypeFilter = NormalizeFilterToken(request.PresetTypeFilter);
+        var normalizedBuildSizeFilter = NormalizeFilterToken(request.BuildSizeFilter);
+        var normalizedHouseholdSizeFilter = NormalizeFilterToken(request.HouseholdSizeFilter);
         var normalizedAuthorFilter = NormalizeFilterToken(request.AuthorFilter);
         var normalizedTimeFilter = NormalizeFilterToken(request.TimeFilter);
         var normalizedSearchQuery = NormalizeFilterToken(request.SearchQuery);
 
-        return string.Join("|", normalizedTrayPath, request.PageSize, normalizedPresetTypeFilter, normalizedAuthorFilter, normalizedTimeFilter, normalizedSearchQuery);
+        return string.Join(
+            "|",
+            normalizedTrayPath,
+            request.PageSize,
+            normalizedPresetTypeFilter,
+            normalizedBuildSizeFilter,
+            normalizedHouseholdSizeFilter,
+            normalizedAuthorFilter,
+            normalizedTimeFilter,
+            normalizedSearchQuery);
     }
 
     private static TrayIdentity ParseIdentity(string fileName)
@@ -339,6 +358,66 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
             item.TrayItemKey.Contains(needle, StringComparison.OrdinalIgnoreCase));
     }
 
+    private static IEnumerable<SimsTrayPreviewItem> ApplyBuildSizeFilter(
+        IEnumerable<SimsTrayPreviewItem> rows,
+        string? buildSizeFilter)
+    {
+        if (string.IsNullOrWhiteSpace(buildSizeFilter) ||
+            string.Equals(buildSizeFilter, "All", StringComparison.OrdinalIgnoreCase))
+        {
+            return rows;
+        }
+
+        if (!TryParseSizeToken(buildSizeFilter, out var expectedWidth, out var expectedHeight))
+        {
+            return rows;
+        }
+
+        return rows.Where(item =>
+        {
+            if (!item.PresetType.Equals("Lot", StringComparison.OrdinalIgnoreCase) &&
+                !item.PresetType.Equals("Room", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (!TryParseBuildDimensions(item, out var width, out var height))
+            {
+                return false;
+            }
+
+            return DimensionsMatchAllowSwap(expectedWidth, expectedHeight, width, height);
+        });
+    }
+
+    private static IEnumerable<SimsTrayPreviewItem> ApplyHouseholdSizeFilter(
+        IEnumerable<SimsTrayPreviewItem> rows,
+        string? householdSizeFilter)
+    {
+        if (string.IsNullOrWhiteSpace(householdSizeFilter) ||
+            string.Equals(householdSizeFilter, "All", StringComparison.OrdinalIgnoreCase))
+        {
+            return rows;
+        }
+
+        var normalized = householdSizeFilter.Trim();
+        return rows.Where(item =>
+        {
+            if (!item.PresetType.Equals("Household", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            var parsedSize = TryParseHouseholdSize(item);
+            if (!int.TryParse(normalized, out var expectedSize))
+            {
+                return false;
+            }
+
+            return parsedSize.HasValue && parsedSize.Value == expectedSize;
+        });
+    }
+
     private static IEnumerable<SimsTrayPreviewItem> ApplyTimeFilter(
         IEnumerable<SimsTrayPreviewItem> rows,
         string? timeFilter)
@@ -415,6 +494,121 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         return string.IsNullOrWhiteSpace(value)
             ? "all"
             : value.Trim().ToLowerInvariant();
+    }
+
+    private static bool TryParseBuildDimensions(SimsTrayPreviewItem item, out int width, out int height)
+    {
+        width = 0;
+        height = 0;
+
+        var searchSources = new[]
+        {
+            item.ItemName,
+            item.FileListPreview
+        };
+
+        foreach (var source in searchSources)
+        {
+            if (string.IsNullOrWhiteSpace(source))
+            {
+                continue;
+            }
+
+            var match = BuildSizeRegex.Match(source);
+            if (!match.Success)
+            {
+                continue;
+            }
+
+            if (!int.TryParse(match.Groups[1].Value, out var parsedWidth) ||
+                !int.TryParse(match.Groups[2].Value, out var parsedHeight))
+            {
+                continue;
+            }
+
+            if (parsedWidth < 1 || parsedHeight < 1)
+            {
+                continue;
+            }
+
+            width = parsedWidth;
+            height = parsedHeight;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryParseSizeToken(string rawValue, out int width, out int height)
+    {
+        width = 0;
+        height = 0;
+
+        if (string.IsNullOrWhiteSpace(rawValue))
+        {
+            return false;
+        }
+
+        var match = BuildSizeRegex.Match(rawValue);
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        if (!int.TryParse(match.Groups[1].Value, out width) ||
+            !int.TryParse(match.Groups[2].Value, out height))
+        {
+            return false;
+        }
+
+        return width > 0 && height > 0;
+    }
+
+    private static bool DimensionsMatchAllowSwap(int expectedWidth, int expectedHeight, int actualWidth, int actualHeight)
+    {
+        return (expectedWidth == actualWidth && expectedHeight == actualHeight) ||
+               (expectedWidth == actualHeight && expectedHeight == actualWidth);
+    }
+
+    private static int? TryParseHouseholdSize(SimsTrayPreviewItem item)
+    {
+        var searchSources = new[]
+        {
+            item.ItemName,
+            item.FileListPreview
+        };
+
+        foreach (var source in searchSources)
+        {
+            if (string.IsNullOrWhiteSpace(source))
+            {
+                continue;
+            }
+
+            var match = HouseholdSizeRegex.Match(source);
+            if (!match.Success)
+            {
+                continue;
+            }
+
+            var candidate = match.Groups[1].Success
+                ? match.Groups[1].Value
+                : match.Groups[2].Value;
+
+            if (!int.TryParse(candidate, out var parsed))
+            {
+                continue;
+            }
+
+            if (parsed < 1)
+            {
+                continue;
+            }
+
+            return Math.Min(parsed, 8);
+        }
+
+        return null;
     }
 
     private sealed class CachedSnapshot

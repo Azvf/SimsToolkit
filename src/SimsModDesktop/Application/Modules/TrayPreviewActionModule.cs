@@ -9,6 +9,8 @@ public sealed class TrayPreviewActionModule : IActionModule
     private static readonly IReadOnlyList<string> ActionPatchKeys =
     [
         "presetTypeFilter",
+        "buildSizeFilter",
+        "householdSizeFilter",
         "authorFilter",
         "timeFilter",
         "searchQuery"
@@ -29,17 +31,21 @@ public sealed class TrayPreviewActionModule : IActionModule
 
     public void LoadFromSettings(AppSettings settings)
     {
-        _panel.PresetTypeFilter = settings.TrayPreview.PresetTypeFilter;
+        _panel.PresetTypeFilter = NormalizeFilter(settings.TrayPreview.PresetTypeFilter);
+        _panel.BuildSizeFilter = NormalizeFilter(settings.TrayPreview.BuildSizeFilter);
+        _panel.HouseholdSizeFilter = NormalizeFilter(settings.TrayPreview.HouseholdSizeFilter);
         _panel.AuthorFilter = settings.TrayPreview.AuthorFilter;
-        _panel.TimeFilter = settings.TrayPreview.TimeFilter;
+        _panel.TimeFilter = NormalizeFilter(settings.TrayPreview.TimeFilter);
         _panel.SearchQuery = settings.TrayPreview.SearchQuery;
     }
 
     public void SaveToSettings(AppSettings settings)
     {
-        settings.TrayPreview.PresetTypeFilter = _panel.PresetTypeFilter;
+        settings.TrayPreview.PresetTypeFilter = NormalizeFilter(_panel.PresetTypeFilter);
+        settings.TrayPreview.BuildSizeFilter = NormalizeFilter(_panel.BuildSizeFilter);
+        settings.TrayPreview.HouseholdSizeFilter = NormalizeFilter(_panel.HouseholdSizeFilter);
         settings.TrayPreview.AuthorFilter = _panel.AuthorFilter;
-        settings.TrayPreview.TimeFilter = _panel.TimeFilter;
+        settings.TrayPreview.TimeFilter = NormalizeFilter(_panel.TimeFilter);
         settings.TrayPreview.SearchQuery = _panel.SearchQuery;
     }
 
@@ -59,6 +65,8 @@ public sealed class TrayPreviewActionModule : IActionModule
             TrayPath = Path.GetFullPath(trayPath),
             PageSize = 50,
             PresetTypeFilter = NormalizeFilter(_panel.PresetTypeFilter),
+            BuildSizeFilter = NormalizeFilter(_panel.BuildSizeFilter),
+            HouseholdSizeFilter = NormalizeFilter(_panel.HouseholdSizeFilter),
             AuthorFilter = _panel.AuthorFilter.Trim(),
             TimeFilter = NormalizeFilter(_panel.TimeFilter),
             SearchQuery = _panel.SearchQuery.Trim()
@@ -72,6 +80,8 @@ public sealed class TrayPreviewActionModule : IActionModule
         error = string.Empty;
 
         if (!ModuleHelpers.TryGetString(patch, "presetTypeFilter", out var hasPresetTypeFilter, out var presetTypeFilter, out error) ||
+            !ModuleHelpers.TryGetString(patch, "buildSizeFilter", out var hasBuildSizeFilter, out var buildSizeFilter, out error) ||
+            !ModuleHelpers.TryGetString(patch, "householdSizeFilter", out var hasHouseholdSizeFilter, out var householdSizeFilter, out error) ||
             !ModuleHelpers.TryGetString(patch, "authorFilter", out var hasAuthorFilter, out var authorFilter, out error) ||
             !ModuleHelpers.TryGetString(patch, "timeFilter", out var hasTimeFilter, out var timeFilter, out error) ||
             !ModuleHelpers.TryGetString(patch, "searchQuery", out var hasSearchQuery, out var searchQuery, out error))
@@ -82,6 +92,16 @@ public sealed class TrayPreviewActionModule : IActionModule
         if (hasPresetTypeFilter)
         {
             _panel.PresetTypeFilter = NormalizeFilter(presetTypeFilter);
+        }
+
+        if (hasBuildSizeFilter)
+        {
+            _panel.BuildSizeFilter = NormalizeFilter(buildSizeFilter);
+        }
+
+        if (hasHouseholdSizeFilter)
+        {
+            _panel.HouseholdSizeFilter = NormalizeFilter(householdSizeFilter);
         }
 
         if (hasAuthorFilter)

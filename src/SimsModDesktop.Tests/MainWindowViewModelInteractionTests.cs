@@ -161,6 +161,47 @@ public sealed class MainWindowViewModelInteractionTests
         Assert.Contains("[ui] unsupported csv browse target: UnknownCsvTarget", vm.LogText, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task TrayPreviewEmptyState_PathMissing_ShowsMissingStatus()
+    {
+        var vm = CreateViewModel(new FakeExecutionCoordinator(), new FakeConfirmationDialogService());
+        await vm.InitializeAsync();
+
+        vm.Workspace = AppWorkspace.TrayPreview;
+        vm.TrayPreview.TrayRoot = string.Empty;
+
+        Assert.True(vm.IsTrayPreviewEmptyStateVisible);
+        Assert.True(vm.IsTrayPreviewPathMissing);
+        Assert.True(vm.IsTrayPreviewEmptyStatusMissing);
+        Assert.False(vm.HasTrayPreviewItems);
+        Assert.False(vm.IsTrayPreviewPagerVisible);
+    }
+
+    [Fact]
+    public async Task TrayPreviewEmptyState_ValidPathButNoItems_ShowsNoResultsStatus()
+    {
+        var vm = CreateViewModel(new FakeExecutionCoordinator(), new FakeConfirmationDialogService());
+        await vm.InitializeAsync();
+
+        using var trayRoot = new TempDirectory();
+        vm.Workspace = AppWorkspace.TrayPreview;
+        vm.TrayPreview.TrayRoot = trayRoot.Path;
+
+        await InvokePrivateAsync(
+            vm,
+            "RunTrayPreviewAsync",
+            new TrayPreviewInput
+            {
+                TrayPath = trayRoot.Path
+            });
+
+        Assert.True(vm.IsTrayPreviewEmptyStateVisible);
+        Assert.False(vm.IsTrayPreviewPathMissing);
+        Assert.True(vm.IsTrayPreviewEmptyStatusWarning);
+        Assert.False(vm.HasTrayPreviewItems);
+        Assert.False(vm.IsTrayPreviewPagerVisible);
+    }
+
     private static MainWindowViewModel CreateViewModel(
         FakeExecutionCoordinator execution,
         FakeConfirmationDialogService confirmation,
@@ -354,6 +395,25 @@ public sealed class MainWindowViewModelInteractionTests
             if (File.Exists(Path))
             {
                 File.Delete(Path);
+            }
+        }
+    }
+
+    private sealed class TempDirectory : IDisposable
+    {
+        public TempDirectory()
+        {
+            Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"sims-tray-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(Path);
+        }
+
+        public string Path { get; }
+
+        public void Dispose()
+        {
+            if (Directory.Exists(Path))
+            {
+                Directory.Delete(Path, recursive: true);
             }
         }
     }

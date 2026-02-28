@@ -4,6 +4,19 @@ namespace SimsModDesktop.Application.Validation;
 
 public sealed class TrayPreviewInputValidator : IActionInputValidator<TrayPreviewInput>
 {
+    private static readonly HashSet<string> SupportedBuildSizeFilters = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "15 x 20",
+        "20 x 20",
+        "30 x 20",
+        "30 x 30",
+        "40 x 30",
+        "40 x 40",
+        "50 x 40",
+        "50 x 50",
+        "64 x 64"
+    };
+
     public bool TryValidate(TrayPreviewInput input, out string error)
     {
         error = string.Empty;
@@ -36,6 +49,26 @@ public sealed class TrayPreviewInputValidator : IActionInputValidator<TrayPrevie
         {
             error = $"Unsupported time filter: {timeFilter}.";
             return false;
+        }
+
+        var buildSizeFilter = input.BuildSizeFilter?.Trim();
+        if (!string.IsNullOrWhiteSpace(buildSizeFilter) &&
+            !string.Equals(buildSizeFilter, "All", StringComparison.OrdinalIgnoreCase) &&
+            !SupportedBuildSizeFilters.Contains(buildSizeFilter))
+        {
+            error = $"Unsupported build size filter: {buildSizeFilter}.";
+            return false;
+        }
+
+        var householdSizeFilter = input.HouseholdSizeFilter?.Trim();
+        if (!string.IsNullOrWhiteSpace(householdSizeFilter) &&
+            !string.Equals(householdSizeFilter, "All", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!int.TryParse(householdSizeFilter, out var size) || size < 1 || size > 8)
+            {
+                error = $"Unsupported household size filter: {householdSizeFilter}.";
+                return false;
+            }
         }
 
         return true;

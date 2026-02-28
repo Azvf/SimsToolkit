@@ -38,6 +38,8 @@ public sealed class MainShellViewModel : ObservableObject
     private string _lastDerivedSavesPath = string.Empty;
     private bool _isInitialized;
 
+    public event EventHandler? Ts4RootFocusRequested;
+
     public MainShellViewModel(
         MainWindowViewModel workspaceVm,
         INavigationService navigation,
@@ -61,6 +63,9 @@ public sealed class MainShellViewModel : ObservableObject
         SetDarkThemeCommand = new RelayCommand(() => RequestedTheme = "Dark");
         SetLightThemeCommand = new RelayCommand(() => RequestedTheme = "Light");
         BrowseTs4RootCommand = new AsyncRelayCommand(BrowseTs4RootAsync, () => !_workspaceVm.IsBusy, disableWhileRunning: false);
+        NavigateToSettingsForPathFixCommand = new RelayCommand(
+            NavigateToSettingsForPathFix,
+            () => !HasAllCorePathsValid);
 
         _workspaceVm.PropertyChanged += OnWorkspaceVmPropertyChanged;
         _navigation.PropertyChanged += OnNavigationPropertyChanged;
@@ -75,6 +80,7 @@ public sealed class MainShellViewModel : ObservableObject
     public RelayCommand SetDarkThemeCommand { get; }
     public RelayCommand SetLightThemeCommand { get; }
     public AsyncRelayCommand BrowseTs4RootCommand { get; }
+    public RelayCommand NavigateToSettingsForPathFixCommand { get; }
 
     public IReadOnlyList<NavigationItem> SectionItems => _navigation.SectionItems;
     public IReadOnlyList<NavigationItem> ModuleItems => _navigation.CurrentModules;
@@ -284,6 +290,8 @@ public sealed class MainShellViewModel : ObservableObject
     public bool HasModsPath => !string.IsNullOrWhiteSpace(ModsPath) && Directory.Exists(ModsPath);
     public bool HasTrayPath => !string.IsNullOrWhiteSpace(TrayPath) && Directory.Exists(TrayPath);
     public bool HasSavesPath => !string.IsNullOrWhiteSpace(SavesPath) && Directory.Exists(SavesPath);
+    public bool HasAllCorePathsValid => HasGameExecutable && HasModsPath && HasTrayPath && HasSavesPath;
+    public bool IsPathHealthExpanded => !HasAllCorePathsValid;
 
     public bool IsGameExecutableWarning => !string.IsNullOrWhiteSpace(GameExecutablePath) && !File.Exists(GameExecutablePath);
     public bool IsModsPathWarning => !string.IsNullOrWhiteSpace(ModsPath) && !Directory.Exists(ModsPath);
@@ -542,6 +550,17 @@ public sealed class MainShellViewModel : ObservableObject
         Ts4RootPath = selectedPath;
     }
 
+    private void NavigateToSettingsForPathFix()
+    {
+        if (HasAllCorePathsValid)
+        {
+            return;
+        }
+
+        SelectSection(nameof(AppSection.Settings));
+        Ts4RootFocusRequested?.Invoke(this, EventArgs.Empty);
+    }
+
     private void OnNavigationPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (string.Equals(e.PropertyName, nameof(INavigationService.SelectedSection), StringComparison.Ordinal))
@@ -615,6 +634,8 @@ public sealed class MainShellViewModel : ObservableObject
         OnPropertyChanged(nameof(HasModsPath));
         OnPropertyChanged(nameof(HasTrayPath));
         OnPropertyChanged(nameof(HasSavesPath));
+        OnPropertyChanged(nameof(HasAllCorePathsValid));
+        OnPropertyChanged(nameof(IsPathHealthExpanded));
         OnPropertyChanged(nameof(IsGameExecutableWarning));
         OnPropertyChanged(nameof(IsModsPathWarning));
         OnPropertyChanged(nameof(IsTrayPathWarning));
@@ -631,6 +652,7 @@ public sealed class MainShellViewModel : ObservableObject
         OnPropertyChanged(nameof(CanLaunchGame));
         OnPropertyChanged(nameof(LaunchButtonText));
         LaunchGameCommand.NotifyCanExecuteChanged();
+        NavigateToSettingsForPathFixCommand.NotifyCanExecuteChanged();
     }
 
     private void SyncTrayPathsToWorkspace()

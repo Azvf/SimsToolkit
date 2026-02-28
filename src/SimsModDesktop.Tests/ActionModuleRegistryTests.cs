@@ -244,6 +244,8 @@ public sealed class ActionModuleRegistryTests
     {
         public string TrayRoot { get; set; } = string.Empty;
         public string PresetTypeFilter { get; set; } = "All";
+        public string BuildSizeFilter { get; set; } = "All";
+        public string HouseholdSizeFilter { get; set; } = "All";
         public string AuthorFilter { get; set; } = string.Empty;
         public string TimeFilter { get; set; } = "All";
         public string SearchQuery { get; set; } = string.Empty;

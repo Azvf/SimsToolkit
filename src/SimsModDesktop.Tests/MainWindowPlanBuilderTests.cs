@@ -116,6 +116,8 @@ public sealed class MainWindowPlanBuilderTests
         {
             TrayRoot = trayRoot,
             PresetTypeFilter = "Lot",
+            BuildSizeFilter = "30 x 30",
+            HouseholdSizeFilter = "All",
             AuthorFilter = "Author-01",
             TimeFilter = "Last30d",
             SearchQuery = "villa"
@@ -138,6 +140,8 @@ public sealed class MainWindowPlanBuilderTests
         Assert.True(ok, error);
         Assert.Equal(Path.GetFullPath(trayRoot), input.TrayPath);
         Assert.Equal("Lot", input.PresetTypeFilter);
+        Assert.Equal("30 x 30", input.BuildSizeFilter);
+        Assert.Equal("All", input.HouseholdSizeFilter);
         Assert.Equal("Author-01", input.AuthorFilter);
         Assert.Equal("Last30d", input.TimeFilter);
         Assert.Equal("villa", input.SearchQuery);

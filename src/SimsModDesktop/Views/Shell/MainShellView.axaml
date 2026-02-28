@@ -18,74 +18,96 @@
                     <TextBlock Classes="sidebar-minimal-title" Text="Workspace" />
                 </StackPanel>
 
-                <Border Grid.Row="1" Classes="sidebar-subtle-block" Padding="8">
-                    <Grid ColumnDefinitions="*,Auto"
-                          RowDefinitions="Auto,Auto,Auto,Auto"
-                          ColumnSpacing="8"
-                          RowSpacing="6">
-                        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                            <Border Classes="status-dot"
+                <Border Grid.Row="1"
+                        Classes="sidebar-subtle-block"
+                        Classes.path-health-interactive="{Binding IsPathHealthExpanded}"
+                        Padding="8"
+                        IsHitTestVisible="{Binding IsPathHealthExpanded}"
+                        PointerPressed="OnPathHealthPointerPressed">
+                    <Grid>
+                        <Grid ColumnDefinitions="*,Auto"
+                              RowDefinitions="Auto,Auto,Auto,Auto"
+                              ColumnSpacing="8"
+                              RowSpacing="6"
+                              IsVisible="{Binding IsPathHealthExpanded}">
+                            <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <Border Classes="status-dot"
+                                        Classes.status-ok="{Binding HasGameExecutable}"
+                                        Classes.status-warning="{Binding IsGameExecutableWarning}"
+                                        Classes.status-missing="{Binding IsGameExecutableMissing}" />
+                                <TextBlock VerticalAlignment="Center" Text="Game" />
+                            </StackPanel>
+                            <Border Grid.Row="0"
+                                    Grid.Column="1"
+                                    Classes="status-pill"
                                     Classes.status-ok="{Binding HasGameExecutable}"
                                     Classes.status-warning="{Binding IsGameExecutableWarning}"
-                                    Classes.status-missing="{Binding IsGameExecutableMissing}" />
-                            <TextBlock VerticalAlignment="Center" Text="Game" />
-                        </StackPanel>
-                        <Border Grid.Row="0"
-                                Grid.Column="1"
-                                Classes="status-pill"
-                                Classes.status-ok="{Binding HasGameExecutable}"
-                                Classes.status-warning="{Binding IsGameExecutableWarning}"
-                                Classes.status-missing="{Binding IsGameExecutableMissing}">
-                            <TextBlock Classes="status-pill-text" Text="{Binding GameStatusBadgeText}" />
-                        </Border>
+                                    Classes.status-missing="{Binding IsGameExecutableMissing}">
+                                <TextBlock Classes="status-pill-text" Text="{Binding GameStatusBadgeText}" />
+                            </Border>
 
-                        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                            <Border Classes="status-dot"
+                            <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <Border Classes="status-dot"
+                                        Classes.status-ok="{Binding HasModsPath}"
+                                        Classes.status-warning="{Binding IsModsPathWarning}"
+                                        Classes.status-missing="{Binding IsModsPathMissing}" />
+                                <TextBlock VerticalAlignment="Center" Text="Mods" />
+                            </StackPanel>
+                            <Border Grid.Row="1"
+                                    Grid.Column="1"
+                                    Classes="status-pill"
                                     Classes.status-ok="{Binding HasModsPath}"
                                     Classes.status-warning="{Binding IsModsPathWarning}"
-                                    Classes.status-missing="{Binding IsModsPathMissing}" />
-                            <TextBlock VerticalAlignment="Center" Text="Mods" />
-                        </StackPanel>
-                        <Border Grid.Row="1"
-                                Grid.Column="1"
-                                Classes="status-pill"
-                                Classes.status-ok="{Binding HasModsPath}"
-                                Classes.status-warning="{Binding IsModsPathWarning}"
-                                Classes.status-missing="{Binding IsModsPathMissing}">
-                            <TextBlock Classes="status-pill-text" Text="{Binding ModsStatusBadgeText}" />
-                        </Border>
+                                    Classes.status-missing="{Binding IsModsPathMissing}">
+                                <TextBlock Classes="status-pill-text" Text="{Binding ModsStatusBadgeText}" />
+                            </Border>
 
-                        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                            <Border Classes="status-dot"
+                            <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <Border Classes="status-dot"
+                                        Classes.status-ok="{Binding HasTrayPath}"
+                                        Classes.status-warning="{Binding IsTrayPathWarning}"
+                                        Classes.status-missing="{Binding IsTrayPathMissing}" />
+                                <TextBlock VerticalAlignment="Center" Text="Tray" />
+                            </StackPanel>
+                            <Border Grid.Row="2"
+                                    Grid.Column="1"
+                                    Classes="status-pill"
                                     Classes.status-ok="{Binding HasTrayPath}"
                                     Classes.status-warning="{Binding IsTrayPathWarning}"
-                                    Classes.status-missing="{Binding IsTrayPathMissing}" />
-                            <TextBlock VerticalAlignment="Center" Text="Tray" />
-                        </StackPanel>
-                        <Border Grid.Row="2"
-                                Grid.Column="1"
-                                Classes="status-pill"
-                                Classes.status-ok="{Binding HasTrayPath}"
-                                Classes.status-warning="{Binding IsTrayPathWarning}"
-                                Classes.status-missing="{Binding IsTrayPathMissing}">
-                            <TextBlock Classes="status-pill-text" Text="{Binding TrayStatusBadgeText}" />
-                        </Border>
+                                    Classes.status-missing="{Binding IsTrayPathMissing}">
+                                <TextBlock Classes="status-pill-text" Text="{Binding TrayStatusBadgeText}" />
+                            </Border>
 
-                        <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                            <Border Classes="status-dot"
+                            <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <Border Classes="status-dot"
+                                        Classes.status-ok="{Binding HasSavesPath}"
+                                        Classes.status-warning="{Binding IsSavesPathWarning}"
+                                        Classes.status-missing="{Binding IsSavesPathMissing}" />
+                                <TextBlock VerticalAlignment="Center" Text="Saves" />
+                            </StackPanel>
+                            <Border Grid.Row="3"
+                                    Grid.Column="1"
+                                    Classes="status-pill"
                                     Classes.status-ok="{Binding HasSavesPath}"
                                     Classes.status-warning="{Binding IsSavesPathWarning}"
-                                    Classes.status-missing="{Binding IsSavesPathMissing}" />
-                            <TextBlock VerticalAlignment="Center" Text="Saves" />
-                        </StackPanel>
-                        <Border Grid.Row="3"
-                                Grid.Column="1"
-                                Classes="status-pill"
-                                Classes.status-ok="{Binding HasSavesPath}"
-                                Classes.status-warning="{Binding IsSavesPathWarning}"
-                                Classes.status-missing="{Binding IsSavesPathMissing}">
-                            <TextBlock Classes="status-pill-text" Text="{Binding SavesStatusBadgeText}" />
-                        </Border>
+                                    Classes.status-missing="{Binding IsSavesPathMissing}">
+                                <TextBlock Classes="status-pill-text" Text="{Binding SavesStatusBadgeText}" />
+                            </Border>
+                        </Grid>
+
+                        <Grid ColumnDefinitions="Auto,*,Auto"
+                              ColumnSpacing="8"
+                              IsVisible="{Binding HasAllCorePathsValid}">
+                            <Border Classes="status-dot status-ok"
+                                    VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1"
+                                       VerticalAlignment="Center"
+                                       Text="Core Paths" />
+                            <Border Grid.Column="2"
+                                    Classes="status-pill status-ok">
+                                <TextBlock Classes="status-pill-text success-text" Text="Valid" />
+                            </Border>
+                        </Grid>
                     </Grid>
                 </Border>
 
@@ -160,7 +182,10 @@
                                       RowSpacing="8"
                                       ColumnSpacing="8">
                                     <TextBlock Classes="settings-field-label" Text="The Sims 4 Root" />
-                                    <TextBox Grid.Column="1" Classes="path-field" Text="{Binding Ts4RootPath}" />
+                                    <TextBox x:Name="Ts4RootPathTextBox"
+                                             Grid.Column="1"
+                                             Classes="path-field"
+                                             Text="{Binding Ts4RootPath}" />
                                     <Button Grid.Column="2"
                                             Classes="secondary"
                                             Content="Browse"

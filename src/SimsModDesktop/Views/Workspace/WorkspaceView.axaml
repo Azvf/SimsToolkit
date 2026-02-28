@@ -71,7 +71,7 @@
                 <Grid RowDefinitions="Auto,*" RowSpacing="12">
                     <Border Classes="card-muted" Padding="10">
                         <Grid ColumnDefinitions="Auto,180,Auto,200,Auto,180"
-                              RowDefinitions="Auto,Auto"
+                              RowDefinitions="Auto,Auto,Auto"
                               ColumnSpacing="8"
                               RowSpacing="8">
                             <TextBlock VerticalAlignment="Center" Text="Preset Type" />
@@ -92,47 +92,100 @@
                             <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="Search" />
                             <TextBox Grid.Row="1"
                                      Grid.Column="1"
-                                     Grid.ColumnSpan="3"
+                                     Grid.ColumnSpan="5"
                                      Watermark="Item Name or Author ID"
                                      Text="{Binding TrayPreview.SearchQuery}" />
-                            <TextBlock Grid.Row="1"
-                                       Grid.Column="4"
-                                       Grid.ColumnSpan="2"
-                                       Classes="helper-text"
+
+                            <TextBlock Grid.Row="2"
                                        VerticalAlignment="Center"
-                                       Text="Filters auto-apply when path is valid." />
+                                       IsVisible="{Binding IsBuildSizeFilterVisible}"
+                                       Text="Build Size" />
+                            <ComboBox Grid.Row="2"
+                                      Grid.Column="1"
+                                      Width="160"
+                                      IsVisible="{Binding IsBuildSizeFilterVisible}"
+                                      ItemsSource="{Binding TrayPreviewBuildSizeFilterOptions}"
+                                      SelectedItem="{Binding TrayPreview.BuildSizeFilter}" />
+
+                            <TextBlock Grid.Row="2"
+                                       VerticalAlignment="Center"
+                                       IsVisible="{Binding IsHouseholdSizeFilterVisible}"
+                                       Text="Household Size" />
+                            <ComboBox Grid.Row="2"
+                                      Grid.Column="1"
+                                      Width="160"
+                                      IsVisible="{Binding IsHouseholdSizeFilterVisible}"
+                                      ItemsSource="{Binding TrayPreviewHouseholdSizeFilterOptions}"
+                                      SelectedItem="{Binding TrayPreview.HouseholdSizeFilter}" />
                         </Grid>
                     </Border>
 
                     <Border Grid.Row="1" Classes="card-muted" Padding="10">
                         <Grid RowDefinitions="Auto,*,Auto" RowSpacing="8">
-                            <TextBlock Text="{Binding PreviewSummaryText}" />
-                            <ListBox Grid.Row="1" ItemsSource="{Binding PreviewItems}">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate x:DataType="models:SimsTrayPreviewItem">
-                                        <Border Classes="card" Margin="0,0,0,8" Padding="8">
-                                            <StackPanel Spacing="4">
-                                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                                                    <TextBlock FontWeight="SemiBold" Text="{Binding ItemName}" />
-                                                    <TextBlock Grid.Column="1" Classes="helper-text" Text="{Binding PresetType}" />
-                                                </Grid>
-                                                <TextBlock Classes="helper-text" Text="{Binding TrayItemKey}" />
-                                                <Grid ColumnDefinitions="Auto,Auto,Auto,*" ColumnSpacing="8">
-                                                    <TextBlock Text="Files:" />
-                                                    <TextBlock Grid.Column="1" Text="{Binding FileCount}" />
-                                                    <TextBlock Grid.Column="2" Text="Size MB:" />
-                                                    <TextBlock Grid.Column="3" Text="{Binding TotalMB}" />
-                                                </Grid>
-                                                <TextBlock Classes="helper-text" Text="{Binding LatestWriteTimeLocal}" />
-                                                <TextBlock Classes="helper-text" Text="{Binding Extensions}" />
-                                                <TextBlock Classes="helper-text" Text="{Binding ResourceTypes}" />
-                                                <TextBlock TextWrapping="Wrap" Text="{Binding FileListPreview}" />
-                                            </StackPanel>
-                                        </Border>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                            <Grid Grid.Row="2" ColumnDefinitions="Auto,Auto,Auto,Auto,90,Auto,*,Auto" ColumnSpacing="8">
+                            <TextBlock Classes="helper-text"
+                                       IsVisible="{Binding HasTrayPreviewItems}"
+                                       Text="{Binding PreviewSummaryText}" />
+
+                            <Grid Grid.Row="1">
+                                <ListBox IsVisible="{Binding HasTrayPreviewItems}" ItemsSource="{Binding PreviewItems}">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate x:DataType="models:SimsTrayPreviewItem">
+                                            <Border Classes="card" Margin="0,0,0,8" Padding="8">
+                                                <StackPanel Spacing="4">
+                                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                                        <TextBlock FontWeight="SemiBold" Text="{Binding ItemName}" />
+                                                        <TextBlock Grid.Column="1" Classes="helper-text" Text="{Binding PresetType}" />
+                                                    </Grid>
+                                                    <TextBlock Classes="helper-text" Text="{Binding TrayItemKey}" />
+                                                    <Grid ColumnDefinitions="Auto,Auto,Auto,*" ColumnSpacing="8">
+                                                        <TextBlock Text="Files:" />
+                                                        <TextBlock Grid.Column="1" Text="{Binding FileCount}" />
+                                                        <TextBlock Grid.Column="2" Text="Size MB:" />
+                                                        <TextBlock Grid.Column="3" Text="{Binding TotalMB}" />
+                                                    </Grid>
+                                                    <TextBlock Classes="helper-text" Text="{Binding LatestWriteTimeLocal}" />
+                                                    <TextBlock Classes="helper-text" Text="{Binding Extensions}" />
+                                                    <TextBlock Classes="helper-text" Text="{Binding ResourceTypes}" />
+                                                    <TextBlock TextWrapping="Wrap" Text="{Binding FileListPreview}" />
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+
+                                <Border Classes="tray-preview-empty-state" IsVisible="{Binding IsTrayPreviewLoadingStateVisible}">
+                                    <StackPanel HorizontalAlignment="Center"
+                                                VerticalAlignment="Center"
+                                                Spacing="8">
+                                        <TextBlock Classes="tray-preview-empty-description"
+                                                   Text="{Binding TrayPreviewLoadingText}" />
+                                        <ProgressBar Width="220"
+                                                     Height="8"
+                                                     IsIndeterminate="True" />
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Classes="tray-preview-empty-state" IsVisible="{Binding IsTrayPreviewEmptyStateVisible}">
+                                    <StackPanel HorizontalAlignment="Center"
+                                                VerticalAlignment="Center"
+                                                Spacing="8">
+                                        <TextBlock Classes="tray-preview-empty-title"
+                                                   Text="{Binding TrayPreviewEmptyTitleText}" />
+                                        <TextBlock Classes="tray-preview-empty-description"
+                                                   Text="{Binding TrayPreviewEmptyDescriptionText}" />
+                                        <Button Classes="secondary"
+                                                MinWidth="150"
+                                                IsVisible="{Binding HasValidTrayPreviewPath}"
+                                                Content="Load Preview"
+                                                Command="{Binding RunTrayPreviewCommand}" />
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+
+                            <Grid Grid.Row="2"
+                                  IsVisible="{Binding IsTrayPreviewPagerVisible}"
+                                  ColumnDefinitions="Auto,Auto,Auto,Auto,90,Auto,*,Auto"
+                                  ColumnSpacing="8">
                                 <Button Content="Prev Page" Command="{Binding PreviewPrevPageCommand}" />
                                 <Button Grid.Column="1" Content="Next Page" Command="{Binding PreviewNextPageCommand}" />
                                 <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="{Binding PreviewPageText}" />

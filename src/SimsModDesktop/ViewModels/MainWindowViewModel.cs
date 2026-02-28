@@ -57,6 +57,7 @@ public sealed class MainWindowViewModel : ObservableObject
     private string _previewPageText = "Page 0/0";
     private string _previewLazyLoadText = "Lazy cache 0/0 pages";
     private string _previewJumpPageText = string.Empty;
+    private bool _hasTrayPreviewLoadedOnce;
     private string _validationSummaryText = string.Empty;
     private bool _hasValidationErrors;
     private bool _isToolkitLogDrawerOpen;
@@ -103,6 +104,7 @@ public sealed class MainWindowViewModel : ObservableObject
         TrayPreview = trayPreview;
         SharedFileOps = sharedFileOps;
         PreviewItems = new ObservableCollection<SimsTrayPreviewItem>();
+        PreviewItems.CollectionChanged += OnPreviewItemsChanged;
 
         var registeredToolkitActions = _moduleRegistry.All
             .Select(module => module.Action)
@@ -179,6 +181,8 @@ public sealed class MainWindowViewModel : ObservableObject
     public string SettingsHashWorkerCountLabelText => L("ui.settings.hashWorkerCount.label");
     public string SettingsPerformanceHintText => L("ui.settings.performance.hint");
     public IReadOnlyList<string> TrayPreviewPresetTypeFilterOptions => ["All", "Lot", "Room", "Household"];
+    public IReadOnlyList<string> TrayPreviewBuildSizeFilterOptions => ["All", "15 x 20", "20 x 20", "30 x 20", "30 x 30", "40 x 30", "40 x 40", "50 x 40", "50 x 50", "64 x 64"];
+    public IReadOnlyList<string> TrayPreviewHouseholdSizeFilterOptions => ["All", "1", "2", "3", "4", "5", "6", "7", "8"];
     public IReadOnlyList<string> TrayPreviewTimeFilterOptions => ["All", "Last24h", "Last7d", "Last30d", "Last90d"];
 
     public AsyncRelayCommand<string> BrowseFolderCommand { get; }
@@ -495,6 +499,75 @@ public sealed class MainWindowViewModel : ObservableObject
     public bool CanGoPrevPage => !IsBusy && !_isTrayPreviewPageLoading && _trayPreviewCurrentPage > 1;
     public bool CanGoNextPage => !IsBusy && !_isTrayPreviewPageLoading && _trayPreviewCurrentPage < _trayPreviewTotalPages;
     public bool CanJumpToPage => !IsBusy && !_isTrayPreviewPageLoading && TryParsePreviewJumpPage(PreviewJumpPageText, out var page) && page >= 1 && page <= _trayPreviewTotalPages;
+    public bool IsBuildSizeFilterVisible =>
+        string.Equals(TrayPreview.PresetTypeFilter, "Lot", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(TrayPreview.PresetTypeFilter, "Room", StringComparison.OrdinalIgnoreCase);
+    public bool IsHouseholdSizeFilterVisible =>
+        string.Equals(TrayPreview.PresetTypeFilter, "Household", StringComparison.OrdinalIgnoreCase);
+    public bool HasTrayPreviewItems => PreviewItems.Count > 0;
+    public bool IsTrayPreviewLoadingStateVisible => IsBusy && !HasTrayPreviewItems;
+    public bool IsTrayPreviewEmptyStateVisible => !IsBusy && !HasTrayPreviewItems;
+    public bool IsTrayPreviewPagerVisible => HasTrayPreviewItems;
+    public bool IsTrayPreviewEmptyStatusOk => HasValidTrayPreviewPath && !_hasTrayPreviewLoadedOnce;
+    public bool IsTrayPreviewEmptyStatusWarning => HasValidTrayPreviewPath && _hasTrayPreviewLoadedOnce;
+    public bool IsTrayPreviewEmptyStatusMissing => !HasValidTrayPreviewPath;
+    public bool IsTrayPreviewPathMissing => !HasValidTrayPreviewPath;
+
+    public string TrayPreviewEmptyTitleText
+    {
+        get
+        {
+            if (!HasValidTrayPreviewPath)
+            {
+                return L("preview.empty.pathMissing.title");
+            }
+
+            if (_hasTrayPreviewLoadedOnce)
+            {
+                return L("preview.empty.noResults.title");
+            }
+
+            return L("preview.empty.initial.title");
+        }
+    }
+
+    public string TrayPreviewEmptyDescriptionText
+    {
+        get
+        {
+            if (!HasValidTrayPreviewPath)
+            {
+                return L("preview.empty.pathMissing.description");
+            }
+
+            if (_hasTrayPreviewLoadedOnce)
+            {
+                return L("preview.empty.noResults.description");
+            }
+
+            return L("preview.empty.initial.description");
+        }
+    }
+
+    public string TrayPreviewEmptyStatusText
+    {
+        get
+        {
+            if (!HasValidTrayPreviewPath)
+            {
+                return L("preview.empty.status.pathMissing");
+            }
+
+            if (_hasTrayPreviewLoadedOnce)
+            {
+                return L("preview.empty.status.noResults");
+            }
+
+            return L("preview.empty.status.ready");
+        }
+    }
+
+    public string TrayPreviewLoadingText => L("status.trayPreviewLoading");
 
     public async Task InitializeAsync()
     {
@@ -602,6 +675,29 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         QueueValidationRefresh();
 
+        if (ReferenceEquals(sender, TrayPreview) &&
+            string.Equals(e.PropertyName, nameof(TrayPreviewPanelViewModel.PresetTypeFilter), StringComparison.Ordinal))
+        {
+            if (IsBuildSizeFilterVisible && !string.Equals(TrayPreview.HouseholdSizeFilter, "All", StringComparison.OrdinalIgnoreCase))
+            {
+                TrayPreview.HouseholdSizeFilter = "All";
+            }
+            else if (IsHouseholdSizeFilterVisible && !string.Equals(TrayPreview.BuildSizeFilter, "All", StringComparison.OrdinalIgnoreCase))
+            {
+                TrayPreview.BuildSizeFilter = "All";
+            }
+            else if (!IsBuildSizeFilterVisible &&
+                     !IsHouseholdSizeFilterVisible &&
+                     (!string.Equals(TrayPreview.BuildSizeFilter, "All", StringComparison.OrdinalIgnoreCase) ||
+                      !string.Equals(TrayPreview.HouseholdSizeFilter, "All", StringComparison.OrdinalIgnoreCase)))
+            {
+                TrayPreview.BuildSizeFilter = "All";
+                TrayPreview.HouseholdSizeFilter = "All";
+            }
+
+            NotifyTrayPreviewFilterVisibilityChanged();
+        }
+
         if (!ReferenceEquals(sender, TrayPreview) || !IsTrayPreviewAutoReloadProperty(e.PropertyName))
         {
             return;
@@ -623,6 +719,8 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         return string.Equals(propertyName, nameof(TrayPreviewPanelViewModel.TrayRoot), StringComparison.Ordinal) ||
                string.Equals(propertyName, nameof(TrayPreviewPanelViewModel.PresetTypeFilter), StringComparison.Ordinal) ||
+               string.Equals(propertyName, nameof(TrayPreviewPanelViewModel.BuildSizeFilter), StringComparison.Ordinal) ||
+               string.Equals(propertyName, nameof(TrayPreviewPanelViewModel.HouseholdSizeFilter), StringComparison.Ordinal) ||
                string.Equals(propertyName, nameof(TrayPreviewPanelViewModel.AuthorFilter), StringComparison.Ordinal) ||
                string.Equals(propertyName, nameof(TrayPreviewPanelViewModel.TimeFilter), StringComparison.Ordinal) ||
                string.Equals(propertyName, nameof(TrayPreviewPanelViewModel.SearchQuery), StringComparison.Ordinal);
@@ -773,6 +871,7 @@ public sealed class MainWindowViewModel : ObservableObject
         OnPropertyChanged(nameof(CanGoPrevPage));
         OnPropertyChanged(nameof(CanGoNextPage));
         OnPropertyChanged(nameof(CanJumpToPage));
+        NotifyTrayPreviewViewStateChanged();
     }
 
     private async Task RunActiveWorkspaceAsync()
@@ -1309,8 +1408,10 @@ public sealed class MainWindowViewModel : ObservableObject
             PreviewPageText = LF("preview.page", 0, 0);
             PreviewLazyLoadText = LF("preview.lazyCache", 0, 0);
             PreviewJumpPageText = string.Empty;
+            _hasTrayPreviewLoadedOnce = false;
             _trayPreviewCurrentPage = 1;
             _trayPreviewTotalPages = 1;
+            NotifyTrayPreviewViewStateChanged();
             NotifyCommandStates();
         });
     }
@@ -1343,6 +1444,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 PreviewItems.Add(item);
             }
 
+            _hasTrayPreviewLoadedOnce = true;
             _trayPreviewCurrentPage = page.PageIndex;
             _trayPreviewTotalPages = Math.Max(page.TotalPages, 1);
             var firstItemIndex = page.Items.Count == 0 ? 0 : ((page.PageIndex - 1) * page.PageSize) + 1;
@@ -1352,6 +1454,7 @@ public sealed class MainWindowViewModel : ObservableObject
             PreviewPageText = LF("preview.page", page.PageIndex, safeTotalPages);
             PreviewLazyLoadText = LF("preview.lazyCache", loadedPageCount, safeTotalPages);
             PreviewJumpPageText = page.PageIndex.ToString();
+            NotifyTrayPreviewViewStateChanged();
             NotifyCommandStates();
         });
     }
@@ -1437,6 +1540,38 @@ public sealed class MainWindowViewModel : ObservableObject
         OnPropertyChanged(nameof(SettingsPrefixHashBytesLabelText));
         OnPropertyChanged(nameof(SettingsHashWorkerCountLabelText));
         OnPropertyChanged(nameof(SettingsPerformanceHintText));
+        OnPropertyChanged(nameof(TrayPreviewBuildSizeFilterOptions));
+        OnPropertyChanged(nameof(TrayPreviewHouseholdSizeFilterOptions));
+        OnPropertyChanged(nameof(TrayPreviewEmptyTitleText));
+        OnPropertyChanged(nameof(TrayPreviewEmptyDescriptionText));
+        OnPropertyChanged(nameof(TrayPreviewEmptyStatusText));
+        OnPropertyChanged(nameof(TrayPreviewLoadingText));
+    }
+
+    private void OnPreviewItemsChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        NotifyTrayPreviewViewStateChanged();
+    }
+
+    private void NotifyTrayPreviewFilterVisibilityChanged()
+    {
+        OnPropertyChanged(nameof(IsBuildSizeFilterVisible));
+        OnPropertyChanged(nameof(IsHouseholdSizeFilterVisible));
+    }
+
+    private void NotifyTrayPreviewViewStateChanged()
+    {
+        OnPropertyChanged(nameof(HasTrayPreviewItems));
+        OnPropertyChanged(nameof(IsTrayPreviewLoadingStateVisible));
+        OnPropertyChanged(nameof(IsTrayPreviewEmptyStateVisible));
+        OnPropertyChanged(nameof(IsTrayPreviewPagerVisible));
+        OnPropertyChanged(nameof(IsTrayPreviewEmptyStatusOk));
+        OnPropertyChanged(nameof(IsTrayPreviewEmptyStatusWarning));
+        OnPropertyChanged(nameof(IsTrayPreviewEmptyStatusMissing));
+        OnPropertyChanged(nameof(IsTrayPreviewPathMissing));
+        OnPropertyChanged(nameof(TrayPreviewEmptyTitleText));
+        OnPropertyChanged(nameof(TrayPreviewEmptyDescriptionText));
+        OnPropertyChanged(nameof(TrayPreviewEmptyStatusText));
     }
 
     private string L(string key) => _localization[key];

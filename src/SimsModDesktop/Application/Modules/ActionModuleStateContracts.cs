@@ -60,6 +60,8 @@ public interface ITrayPreviewModuleState
 {
     string TrayRoot { get; set; }
     string PresetTypeFilter { get; set; }
+    string BuildSizeFilter { get; set; }
+    string HouseholdSizeFilter { get; set; }
     string AuthorFilter { get; set; }
     string TimeFilter { get; set; }
     string SearchQuery { get; set; }

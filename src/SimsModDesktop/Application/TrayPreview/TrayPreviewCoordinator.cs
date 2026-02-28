@@ -133,6 +133,8 @@ public sealed class TrayPreviewCoordinator : ITrayPreviewCoordinator
             TrayPath = Path.GetFullPath(input.TrayPath.Trim()),
             PageSize = input.PageSize,
             PresetTypeFilter = string.IsNullOrWhiteSpace(input.PresetTypeFilter) ? "All" : input.PresetTypeFilter.Trim(),
+            BuildSizeFilter = string.IsNullOrWhiteSpace(input.BuildSizeFilter) ? "All" : input.BuildSizeFilter.Trim(),
+            HouseholdSizeFilter = string.IsNullOrWhiteSpace(input.HouseholdSizeFilter) ? "All" : input.HouseholdSizeFilter.Trim(),
             AuthorFilter = input.AuthorFilter.Trim(),
             TimeFilter = string.IsNullOrWhiteSpace(input.TimeFilter) ? "All" : input.TimeFilter.Trim(),
             SearchQuery = input.SearchQuery.Trim()
@@ -145,11 +147,22 @@ public sealed class TrayPreviewCoordinator : ITrayPreviewCoordinator
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
             .ToLowerInvariant();
         var presetTypeFilter = string.IsNullOrWhiteSpace(input.PresetTypeFilter) ? "all" : input.PresetTypeFilter.Trim().ToLowerInvariant();
+        var buildSizeFilter = string.IsNullOrWhiteSpace(input.BuildSizeFilter) ? "all" : input.BuildSizeFilter.Trim().ToLowerInvariant();
+        var householdSizeFilter = string.IsNullOrWhiteSpace(input.HouseholdSizeFilter) ? "all" : input.HouseholdSizeFilter.Trim().ToLowerInvariant();
         var authorFilter = string.IsNullOrWhiteSpace(input.AuthorFilter) ? "all" : input.AuthorFilter.Trim().ToLowerInvariant();
         var timeFilter = string.IsNullOrWhiteSpace(input.TimeFilter) ? "all" : input.TimeFilter.Trim().ToLowerInvariant();
         var searchQuery = string.IsNullOrWhiteSpace(input.SearchQuery) ? "all" : input.SearchQuery.Trim().ToLowerInvariant();
 
-        return string.Join("|", trayPath, input.PageSize, presetTypeFilter, authorFilter, timeFilter, searchQuery);
+        return string.Join(
+            "|",
+            trayPath,
+            input.PageSize,
+            presetTypeFilter,
+            buildSizeFilter,
+            householdSizeFilter,
+            authorFilter,
+            timeFilter,
+            searchQuery);
     }
 }
 

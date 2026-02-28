@@ -61,13 +61,15 @@ public sealed class TrayPreviewCoordinatorTests
                 TrayPath = trayDir.FullName,
                 PageSize = 50,
                 PresetTypeFilter = "Lot",
+                BuildSizeFilter = "50 x 40",
+                HouseholdSizeFilter = "All",
                 AuthorFilter = "author-1",
                 TimeFilter = "Last7d",
                 SearchQuery = "villa"
             };
             var inputB = inputA with
             {
-                SearchQuery = "other"
+                BuildSizeFilter = "20 x 20"
             };
 
             await coordinator.LoadAsync(inputA);
