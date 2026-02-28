@@ -4,10 +4,10 @@ This project now follows a module-registry workflow for adding actions.
 
 ## Required touch points
 1. Add a new action input model in `Application/Requests`.
-2. Add a validator in `Application/Validation` and register it in `App.axaml.cs` DI.
-3. Add a CLI mapper in `Application/Cli/*CliArgumentMapper.cs` and register it in `App.axaml.cs` DI.
-4. Register an execution strategy (`ActionExecutionStrategy<TInput>`) for the action in `App.axaml.cs`.
-5. Add an action module in `Application/Modules` and register it in `MainWindowViewModel` module registry bootstrap.
+2. Add a validator in `Application/Validation` and register it in `Composition/ServiceCollectionExtensions.cs` (`AddSimsDesktopExecution`).
+3. Add a CLI mapper in `Application/Cli/*CliArgumentMapper.cs` and register it in `Composition/ServiceCollectionExtensions.cs` (`AddSimsDesktopExecution`).
+4. Register an execution strategy (`ActionExecutionStrategy<TInput>`) for the action in `Composition/ServiceCollectionExtensions.cs` (`AddSimsDesktopExecution`).
+5. Add an action module in `Application/Modules` and register it in `Composition/ServiceCollectionExtensions.cs` (`AddSimsDesktopModules`).
 6. Add panel UI + panel ViewModel and bind through the module implementation.
 
 ## Optional touch points

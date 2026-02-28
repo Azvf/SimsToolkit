@@ -70,7 +70,17 @@ public sealed class MainWindowViewModel : ObservableObject
         IFileDialogService fileDialogService,
         IConfirmationDialogService confirmationDialogService,
         ISettingsStore settingsStore,
-        IQuickPresetCatalog quickPresetCatalog)
+        IQuickPresetCatalog quickPresetCatalog,
+        IActionModuleRegistry moduleRegistry,
+        IQuickPresetApplier quickPresetApplier,
+        OrganizePanelViewModel organize,
+        FlattenPanelViewModel flatten,
+        NormalizePanelViewModel normalize,
+        MergePanelViewModel merge,
+        FindDupPanelViewModel findDup,
+        TrayDependenciesPanelViewModel trayDependencies,
+        TrayPreviewPanelViewModel trayPreview,
+        SharedFileOpsPanelViewModel sharedFileOps)
     {
         _executionCoordinator = executionCoordinator;
         _trayPreviewCoordinator = trayPreviewCoordinator;
@@ -78,33 +88,28 @@ public sealed class MainWindowViewModel : ObservableObject
         _confirmationDialogService = confirmationDialogService;
         _settingsStore = settingsStore;
         _quickPresetCatalog = quickPresetCatalog;
+        _moduleRegistry = moduleRegistry;
+        _quickPresetApplier = quickPresetApplier;
 
-        Organize = new OrganizePanelViewModel();
-        Flatten = new FlattenPanelViewModel();
-        Normalize = new NormalizePanelViewModel();
-        Merge = new MergePanelViewModel();
+        Organize = organize;
+        Flatten = flatten;
+        Normalize = normalize;
+        Merge = merge;
         Merge.SourcePaths.CollectionChanged += OnMergeSourcePathsChanged;
-        FindDup = new FindDupPanelViewModel();
-        TrayDependencies = new TrayDependenciesPanelViewModel();
-        TrayPreview = new TrayPreviewPanelViewModel();
-        SharedFileOps = new SharedFileOpsPanelViewModel();
+        FindDup = findDup;
+        TrayDependencies = trayDependencies;
+        TrayPreview = trayPreview;
+        SharedFileOps = sharedFileOps;
         PreviewItems = new ObservableCollection<SimsTrayPreviewItem>();
         QuickPresets = new ObservableCollection<QuickPresetListItem>();
 
-        _moduleRegistry = new ActionModuleRegistry(new IActionModule[]
-        {
-            new OrganizeActionModule(Organize),
-            new FlattenActionModule(Flatten),
-            new NormalizeActionModule(Normalize),
-            new MergeActionModule(Merge),
-            new FindDupActionModule(FindDup),
-            new TrayDependenciesActionModule(TrayDependencies),
-            new TrayPreviewActionModule(TrayPreview)
-        });
-        _quickPresetApplier = new QuickPresetApplier(_moduleRegistry, SharedFileOps);
+        var registeredToolkitActions = _moduleRegistry.All
+            .Select(module => module.Action)
+            .Where(action => action != SimsAction.TrayPreview)
+            .ToHashSet();
 
         AvailableToolkitActions = Enum.GetValues<SimsAction>()
-            .Where(action => action != SimsAction.TrayPreview)
+            .Where(action => action != SimsAction.TrayPreview && registeredToolkitActions.Contains(action))
             .ToArray();
 
         BrowseFolderCommand = new AsyncRelayCommand<string>(BrowseFolderAsync, _ => !IsBusy, disableWhileRunning: false);
@@ -1431,8 +1436,15 @@ public sealed class MainWindowViewModel : ObservableObject
             var directory = start;
             for (var depth = 0; depth < 12 && directory is not null; depth++)
             {
-                var solutionCandidate = Path.Combine(directory.FullName, "src.sln");
-                if (File.Exists(solutionCandidate))
+                // Preferred markers at repo root.
+                if (File.Exists(Path.Combine(directory.FullName, "sims-mod-cli.ps1")) ||
+                    File.Exists(Path.Combine(directory.FullName, "SimsDesktopTools.sln")))
+                {
+                    return directory.FullName;
+                }
+
+                // Backward-compatible fallback for legacy nested solution layout.
+                if (File.Exists(Path.Combine(directory.FullName, "src.sln")))
                 {
                     return directory.Parent?.FullName;
                 }

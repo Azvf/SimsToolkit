@@ -1,6 +1,7 @@
 ﻿using System.Reflection;
 using System.Text.Json.Nodes;
 using SimsModDesktop.Application.Execution;
+using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Presets;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.TrayPreview;
@@ -8,6 +9,7 @@ using SimsModDesktop.Infrastructure.Dialogs;
 using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Models;
 using SimsModDesktop.ViewModels;
+using SimsModDesktop.ViewModels.Panels;
 
 namespace SimsModDesktop.Tests;
 
@@ -153,13 +155,43 @@ public sealed class MainWindowViewModelInteractionTests
         FakeConfirmationDialogService confirmation,
         FakeSettingsStore? settingsStore = null)
     {
+        var organize = new OrganizePanelViewModel();
+        var flatten = new FlattenPanelViewModel();
+        var normalize = new NormalizePanelViewModel();
+        var merge = new MergePanelViewModel();
+        var findDup = new FindDupPanelViewModel();
+        var trayDependencies = new TrayDependenciesPanelViewModel();
+        var trayPreview = new TrayPreviewPanelViewModel();
+        var sharedFileOps = new SharedFileOpsPanelViewModel();
+
+        var moduleRegistry = new ActionModuleRegistry(new IActionModule[]
+        {
+            new OrganizeActionModule(organize),
+            new FlattenActionModule(flatten),
+            new NormalizeActionModule(normalize),
+            new MergeActionModule(merge),
+            new FindDupActionModule(findDup),
+            new TrayDependenciesActionModule(trayDependencies),
+            new TrayPreviewActionModule(trayPreview)
+        });
+
         return new MainWindowViewModel(
             execution,
             new FakeTrayPreviewCoordinator(),
             new FakeFileDialogService(),
             confirmation,
             settingsStore ?? new FakeSettingsStore(new AppSettings()),
-            new FakeQuickPresetCatalog());
+            new FakeQuickPresetCatalog(),
+            moduleRegistry,
+            new QuickPresetApplier(moduleRegistry, sharedFileOps),
+            organize,
+            flatten,
+            normalize,
+            merge,
+            findDup,
+            trayDependencies,
+            trayPreview,
+            sharedFileOps);
     }
 
     private static async Task InvokePrivateAsync(object target, string methodName, params object?[] args)

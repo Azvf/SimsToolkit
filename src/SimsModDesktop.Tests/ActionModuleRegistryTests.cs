@@ -2,6 +2,7 @@ using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Models;
 using SimsModDesktop.ViewModels.Panels;
+using System.Text.Json.Nodes;
 
 namespace SimsModDesktop.Tests;
 
@@ -47,5 +48,78 @@ public sealed class ActionModuleRegistryTests
         });
 
         Assert.Throws<InvalidOperationException>(() => registry.Get(SimsAction.TrayPreview));
+    }
+
+    [Fact]
+    public void Registry_DuplicateActions_ThrowsClearError()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            new ActionModuleRegistry(new IActionModule[]
+            {
+                new FakeModule(SimsAction.Organize, "organize-a"),
+                new FakeModule(SimsAction.Organize, "organize-b")
+            }));
+
+        Assert.Contains("Duplicate action modules", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Registry_DuplicateModuleKeys_ThrowsClearError()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            new ActionModuleRegistry(new IActionModule[]
+            {
+                new FakeModule(SimsAction.Organize, "shared-key"),
+                new FakeModule(SimsAction.Flatten, "shared-key")
+            }));
+
+        Assert.Contains("Duplicate module keys", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Registry_EmptyModuleKey_ThrowsClearError()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            new ActionModuleRegistry(new IActionModule[]
+            {
+                new FakeModule(SimsAction.Organize, string.Empty)
+            }));
+
+        Assert.Contains("non-empty ModuleKey", ex.Message, StringComparison.Ordinal);
+    }
+
+    private sealed class FakeModule : IActionModule
+    {
+        public FakeModule(SimsAction action, string moduleKey)
+        {
+            Action = action;
+            ModuleKey = moduleKey;
+        }
+
+        public SimsAction Action { get; }
+        public string ModuleKey { get; }
+        public string DisplayName => ModuleKey;
+        public bool UsesSharedFileOps => false;
+
+        public void LoadFromSettings(AppSettings settings)
+        {
+        }
+
+        public void SaveToSettings(AppSettings settings)
+        {
+        }
+
+        public bool TryBuildPlan(GlobalExecutionOptions options, out ModuleExecutionPlan plan, out string error)
+        {
+            plan = null!;
+            error = "Not implemented for tests.";
+            return false;
+        }
+
+        public bool TryApplyActionPatch(JsonObject patch, out string error)
+        {
+            error = string.Empty;
+            return true;
+        }
     }
 }
