@@ -9,6 +9,7 @@ using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Infrastructure.Dialogs;
+using SimsModDesktop.Infrastructure.Localization;
 using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Models;
 using SimsModDesktop.ViewModels.Infrastructure;
@@ -18,10 +19,13 @@ namespace SimsModDesktop.ViewModels;
 
 public sealed class MainWindowViewModel : ObservableObject
 {
+    private const string DefaultLanguageCode = "en-US";
+
     private readonly IToolkitExecutionRunner _toolkitExecutionRunner;
     private readonly ITrayPreviewRunner _trayPreviewRunner;
     private readonly IFileDialogService _fileDialogService;
     private readonly IConfirmationDialogService _confirmationDialogService;
+    private readonly ILocalizationService _localization;
     private readonly ISettingsStore _settingsStore;
     private readonly IMainWindowSettingsProjection _settingsProjection;
     private readonly IActionModuleRegistry _moduleRegistry;
@@ -34,12 +38,13 @@ public sealed class MainWindowViewModel : ObservableObject
     private bool _isBusy;
     private AppWorkspace _workspace = AppWorkspace.Toolkit;
     private SimsAction _selectedAction = SimsAction.Organize;
+    private string _selectedLanguageCode = DefaultLanguageCode;
     private string _scriptPath = string.Empty;
     private bool _whatIf;
-    private string _statusMessage = "Ready.";
+    private string _statusMessage = string.Empty;
     private bool _isProgressIndeterminate;
     private int _progressValue;
-    private string _progressMessage = "Idle";
+    private string _progressMessage = string.Empty;
     private string _logText = string.Empty;
     private int _trayPreviewCurrentPage = 1;
     private int _trayPreviewTotalPages = 1;
@@ -50,7 +55,7 @@ public sealed class MainWindowViewModel : ObservableObject
     private string _previewDashboardLatestWrite = "-";
     private string _previewPageText = "Page 0/0";
     private string _previewLazyLoadText = "Lazy cache 0/0 pages";
-    private string _validationSummaryText = "预检尚未开始。";
+    private string _validationSummaryText = string.Empty;
     private bool _hasValidationErrors;
     private bool _isToolkitLogDrawerOpen;
     private bool _isTrayPreviewLogDrawerOpen;
@@ -63,6 +68,7 @@ public sealed class MainWindowViewModel : ObservableObject
         ITrayPreviewRunner trayPreviewRunner,
         IFileDialogService fileDialogService,
         IConfirmationDialogService confirmationDialogService,
+        ILocalizationService localization,
         ISettingsStore settingsStore,
         IMainWindowSettingsProjection settingsProjection,
         IActionModuleRegistry moduleRegistry,
@@ -80,6 +86,7 @@ public sealed class MainWindowViewModel : ObservableObject
         _trayPreviewRunner = trayPreviewRunner;
         _fileDialogService = fileDialogService;
         _confirmationDialogService = confirmationDialogService;
+        _localization = localization;
         _settingsStore = settingsStore;
         _settingsProjection = settingsProjection;
         _moduleRegistry = moduleRegistry;
@@ -128,6 +135,14 @@ public sealed class MainWindowViewModel : ObservableObject
         ToggleTrayPreviewAdvancedCommand = new RelayCommand(() => IsTrayPreviewAdvancedOpen = !IsTrayPreviewAdvancedOpen, () => IsTrayPreviewWorkspace);
         ClearLogCommand = new RelayCommand(ClearLog, () => !string.IsNullOrWhiteSpace(LogText));
 
+        _localization.PropertyChanged += OnLocalizationPropertyChanged;
+        _localization.SetLanguage(_selectedLanguageCode);
+        _selectedLanguageCode = _localization.CurrentLanguageCode;
+        ProgressMessage = L("progress.idle");
+        ClearTrayPreview();
+        StatusMessage = L("status.ready");
+        ValidationSummaryText = L("validation.notStarted");
+
         HookValidationTracking();
     }
 
@@ -142,6 +157,24 @@ public sealed class MainWindowViewModel : ObservableObject
     public ObservableCollection<SimsTrayPreviewItem> PreviewItems { get; }
 
     public IReadOnlyList<SimsAction> AvailableToolkitActions { get; }
+    public IReadOnlyList<LanguageOption> AvailableLanguages => _localization.AvailableLanguages;
+    public ILocalizationService Loc => _localization;
+    public LanguageOption? SelectedLanguage
+    {
+        get => AvailableLanguages.FirstOrDefault(option =>
+                   string.Equals(option.Code, _selectedLanguageCode, StringComparison.OrdinalIgnoreCase))
+               ?? AvailableLanguages.FirstOrDefault();
+        set => SelectedLanguageCode = value?.Code ?? DefaultLanguageCode;
+    }
+
+    public string SettingsTitleText => L("ui.settings.title");
+    public string SettingsLowFrequencySectionTitleText => L("ui.settings.section.lowFrequency");
+    public string SettingsLowFrequencySectionHintText => L("ui.settings.section.lowFrequencyHint");
+    public string SettingsLanguageLabelText => L("ui.settings.language.label");
+    public string SettingsLanguageTodoHintText => L("ui.settings.language.todoHint");
+    public string SettingsPrefixHashBytesLabelText => L("ui.settings.prefixHashBytes.label");
+    public string SettingsHashWorkerCountLabelText => L("ui.settings.hashWorkerCount.label");
+    public string SettingsPerformanceHintText => L("ui.settings.performance.hint");
 
     public AsyncRelayCommand<string> BrowseFolderCommand { get; }
     public AsyncRelayCommand<string> BrowseCsvPathCommand { get; }
@@ -160,6 +193,43 @@ public sealed class MainWindowViewModel : ObservableObject
     public RelayCommand ToggleTrayPreviewAdvancedCommand { get; }
     public RelayCommand ClearLogCommand { get; }
 
+    public string SelectedLanguageCode
+    {
+        get => _selectedLanguageCode;
+        set
+        {
+            _localization.SetLanguage(value);
+            var normalized = _localization.CurrentLanguageCode;
+            if (!SetProperty(ref _selectedLanguageCode, normalized))
+            {
+                return;
+            }
+
+            NotifyLocalizationDependentProperties();
+
+            if (!_isInitialized)
+            {
+                return;
+            }
+
+            StatusMessage = L("status.ready");
+            if (!IsBusy)
+            {
+                ProgressMessage = L("progress.idle");
+            }
+
+            if (PreviewItems.Count == 0)
+            {
+                ClearTrayPreview();
+            }
+
+            QueueValidationRefresh();
+        }
+    }
+
+    public bool IsChineseTranslationTodo =>
+        SelectedLanguage?.DisplayName.Contains("(TODO)", StringComparison.OrdinalIgnoreCase) == true;
+
     public AppWorkspace Workspace
     {
         get => _workspace;
@@ -173,7 +243,7 @@ public sealed class MainWindowViewModel : ObservableObject
             OnPropertyChanged(nameof(IsToolkitWorkspace));
             OnPropertyChanged(nameof(IsTrayPreviewWorkspace));
             OnPropertyChanged(nameof(IsSharedFileOpsVisible));
-            StatusMessage = "Ready.";
+            StatusMessage = L("status.ready");
             NotifyCommandStates();
             QueueValidationRefresh();
 
@@ -201,7 +271,7 @@ public sealed class MainWindowViewModel : ObservableObject
             OnPropertyChanged(nameof(IsFindDupVisible));
             OnPropertyChanged(nameof(IsTrayDependenciesVisible));
             OnPropertyChanged(nameof(IsSharedFileOpsVisible));
-            StatusMessage = "Ready.";
+            StatusMessage = L("status.ready");
             QueueValidationRefresh();
         }
     }
@@ -413,6 +483,7 @@ public sealed class MainWindowViewModel : ObservableObject
         var settings = await _settingsStore.LoadAsync();
         var resolved = _settingsProjection.Resolve(settings, AvailableToolkitActions);
 
+        SelectedLanguageCode = resolved.UiLanguageCode;
         ScriptPath = resolved.ScriptPath;
         WhatIf = resolved.WhatIf;
 
@@ -434,13 +505,13 @@ public sealed class MainWindowViewModel : ObservableObject
         ScriptPath = ResolveFixedScriptPath();
         if (!File.Exists(ScriptPath))
         {
-            StatusMessage = $"Script not found: {ScriptPath}";
+            StatusMessage = LF("status.scriptNotFound", ScriptPath);
         }
 
         ClearTrayPreview();
         if (File.Exists(ScriptPath))
         {
-            StatusMessage = "Ready.";
+            StatusMessage = L("status.ready");
         }
         _isInitialized = true;
         RefreshValidationNow();
@@ -457,6 +528,7 @@ public sealed class MainWindowViewModel : ObservableObject
         var settings = _settingsProjection.Capture(
             new MainWindowSettingsSnapshot
             {
+                UiLanguageCode = SelectedLanguageCode,
                 ScriptPath = ScriptPath,
                 Workspace = Workspace,
                 SelectedAction = SelectedAction,
@@ -578,24 +650,24 @@ public sealed class MainWindowViewModel : ObservableObject
                 if (!_planBuilder.TryBuildToolkitCliPlan(CreatePlanBuilderState(), out _, out _, out var error))
                 {
                     HasValidationErrors = true;
-                    ValidationSummaryText = $"预检失败: {error}";
+                    ValidationSummaryText = LF("validation.failed", error);
                     return;
                 }
 
                 HasValidationErrors = false;
-                ValidationSummaryText = $"预检通过: {module.DisplayName} 参数有效。";
+                ValidationSummaryText = LF("validation.okToolkit", module.DisplayName);
                 return;
             }
 
             if (!_planBuilder.TryBuildTrayPreviewInput(CreatePlanBuilderState(), out _, out var trayPreviewError))
             {
                 HasValidationErrors = true;
-                ValidationSummaryText = $"预检失败: {trayPreviewError}";
+                ValidationSummaryText = LF("validation.failed", trayPreviewError);
                 return;
             }
 
             HasValidationErrors = false;
-            ValidationSummaryText = "预检通过: Tray Preview 参数有效。";
+            ValidationSummaryText = L("validation.okTrayPreview");
         });
     }
 
@@ -702,7 +774,7 @@ public sealed class MainWindowViewModel : ObservableObject
     private void ReportUnsupportedBrowseTarget(string kind, string? target)
     {
         var normalizedTarget = string.IsNullOrWhiteSpace(target) ? "<empty>" : target.Trim();
-        StatusMessage = $"Unsupported {kind} browse target: {normalizedTarget}";
+        StatusMessage = LF("status.unsupportedBrowseTarget", kind, normalizedTarget);
         AppendLog($"[ui] unsupported {kind} browse target: {normalizedTarget}");
     }
 
@@ -750,16 +822,16 @@ public sealed class MainWindowViewModel : ObservableObject
 
         var confirmed = await _confirmationDialogService.ConfirmAsync(new ConfirmationRequest
         {
-            Title = "确认危险操作",
-            Message = "你即将执行 FindDuplicates 清理模式，系统会删除重复文件（保留首个路径）。",
-            ConfirmText = "确认执行",
-            CancelText = "取消",
+            Title = L("dialog.danger.title"),
+            Message = L("dialog.danger.message"),
+            ConfirmText = L("dialog.danger.confirm"),
+            CancelText = L("dialog.danger.cancel"),
             IsDangerous = true
         });
 
         if (!confirmed)
         {
-            StatusMessage = "已取消危险操作。";
+            StatusMessage = L("status.dangerCancelled");
             AppendLog("[cancel] cleanup confirmation rejected");
             return false;
         }
@@ -771,7 +843,7 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         if (_executionCts is not null)
         {
-            StatusMessage = "Execution is already running.";
+            StatusMessage = L("status.executionAlreadyRunning");
             return;
         }
 
@@ -795,10 +867,10 @@ public sealed class MainWindowViewModel : ObservableObject
 
         ClearLog();
         IsBusy = true;
-        SetProgress(isIndeterminate: true, percent: 0, message: "Starting...");
+        SetProgress(isIndeterminate: true, percent: 0, message: L("progress.starting"));
         AppendLog("[start] " + startedAt.ToString("yyyy-MM-dd HH:mm:ss"));
         AppendLog("[action] " + input.Action.ToString().ToLowerInvariant());
-        StatusMessage = "Running...";
+        StatusMessage = L("status.running");
 
         try
         {
@@ -814,27 +886,27 @@ public sealed class MainWindowViewModel : ObservableObject
                 var result = runResult.ExecutionResult!;
                 AppendLog($"[exit] code={result.ExitCode}");
                 StatusMessage = result.ExitCode == 0
-                    ? $"Completed in {stopwatch.Elapsed:mm\\:ss}."
-                    : $"Failed with exit code {result.ExitCode} in {stopwatch.Elapsed:mm\\:ss}.";
+                    ? LF("status.executionCompleted", stopwatch.Elapsed.ToString("mm\\:ss"))
+                    : LF("status.executionFailedExit", result.ExitCode, stopwatch.Elapsed.ToString("mm\\:ss"));
                 SetProgress(
                     isIndeterminate: false,
                     percent: result.ExitCode == 0 ? 100 : 0,
-                    message: result.ExitCode == 0 ? "Completed." : "Failed.");
+                    message: result.ExitCode == 0 ? L("progress.completed") : L("progress.failed"));
             }
             else if (runResult.Status == ExecutionRunStatus.Cancelled)
             {
                 AppendLog("[cancelled]");
-                StatusMessage = "Execution cancelled.";
-                SetProgress(isIndeterminate: false, percent: 0, message: "Cancelled.");
+                StatusMessage = L("status.executionCancelled");
+                SetProgress(isIndeterminate: false, percent: 0, message: L("progress.cancelled"));
             }
             else
             {
                 var errorMessage = string.IsNullOrWhiteSpace(runResult.ErrorMessage)
-                    ? "Unknown execution error."
+                    ? L("status.unknownExecutionError")
                     : runResult.ErrorMessage;
                 AppendLog("[error] " + errorMessage);
-                StatusMessage = "Execution failed.";
-                SetProgress(isIndeterminate: false, percent: 0, message: "Execution failed.");
+                StatusMessage = L("status.executionFailed");
+                SetProgress(isIndeterminate: false, percent: 0, message: L("progress.executionFailed"));
             }
         }
         finally
@@ -850,7 +922,7 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         if (_executionCts is not null)
         {
-            StatusMessage = "Execution is already running.";
+            StatusMessage = L("status.executionAlreadyRunning");
             return;
         }
 
@@ -880,10 +952,10 @@ public sealed class MainWindowViewModel : ObservableObject
         ClearTrayPreview();
         IsBusy = true;
         SetTrayPreviewPageLoading(true);
-        SetProgress(isIndeterminate: true, percent: 0, message: "Loading tray preview dashboard...");
+        SetProgress(isIndeterminate: true, percent: 0, message: L("progress.loadingTray"));
         AppendLog("[start] " + startedAt.ToString("yyyy-MM-dd HH:mm:ss"));
         AppendLog("[action] traypreview");
-        StatusMessage = "Loading tray preview dashboard...";
+        StatusMessage = L("status.trayPreviewLoading");
 
         try
         {
@@ -909,23 +981,23 @@ public sealed class MainWindowViewModel : ObservableObject
                 AppendLog($"[preview] totalItems={result.Dashboard.TotalItems}");
 
                 StatusMessage =
-                    $"Tray preview loaded: {result.Dashboard.TotalItems} items, page 1/{result.Page.TotalPages}, {stopwatch.Elapsed:mm\\:ss}.";
-                SetProgress(isIndeterminate: false, percent: 100, message: "Tray preview dashboard loaded.");
+                    LF("status.trayPreviewLoaded", result.Dashboard.TotalItems, result.Page.TotalPages, stopwatch.Elapsed.ToString("mm\\:ss"));
+                SetProgress(isIndeterminate: false, percent: 100, message: L("progress.trayLoaded"));
             }
             else if (runResult.Status == ExecutionRunStatus.Cancelled)
             {
                 AppendLog("[cancelled]");
-                StatusMessage = "Tray preview cancelled.";
-                SetProgress(isIndeterminate: false, percent: 0, message: "Cancelled.");
+                StatusMessage = L("status.trayPreviewCancelled");
+                SetProgress(isIndeterminate: false, percent: 0, message: L("progress.cancelled"));
             }
             else
             {
                 var errorMessage = string.IsNullOrWhiteSpace(runResult.ErrorMessage)
-                    ? "Unknown tray preview error."
+                    ? L("status.unknownTrayPreviewError")
                     : runResult.ErrorMessage;
                 AppendLog("[error] " + errorMessage);
-                StatusMessage = "Tray preview failed.";
-                SetProgress(isIndeterminate: false, percent: 0, message: "Tray preview failed.");
+                StatusMessage = L("status.trayPreviewFailed");
+                SetProgress(isIndeterminate: false, percent: 0, message: L("progress.trayFailed"));
             }
         }
         finally
@@ -952,7 +1024,7 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         if (_isTrayPreviewPageLoading)
         {
-            StatusMessage = "Tray preview page load is already running.";
+            StatusMessage = L("status.trayPageLoadingAlready");
             return;
         }
 
@@ -964,21 +1036,21 @@ public sealed class MainWindowViewModel : ObservableObject
             {
                 var result = runResult.PageResult!;
                 SetTrayPreviewPage(result.Page, result.LoadedPageCount);
-                StatusMessage = $"Tray preview page {result.Page.PageIndex}/{result.Page.TotalPages}.";
+                StatusMessage = LF("status.trayPageLoaded", result.Page.PageIndex, result.Page.TotalPages);
                 return;
             }
 
             if (runResult.Status == ExecutionRunStatus.Cancelled)
             {
-                StatusMessage = "Tray preview page load cancelled.";
+                StatusMessage = L("status.trayPageCancelled");
                 return;
             }
 
             var errorMessage = string.IsNullOrWhiteSpace(runResult.ErrorMessage)
-                ? "Unknown tray preview page error."
+                ? L("status.unknownTrayPreviewPageError")
                 : runResult.ErrorMessage;
             AppendLog("[error] " + errorMessage);
-            StatusMessage = "Tray preview page load failed.";
+            StatusMessage = L("status.trayPageFailed");
         }
         finally
         {
@@ -1002,7 +1074,7 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             SetTrayPreviewDashboard(cached.Dashboard);
             SetTrayPreviewPage(cached.Page, cached.LoadedPageCount);
-            StatusMessage = $"Tray preview page {cached.Page.PageIndex}/{cached.Page.TotalPages}.";
+            StatusMessage = LF("status.trayPageLoaded", cached.Page.PageIndex, cached.Page.TotalPages);
             return;
         }
 
@@ -1014,13 +1086,13 @@ public sealed class MainWindowViewModel : ObservableObject
         var cts = _executionCts;
         if (cts is null)
         {
-            StatusMessage = "No running execution.";
+            StatusMessage = L("status.noRunningExecution");
             return;
         }
 
         AppendLog("[cancel] requested");
-        StatusMessage = "Cancelling...";
-        SetProgress(isIndeterminate: true, percent: 0, message: "Cancelling...");
+        StatusMessage = L("status.cancelling");
+        SetProgress(isIndeterminate: true, percent: 0, message: L("status.cancelling"));
 
         try
         {
@@ -1103,13 +1175,13 @@ public sealed class MainWindowViewModel : ObservableObject
         ExecuteOnUi(() =>
         {
             PreviewItems.Clear();
-            PreviewSummaryText = "No preview data loaded.";
+            PreviewSummaryText = L("preview.noneLoaded");
             PreviewDashboardTotalItems = "0";
             PreviewDashboardTotalFiles = "0";
             PreviewDashboardTotalSize = "0 MB";
             PreviewDashboardLatestWrite = "-";
-            PreviewPageText = "Page 0/0";
-            PreviewLazyLoadText = "Lazy cache 0/0 pages";
+            PreviewPageText = LF("preview.page", 0, 0);
+            PreviewLazyLoadText = LF("preview.lazyCache", 0, 0);
             _trayPreviewCurrentPage = 1;
             _trayPreviewTotalPages = 1;
             NotifyCommandStates();
@@ -1128,9 +1200,9 @@ public sealed class MainWindowViewModel : ObservableObject
                 : dashboard.LatestWriteTimeLocal.ToString("yyyy-MM-dd HH:mm");
 
             var breakdown = string.IsNullOrWhiteSpace(dashboard.PresetTypeBreakdown)
-                ? "Type: n/a"
-                : $"Type: {dashboard.PresetTypeBreakdown}";
-            PreviewSummaryText = $"Dashboard ready. {breakdown}";
+                ? L("preview.typeNa")
+                : LF("preview.type", dashboard.PresetTypeBreakdown);
+            PreviewSummaryText = LF("preview.dashboardReady", breakdown);
         });
     }
 
@@ -1148,9 +1220,10 @@ public sealed class MainWindowViewModel : ObservableObject
             _trayPreviewTotalPages = Math.Max(page.TotalPages, 1);
             var firstItemIndex = page.Items.Count == 0 ? 0 : ((page.PageIndex - 1) * page.PageSize) + 1;
             var lastItemIndex = page.Items.Count == 0 ? 0 : firstItemIndex + page.Items.Count - 1;
-            PreviewSummaryText = $"Showing {firstItemIndex}-{lastItemIndex} / {page.TotalItems} tray presets.";
-            PreviewPageText = $"Page {page.PageIndex}/{Math.Max(page.TotalPages, 1)}";
-            PreviewLazyLoadText = $"Lazy cache {loadedPageCount}/{Math.Max(page.TotalPages, 1)} pages";
+            var safeTotalPages = Math.Max(page.TotalPages, 1);
+            PreviewSummaryText = LF("preview.range", firstItemIndex, lastItemIndex, page.TotalItems);
+            PreviewPageText = LF("preview.page", page.PageIndex, safeTotalPages);
+            PreviewLazyLoadText = LF("preview.lazyCache", loadedPageCount, safeTotalPages);
             NotifyCommandStates();
         });
     }
@@ -1206,6 +1279,47 @@ public sealed class MainWindowViewModel : ObservableObject
 
         return null;
     }
+
+    private void OnLocalizationPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (!string.Equals(e.PropertyName, nameof(ILocalizationService.AvailableLanguages), StringComparison.Ordinal) &&
+            !string.Equals(e.PropertyName, nameof(ILocalizationService.CurrentLanguageCode), StringComparison.Ordinal) &&
+            !string.Equals(e.PropertyName, "Item[]", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        ExecuteOnUi(() =>
+        {
+            var normalized = _localization.CurrentLanguageCode;
+            if (!string.Equals(_selectedLanguageCode, normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                _selectedLanguageCode = normalized;
+                OnPropertyChanged(nameof(SelectedLanguageCode));
+            }
+
+            NotifyLocalizationDependentProperties();
+        });
+    }
+
+    private void NotifyLocalizationDependentProperties()
+    {
+        OnPropertyChanged(nameof(AvailableLanguages));
+        OnPropertyChanged(nameof(SelectedLanguage));
+        OnPropertyChanged(nameof(IsChineseTranslationTodo));
+        OnPropertyChanged(nameof(SettingsTitleText));
+        OnPropertyChanged(nameof(SettingsLowFrequencySectionTitleText));
+        OnPropertyChanged(nameof(SettingsLowFrequencySectionHintText));
+        OnPropertyChanged(nameof(SettingsLanguageLabelText));
+        OnPropertyChanged(nameof(SettingsLanguageTodoHintText));
+        OnPropertyChanged(nameof(SettingsPrefixHashBytesLabelText));
+        OnPropertyChanged(nameof(SettingsHashWorkerCountLabelText));
+        OnPropertyChanged(nameof(SettingsPerformanceHintText));
+    }
+
+    private string L(string key) => _localization[key];
+
+    private string LF(string key, params object[] args) => _localization.Format(key, args);
 
     private static void ExecuteOnUi(Action action)
     {

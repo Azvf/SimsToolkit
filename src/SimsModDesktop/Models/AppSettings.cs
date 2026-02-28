@@ -2,6 +2,7 @@ namespace SimsModDesktop.Models;
 
 public sealed class AppSettings
 {
+    public string UiLanguageCode { get; set; } = "en-US";
     public string ScriptPath { get; set; } = string.Empty;
     public AppWorkspace SelectedWorkspace { get; set; } = AppWorkspace.Toolkit;
     public SimsAction SelectedAction { get; set; } = SimsAction.Organize;

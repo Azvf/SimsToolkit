@@ -1,4 +1,4 @@
-﻿<Window xmlns="https://github.com/avaloniaui"
+<Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -6,7 +6,7 @@
         mc:Ignorable="d"
         x:Class="SimsModDesktop.Views.SettingsWindow"
         x:DataType="vm:MainWindowViewModel"
-        Title="Option Settings"
+        Title="{Binding SettingsTitleText}"
         Width="760"
         Height="420"
         MinWidth="700"
@@ -16,8 +16,8 @@
     <Grid Margin="16" RowDefinitions="Auto,*" RowSpacing="12">
         <Border Classes="card" Padding="12">
             <StackPanel Spacing="4">
-                <TextBlock Classes="section-title" Text="低频调优选项 (Advanced Tuning)" />
-                <TextBlock Classes="helper-text" Text="高频参数已放到对应功能页；这里保留低频性能调优项。" />
+                <TextBlock Classes="section-title" Text="{Binding SettingsLowFrequencySectionTitleText}" />
+                <TextBlock Classes="helper-text" Text="{Binding SettingsLowFrequencySectionHintText}" />
             </StackPanel>
         </Border>
 
@@ -28,22 +28,42 @@
                           RowDefinitions="Auto,Auto"
                           RowSpacing="8"
                           ColumnSpacing="8">
+                        <TextBlock Grid.Row="0"
+                                   VerticalAlignment="Center"
+                                   Text="{Binding SettingsLanguageLabelText}" />
+                        <ComboBox Grid.Row="0"
+                                  Grid.Column="1"
+                                  ItemsSource="{Binding AvailableLanguages}"
+                                  SelectedItem="{Binding SelectedLanguage}" />
+
+                        <TextBlock Grid.Row="1"
+                                   Grid.ColumnSpan="2"
+                                   Classes="helper-text"
+                                   IsVisible="{Binding IsChineseTranslationTodo}"
+                                   Text="{Binding SettingsLanguageTodoHintText}" />
+                    </Grid>
+                </Border>
+
+                <Border Classes="card" Padding="12">
+                    <Grid ColumnDefinitions="220,*"
+                          RowDefinitions="Auto,Auto"
+                          RowSpacing="8"
+                          ColumnSpacing="8">
                         <Grid Grid.Row="0" Grid.ColumnSpan="2" ColumnDefinitions="220,*,220,*" ColumnSpacing="8">
-                            <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="前缀哈希字节 (PrefixHashBytes)" />
+                            <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding SettingsPrefixHashBytesLabelText}" />
                             <TextBox Grid.Column="1" Text="{Binding SharedFileOps.PrefixHashBytesText}" />
 
-                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="哈希线程数 (HashWorkerCount)" />
+                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="{Binding SettingsHashWorkerCountLabelText}" />
                             <TextBox Grid.Column="3" Text="{Binding SharedFileOps.HashWorkerCountText}" />
                         </Grid>
 
                         <TextBlock Grid.Row="1"
                                    Grid.ColumnSpan="2"
                                    Classes="helper-text"
-                                   Text="建议仅在大规模目录或性能问题场景下调整。默认值适合大多数使用场景。" />
+                                   Text="{Binding SettingsPerformanceHintText}" />
                     </Grid>
                 </Border>
             </StackPanel>
         </ScrollViewer>
     </Grid>
 </Window>
-

@@ -5,6 +5,7 @@ using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Infrastructure.Dialogs;
+using SimsModDesktop.Infrastructure.Localization;
 using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Models;
 using SimsModDesktop.ViewModels;
@@ -92,7 +93,7 @@ public sealed class MainWindowViewModelInteractionTests
         InvokePrivateVoid(vm, "RefreshValidationNow");
 
         Assert.False(vm.HasValidationErrors);
-        Assert.Contains("预检通过", vm.ValidationSummaryText, StringComparison.Ordinal);
+        Assert.Contains("Validation passed", vm.ValidationSummaryText, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -109,6 +110,11 @@ public sealed class MainWindowViewModelInteractionTests
         vm.IsTrayPreviewLogDrawerOpen = true;
         vm.IsToolkitAdvancedOpen = true;
         vm.IsTrayPreviewAdvancedOpen = true;
+        var preferredLanguage = vm.AvailableLanguages
+            .Select(option => option.Code)
+            .FirstOrDefault(code => !string.Equals(code, "en-US", StringComparison.OrdinalIgnoreCase))
+            ?? "en-US";
+        vm.SelectedLanguageCode = preferredLanguage;
 
         await vm.PersistSettingsAsync();
 
@@ -117,6 +123,18 @@ public sealed class MainWindowViewModelInteractionTests
         Assert.True(settingsStore.LastSaved.UiState.TrayPreviewLogDrawerOpen);
         Assert.True(settingsStore.LastSaved.UiState.ToolkitAdvancedOpen);
         Assert.True(settingsStore.LastSaved.UiState.TrayPreviewAdvancedOpen);
+        Assert.Equal(vm.SelectedLanguageCode, settingsStore.LastSaved.UiLanguageCode);
+    }
+
+    [Fact]
+    public async Task AvailableLanguages_ContainsDefaultLanguage()
+    {
+        var vm = CreateViewModel(new FakeExecutionCoordinator(), new FakeConfirmationDialogService());
+        await vm.InitializeAsync();
+
+        Assert.NotEmpty(vm.AvailableLanguages);
+        Assert.Contains(vm.AvailableLanguages, option =>
+            string.Equals(option.Code, "en-US", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -176,6 +194,7 @@ public sealed class MainWindowViewModelInteractionTests
             new TrayPreviewRunner(trayPreviewCoordinator),
             new FakeFileDialogService(),
             confirmation,
+            new JsonLocalizationService(),
             settingsStore ?? new FakeSettingsStore(new AppSettings()),
             new MainWindowSettingsProjection(),
             moduleRegistry,

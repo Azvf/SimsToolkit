@@ -7,13 +7,13 @@
     <Border Classes="card-muted" Padding="10" IsVisible="{Binding IsMergeVisible}">
         <StackPanel Spacing="10">
             <StackPanel Spacing="2">
-                <TextBlock Classes="section-title" Text="合并目录 (merge)" />
-                <TextBlock Classes="helper-text" Text="每行一个源目录，使用 + 和 - 快速增删。" />
+                <TextBlock Classes="section-title" Text="Merge Directories (merge)" />
+                <TextBlock Classes="helper-text" Text="One source directory per row; use + and - for quick add/remove." />
             </StackPanel>
 
             <Border Classes="card" Padding="10">
                 <StackPanel Spacing="8">
-                    <TextBlock Classes="sub-title" Text="源目录列表 (MergeSourcePaths)" />
+                    <TextBlock Classes="sub-title" Text="Source Directories (MergeSourcePaths)" />
                     <ScrollViewer MaxHeight="220"
                                   HorizontalScrollBarVisibility="Disabled"
                                   VerticalScrollBarVisibility="Auto">
@@ -24,7 +24,7 @@
                                         <TextBox Grid.Column="0"
                                                  Classes="path-field"
                                                  Text="{Binding Path}"
-                                                 Watermark="选择源目录路径" />
+                                                 Watermark="Select source directory path" />
                                         <Button Grid.Column="1"
                                                 MinWidth="82"
                                                 Content="Browse"
@@ -53,7 +53,7 @@
             </Border>
 
             <Grid ColumnDefinitions="180,*,Auto" RowDefinitions="Auto" RowSpacing="8" ColumnSpacing="8">
-                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="目标目录 (MergeTargetPath)" />
+                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="Target Directory (MergeTargetPath)" />
                 <TextBox Grid.Row="0" Grid.Column="1" Classes="path-field" Text="{Binding Merge.TargetPath}" />
                 <Button Grid.Row="0" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="MergeTargetPath" />
             </Grid>

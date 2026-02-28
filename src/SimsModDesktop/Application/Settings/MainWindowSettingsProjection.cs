@@ -12,6 +12,7 @@ public sealed class MainWindowSettingsProjection : IMainWindowSettingsProjection
 
         var settings = new AppSettings
         {
+            UiLanguageCode = string.IsNullOrWhiteSpace(snapshot.UiLanguageCode) ? "en-US" : snapshot.UiLanguageCode.Trim(),
             ScriptPath = snapshot.ScriptPath,
             SelectedWorkspace = snapshot.Workspace,
             SelectedAction = snapshot.SelectedAction,
@@ -47,6 +48,7 @@ public sealed class MainWindowSettingsProjection : IMainWindowSettingsProjection
 
         return new MainWindowResolvedSettings
         {
+            UiLanguageCode = string.IsNullOrWhiteSpace(settings.UiLanguageCode) ? "en-US" : settings.UiLanguageCode.Trim(),
             ScriptPath = settings.ScriptPath,
             WhatIf = settings.WhatIf,
             SharedFileOps = CloneShared(settings.SharedFileOps),

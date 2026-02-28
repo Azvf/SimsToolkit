@@ -5,20 +5,20 @@
              x:DataType="vm:MainWindowViewModel">
     <Border Classes="card-muted" Padding="10" IsVisible="{Binding IsOrganizeVisible}">
         <StackPanel Spacing="10">
-            <TextBlock Classes="section-title" Text="整理压缩包 (organize)" />
+            <TextBlock Classes="section-title" Text="Organize Archives (organize)" />
             <Grid ColumnDefinitions="180,*,Auto"
                   RowDefinitions="Auto,Auto,Auto"
                   RowSpacing="8"
                   ColumnSpacing="8">
-                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="源目录 (SourceDir)" />
+                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="Source Directory (SourceDir)" />
                 <TextBox Grid.Row="0" Grid.Column="1" Classes="path-field" Text="{Binding Organize.SourceDir}" />
                 <Button Grid.Row="0" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="SourceDir" />
 
-                <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="Mods 根目录 (ModsRoot)" />
+                <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="Mods Root (ModsRoot)" />
                 <TextBox Grid.Row="1" Grid.Column="1" Classes="path-field" Text="{Binding Organize.ModsRoot}" />
                 <Button Grid.Row="1" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="ModsRoot" />
 
-                <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="托盘目录 (TrayRoot)" />
+                <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="Tray Root (TrayRoot)" />
                 <TextBox Grid.Row="2" Grid.Column="1" Classes="path-field" Text="{Binding Organize.TrayRoot}" />
                 <Button Grid.Row="2" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="TrayRoot" />
             </Grid>
@@ -28,13 +28,13 @@
                       RowDefinitions="Auto,Auto,Auto"
                       RowSpacing="8"
                       ColumnSpacing="8">
-                    <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="Zip 匹配模式 (ZipNamePattern)" />
+                    <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="Zip Name Pattern (ZipNamePattern)" />
                     <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding Organize.ZipNamePattern}" />
 
-                    <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="统一目录名 (UnifiedModsFolder)" />
+                    <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="Unified Mods Folder (UnifiedModsFolder)" />
                     <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Organize.UnifiedModsFolder}" />
 
-                    <CheckBox Grid.Row="2" Grid.Column="1" Content="保留压缩包 (KeepZip)" IsChecked="{Binding Organize.KeepZip}" />
+                    <CheckBox Grid.Row="2" Grid.Column="1" Content="Keep Archives (KeepZip)" IsChecked="{Binding Organize.KeepZip}" />
                 </Grid>
             </Border>
         </StackPanel>

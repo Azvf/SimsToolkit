@@ -18,11 +18,11 @@
                 <TextBlock TextWrapping="Wrap" Text="{Binding Message}" />
                 <TextBlock IsVisible="{Binding IsDangerous}"
                            Classes="danger-text"
-                           Text="此操作可能删除文件，且不可撤销。" />
+                           Text="This action may delete files and cannot be undone." />
             </StackPanel>
 
             <Grid Grid.Row="2" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
-                <TextBlock VerticalAlignment="Center" Classes="helper-text" Text="请确认后继续执行。" />
+                <TextBlock VerticalAlignment="Center" Classes="helper-text" Text="Please confirm to continue." />
                 <Button Grid.Column="1" Classes="secondary" Content="{Binding CancelText}" Click="CancelButton_OnClick" />
                 <Button Grid.Column="2"
                         Classes="primary"

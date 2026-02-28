@@ -5,13 +5,13 @@
              x:DataType="vm:MainWindowViewModel">
     <Border Classes="card-muted" Padding="10" IsVisible="{Binding IsNormalizeVisible}">
         <StackPanel Spacing="10">
-            <TextBlock Classes="section-title" Text="标准化目录 (normalize)" />
+            <TextBlock Classes="section-title" Text="Normalize Directory (normalize)" />
             <Grid ColumnDefinitions="180,*,Auto" RowDefinitions="Auto" RowSpacing="8" ColumnSpacing="8">
-                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="根目录 (RootPath)" />
+                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="Root Path (RootPath)" />
                 <TextBox Grid.Row="0" Grid.Column="1" Classes="path-field" Text="{Binding Normalize.RootPath}" />
                 <Button Grid.Row="0" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="NormalizeRootPath" />
             </Grid>
-            <TextBlock Classes="helper-text" Text="用于统一文件命名和目录结构。" />
+            <TextBlock Classes="helper-text" Text="Use this to normalize file names and directory structure." />
         </StackPanel>
     </Border>
 </UserControl>

@@ -17,6 +17,7 @@ public sealed class MainWindowSettingsProjectionTests
         var projection = new MainWindowSettingsProjection();
         var snapshot = new MainWindowSettingsSnapshot
         {
+            UiLanguageCode = "zh-CN",
             ScriptPath = @"C:\tools\sims-mod-cli.ps1",
             Workspace = AppWorkspace.Toolkit,
             SelectedAction = SimsAction.Flatten,
@@ -42,6 +43,7 @@ public sealed class MainWindowSettingsProjectionTests
         var settings = projection.Capture(snapshot, registry);
 
         Assert.Equal(snapshot.ScriptPath, settings.ScriptPath);
+        Assert.Equal("zh-CN", settings.UiLanguageCode);
         Assert.Equal(snapshot.Workspace, settings.SelectedWorkspace);
         Assert.Equal(snapshot.SelectedAction, settings.SelectedAction);
         Assert.True(settings.WhatIf);
@@ -65,6 +67,7 @@ public sealed class MainWindowSettingsProjectionTests
         var projection = new MainWindowSettingsProjection();
         var settings = new AppSettings
         {
+            UiLanguageCode = "zh-CN",
             ScriptPath = @"C:\tools\sims-mod-cli.ps1",
             SelectedWorkspace = AppWorkspace.Toolkit,
             SelectedAction = SimsAction.TrayPreview,
@@ -81,6 +84,7 @@ public sealed class MainWindowSettingsProjectionTests
 
         var resolved = projection.Resolve(settings, [SimsAction.Organize, SimsAction.Flatten]);
 
+        Assert.Equal("zh-CN", resolved.UiLanguageCode);
         Assert.Equal(SimsAction.Organize, resolved.SelectedAction);
         Assert.Equal(AppWorkspace.TrayPreview, resolved.Workspace);
         Assert.True(resolved.WhatIf);

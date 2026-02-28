@@ -5,25 +5,25 @@
              x:DataType="vm:MainWindowViewModel">
     <Border Classes="card-muted" Padding="10" IsVisible="{Binding IsFindDupVisible}">
         <StackPanel Spacing="10">
-            <TextBlock Classes="section-title" Text="重复文件扫描 (finddup)" />
+            <TextBlock Classes="section-title" Text="Duplicate File Scan (finddup)" />
             <Grid ColumnDefinitions="180,*,Auto"
                   RowDefinitions="Auto,Auto"
                   RowSpacing="8"
                   ColumnSpacing="8">
-                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="扫描目录 (RootPath)" />
+                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="Scan Directory (RootPath)" />
                 <TextBox Grid.Row="0" Grid.Column="1" Classes="path-field" Text="{Binding FindDup.RootPath}" />
                 <Button Grid.Row="0" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="FindDupRootPath" />
 
-                <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="输出 CSV (OutputCsv, 可选)" />
+                <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="Output CSV (OutputCsv, optional)" />
                 <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding FindDup.OutputCsv}" />
                 <Button Grid.Row="1" Grid.Column="2" Content="Browse" Command="{Binding BrowseCsvPathCommand}" CommandParameter="FindDupOutputCsv" />
             </Grid>
 
             <Border Classes="card" Padding="10" Margin="0,8,0,0" IsVisible="{Binding IsToolkitAdvancedOpen}">
                 <StackPanel Spacing="8">
-                    <CheckBox Content="递归子目录 (Recurse)" IsChecked="{Binding FindDup.Recurse}" />
-                    <CheckBox Content="清理重复文件 (Cleanup)" IsChecked="{Binding FindDup.Cleanup}" />
-                    <TextBlock Classes="danger-text" TextWrapping="Wrap" Text="危险: 启用 Cleanup 会删除重复文件（保留首个路径），运行前会二次确认。" />
+                    <CheckBox Content="Recurse subdirectories (Recurse)" IsChecked="{Binding FindDup.Recurse}" />
+                    <CheckBox Content="Clean up duplicate files (Cleanup)" IsChecked="{Binding FindDup.Cleanup}" />
+                    <TextBlock Classes="danger-text" TextWrapping="Wrap" Text="Danger: enabling Cleanup deletes duplicate files (keeps first path). A second confirmation is required." />
                 </StackPanel>
             </Border>
         </StackPanel>

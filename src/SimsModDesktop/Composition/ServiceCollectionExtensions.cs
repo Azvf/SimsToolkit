@@ -7,6 +7,7 @@ using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Application.Validation;
 using SimsModDesktop.Infrastructure.Dialogs;
+using SimsModDesktop.Infrastructure.Localization;
 using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Infrastructure.Windowing;
 using SimsModDesktop.Models;
@@ -24,6 +25,7 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<IWindowHostService, WindowHostService>();
         services.AddSingleton<IFileDialogService, AvaloniaFileDialogService>();
         services.AddSingleton<IConfirmationDialogService, AvaloniaConfirmationDialogService>();
+        services.AddSingleton<ILocalizationService, JsonLocalizationService>();
         services.AddSingleton<ISettingsStore, JsonSettingsStore>();
         services.AddSingleton<IMainWindowSettingsProjection, MainWindowSettingsProjection>();
 

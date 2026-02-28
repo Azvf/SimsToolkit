@@ -38,15 +38,15 @@
                 <Grid RowDefinitions="Auto,Auto,*" RowSpacing="12">
                     <Border Classes="card-muted" Padding="10">
                         <Grid ColumnDefinitions="Auto,190,*" ColumnSpacing="8">
-                            <TextBlock VerticalAlignment="Center" Text="动作 (Action)" />
+                            <TextBlock VerticalAlignment="Center" Text="Action" />
                             <ComboBox Grid.Column="1" Width="180" ItemsSource="{Binding AvailableToolkitActions}" SelectedItem="{Binding SelectedAction}" />
-                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Classes="helper-text" Text="选中动作后编辑参数并执行。" />
+                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Classes="helper-text" Text="Select an action, adjust parameters, then run." />
                         </Grid>
                     </Border>
 
                     <Border Grid.Row="1" Classes="card-muted" Padding="10">
                         <StackPanel Spacing="6">
-                            <TextBlock Classes="sub-title" Text="预检状态" />
+                            <TextBlock Classes="sub-title" Text="Validation Status" />
                             <TextBlock TextWrapping="Wrap" Text="{Binding ValidationSummaryText}" />
                         </StackPanel>
                     </Border>
@@ -68,19 +68,19 @@
                                       ColumnSpacing="8">
                                     <TextBlock Grid.ColumnSpan="2"
                                                Classes="sub-title"
-                                               Text="共享文件处理选项 (Flatten / Merge / FindDuplicates)" />
+                                               Text="Shared File Operation Options (Flatten / Merge / FindDuplicates)" />
 
                                     <CheckBox Grid.Row="1"
                                               Grid.Column="1"
-                                              Content="跳过空目录清理 (SkipPruneEmptyDirs)"
+                                              Content="Skip empty directory cleanup (SkipPruneEmptyDirs)"
                                               IsChecked="{Binding SharedFileOps.SkipPruneEmptyDirs}" />
                                     <CheckBox Grid.Row="2"
                                               Grid.Column="1"
-                                              Content="仅处理 Mod 文件 (ModFilesOnly)"
+                                              Content="Process mod files only (ModFilesOnly)"
                                               IsChecked="{Binding SharedFileOps.ModFilesOnly}" />
                                     <CheckBox Grid.Row="3"
                                               Grid.Column="1"
-                                              Content="重名校验内容 (VerifyContentOnNameConflict)"
+                                              Content="Verify content on name conflicts (VerifyContentOnNameConflict)"
                                               IsChecked="{Binding SharedFileOps.VerifyContentOnNameConflict}" />
                                 </Grid>
                             </Border>
@@ -89,7 +89,7 @@
                                     Padding="10"
                                     IsVisible="{Binding IsSharedFileOpsVisible}">
                                 <Grid ColumnDefinitions="210,*" ColumnSpacing="8">
-                                    <TextBlock VerticalAlignment="Center" Text="扩展名列表 (ModExtensions)" />
+                                    <TextBlock VerticalAlignment="Center" Text="Extensions (ModExtensions)" />
                                     <TextBox Grid.Column="1" Text="{Binding SharedFileOps.ModExtensionsText}" />
                                 </Grid>
                             </Border>
@@ -103,13 +103,13 @@
                     <Border Classes="card-muted" Padding="10">
                         <Grid RowDefinitions="Auto,Auto" RowSpacing="8">
                             <Grid ColumnDefinitions="130,*,Auto,Auto,Auto" ColumnSpacing="8">
-                                <TextBlock VerticalAlignment="Center" Text="托盘目录 (TrayPath)" />
+                                <TextBlock VerticalAlignment="Center" Text="Tray Path (TrayPath)" />
                                 <TextBox Grid.Column="1" Classes="path-field" Text="{Binding TrayPreview.TrayRoot}" />
                                 <Button Grid.Column="2" Classes="secondary" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="PreviewTrayRoot" />
-                                <Button Grid.Column="3" Classes="primary" Content="加载仪表盘" Command="{Binding RunTrayPreviewCommand}" />
-                                <Button Grid.Column="4" Classes="secondary" Content="高级选项" Command="{Binding ToggleTrayPreviewAdvancedCommand}" />
+                                <Button Grid.Column="3" Classes="primary" Content="Load Dashboard" Command="{Binding RunTrayPreviewCommand}" />
+                                <Button Grid.Column="4" Classes="secondary" Content="Advanced Options" Command="{Binding ToggleTrayPreviewAdvancedCommand}" />
                             </Grid>
-                            <TextBlock Grid.Row="1" Classes="helper-text" Text="支持分页和懒加载缓存，默认每页 50 条。" />
+                            <TextBlock Grid.Row="1" Classes="helper-text" Text="Supports paging and lazy cache; default is 50 items per page." />
                         </Grid>
                     </Border>
 
@@ -119,15 +119,15 @@
                             Margin="0,8,0,0"
                             IsVisible="{Binding IsTrayPreviewAdvancedOpen}">
                         <Grid ColumnDefinitions="130,*,130,*" RowDefinitions="Auto,Auto" RowSpacing="8" ColumnSpacing="8">
-                            <TextBlock VerticalAlignment="Center" Text="项目键 (TrayItemKey)" />
+                            <TextBlock VerticalAlignment="Center" Text="Tray Item Key (TrayItemKey)" />
                             <TextBox Grid.Column="1" Watermark="0x1234567890ABCDEF" Text="{Binding TrayPreview.TrayItemKey}" />
                             <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="TopN" />
-                            <TextBox Grid.Column="3" Watermark="空值=全部" Text="{Binding TrayPreview.TopNText}" />
+                            <TextBox Grid.Column="3" Watermark="empty=all" Text="{Binding TrayPreview.TopNText}" />
 
-                            <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="文件预览数 (FilesPerItem)" />
+                            <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="Files Per Item (FilesPerItem)" />
                             <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding TrayPreview.FilesPerItemText}" />
-                            <TextBlock Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" Classes="helper-text" Text="分页" />
-                            <TextBlock Grid.Row="1" Grid.Column="3" VerticalAlignment="Center" Classes="helper-text" Text="固定 50 项/页，懒加载缓存开启。" />
+                            <TextBlock Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" Classes="helper-text" Text="Paging" />
+                            <TextBlock Grid.Row="1" Grid.Column="3" VerticalAlignment="Center" Classes="helper-text" Text="Fixed at 50 items/page with lazy cache enabled." />
                         </Grid>
                     </Border>
 
