@@ -8,7 +8,6 @@ public sealed class TrayDependenciesPanelViewModel : ObservableObject, ITrayDepe
     private string _trayPath = string.Empty;
     private string _modsPath = string.Empty;
     private string _trayItemKey = string.Empty;
-    private string _analysisMode = "StrictS4TI";
     private string _s4tiPath = string.Empty;
     private string _minMatchCountText = "1";
     private string _topNText = "200";
@@ -20,7 +19,6 @@ public sealed class TrayDependenciesPanelViewModel : ObservableObject, ITrayDepe
     private string _exportTargetPath = string.Empty;
     private string _exportMinConfidence = "Low";
 
-    public IReadOnlyList<string> AvailableAnalysisModes { get; } = new[] { "StrictS4TI", "Legacy" };
     public IReadOnlyList<string> AvailableExportMinConfidence { get; } = new[] { "Low", "Medium", "High" };
 
     public string TrayPath
@@ -39,12 +37,6 @@ public sealed class TrayDependenciesPanelViewModel : ObservableObject, ITrayDepe
     {
         get => _trayItemKey;
         set => SetProperty(ref _trayItemKey, value);
-    }
-
-    public string AnalysisMode
-    {
-        get => _analysisMode;
-        set => SetProperty(ref _analysisMode, value);
     }
 
     public string S4tiPath

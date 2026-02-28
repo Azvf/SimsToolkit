@@ -19,6 +19,48 @@
         <Setter Property="CornerRadius" Value="{DynamicResource Radius.Small}" />
     </Style>
 
+    <Style Selector="Border.sidebar-shell">
+        <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Radius.Medium}" />
+    </Style>
+
+    <Style Selector="Border.sidebar-hero">
+        <Setter Property="Background" Value="{DynamicResource Brush.AccentMuted}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderFocus}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Radius.Medium}" />
+    </Style>
+
+    <Style Selector="Border.sidebar-block, Border.sidebar-cta-block">
+        <Setter Property="Background" Value="{DynamicResource Brush.SurfaceMuted}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Radius.Medium}" />
+    </Style>
+
+    <Style Selector="Border.sidebar-subtle-block">
+        <Setter Property="Background" Value="{DynamicResource Brush.SurfaceMuted}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Radius.Small}" />
+    </Style>
+
+    <Style Selector="Border.inspector-shell">
+        <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Radius.Medium}" />
+    </Style>
+
+    <Style Selector="Border.inspector-header, Border.inspector-empty, Border.inspector-detail">
+        <Setter Property="Background" Value="{DynamicResource Brush.SurfaceMuted}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Radius.Small}" />
+    </Style>
+
     <Style Selector="TextBox, ComboBox, Button">
         <Setter Property="Height" Value="{DynamicResource Size.ControlHeight}" />
     </Style>
@@ -40,6 +82,29 @@
 
     <Style Selector="TextBox.path-field">
         <Setter Property="FontFamily" Value="Consolas, Cascadia Mono, JetBrains Mono" />
+    </Style>
+
+    <Style Selector="Border.settings-readonly-field">
+        <Setter Property="Height" Value="{DynamicResource Size.ControlHeight}" />
+        <Setter Property="Padding" Value="12,0" />
+        <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Radius.Small}" />
+    </Style>
+
+    <Style Selector="Border.settings-section">
+        <Setter Property="Background" Value="{DynamicResource Brush.SurfaceMuted}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Radius.Small}" />
+    </Style>
+
+    <Style Selector="TextBlock.settings-readonly-value">
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="FontFamily" Value="Consolas, Cascadia Mono, JetBrains Mono" />
+        <Setter Property="Foreground" Value="{DynamicResource Brush.TextSecondary}" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
     </Style>
 
     <Style Selector="TextBox.log-output">
@@ -126,6 +191,119 @@
         <Setter Property="Background" Value="{DynamicResource Brush.AccentMutedPressed}" />
         <Setter Property="BorderBrush" Value="{DynamicResource Brush.AccentPressed}" />
         <Setter Property="Foreground" Value="{DynamicResource Brush.Accent}" />
+    </Style>
+
+    <Style Selector="Button.sidebar-link">
+        <Setter Property="MinHeight" Value="50" />
+        <Setter Property="Padding" Value="10,8" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Radius.Small}" />
+    </Style>
+
+    <Style Selector="Button.sidebar-link:pointerover">
+        <Setter Property="Background" Value="{DynamicResource Brush.SurfaceHover}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderFocus}" />
+    </Style>
+
+    <Style Selector="Button.sidebar-mini-link">
+        <Setter Property="Height" Value="32" />
+        <Setter Property="HorizontalContentAlignment" Value="Left" />
+        <Setter Property="Padding" Value="10,2" />
+        <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
+    </Style>
+
+    <Style Selector="Button.sidebar-mini-link:pointerover">
+        <Setter Property="Background" Value="{DynamicResource Brush.SurfaceHover}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderFocus}" />
+    </Style>
+
+    <Style Selector="Button.sidebar-link-minimal">
+        <Setter Property="Height" Value="40" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="HorizontalContentAlignment" Value="Left" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="Padding" Value="10,0,10,0" />
+        <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Radius.Small}" />
+    </Style>
+
+    <Style Selector="Button.sidebar-link-minimal:pointerover">
+        <Setter Property="Background" Value="{DynamicResource Brush.SurfaceHover}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderHover}" />
+    </Style>
+
+    <Style Selector="Button.sidebar-active">
+        <Setter Property="Background" Value="{DynamicResource Brush.SurfaceMuted}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderFocus}" />
+        <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style Selector="Button.sidebar-active:pointerover">
+        <Setter Property="Background" Value="{DynamicResource Brush.SurfaceHover}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderFocus}" />
+        <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
+    </Style>
+
+    <Style Selector="Button.sidebar-launch">
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style Selector="Button.sidebar-launch-minimal">
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Radius.Small}" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="Button.inspector-action">
+        <Setter Property="Height" Value="34" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+    </Style>
+
+    <Style Selector="Border.status-pill">
+        <Setter Property="Padding" Value="8,2" />
+        <Setter Property="CornerRadius" Value="999" />
+        <Setter Property="BorderThickness" Value="1" />
+    </Style>
+
+    <Style Selector="Border.status-pill.status-ok">
+        <Setter Property="Background" Value="{DynamicResource Brush.AccentMuted}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Success}" />
+    </Style>
+
+    <Style Selector="Border.status-pill.status-warning">
+        <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Warning}" />
+    </Style>
+
+    <Style Selector="Border.status-pill.status-missing">
+        <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Danger}" />
+    </Style>
+
+    <Style Selector="Border.status-dot">
+        <Setter Property="Width" Value="8" />
+        <Setter Property="Height" Value="8" />
+        <Setter Property="CornerRadius" Value="999" />
+        <Setter Property="Background" Value="{DynamicResource Brush.Border}" />
+    </Style>
+
+    <Style Selector="Border.status-dot.status-ok">
+        <Setter Property="Background" Value="{DynamicResource Brush.Success}" />
+    </Style>
+
+    <Style Selector="Border.status-dot.status-warning">
+        <Setter Property="Background" Value="{DynamicResource Brush.Warning}" />
+    </Style>
+
+    <Style Selector="Border.status-dot.status-missing">
+        <Setter Property="Background" Value="{DynamicResource Brush.Danger}" />
     </Style>
 
     <Style Selector="Button.danger">

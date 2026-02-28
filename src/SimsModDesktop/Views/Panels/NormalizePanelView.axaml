@@ -5,9 +5,9 @@
              x:DataType="vm:MainWindowViewModel">
     <Border Classes="card-muted" Padding="10" IsVisible="{Binding IsNormalizeVisible}">
         <StackPanel Spacing="10">
-            <TextBlock Classes="section-title" Text="Normalize Directory (normalize)" />
+            <TextBlock Classes="section-title" Text="Normalize Directory" />
             <Grid ColumnDefinitions="180,*,Auto" RowDefinitions="Auto" RowSpacing="8" ColumnSpacing="8">
-                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="Root Path (RootPath)" />
+                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="Root Path" />
                 <TextBox Grid.Row="0" Grid.Column="1" Classes="path-field" Text="{Binding Normalize.RootPath}" />
                 <Button Grid.Row="0" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="NormalizeRootPath" />
             </Grid>

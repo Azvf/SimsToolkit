@@ -100,8 +100,7 @@ public sealed class MainWindowSettingsProjection : IMainWindowSettingsProjection
         {
             ToolkitLogDrawerOpen = source.ToolkitLogDrawerOpen,
             TrayPreviewLogDrawerOpen = source.TrayPreviewLogDrawerOpen,
-            ToolkitAdvancedOpen = source.ToolkitAdvancedOpen,
-            TrayPreviewAdvancedOpen = source.TrayPreviewAdvancedOpen
+            ToolkitAdvancedOpen = source.ToolkitAdvancedOpen
         };
     }
 
@@ -120,7 +119,6 @@ public sealed class MainWindowSettingsProjection : IMainWindowSettingsProjection
         var source = value ?? new AppSettings.FeatureFlagsSettings();
         return new AppSettings.FeatureFlagsSettings
         {
-            EnableGlobalSidebarShell = source.EnableGlobalSidebarShell,
             EnableStructuredResults = source.EnableStructuredResults,
             EnableInspectorPane = source.EnableInspectorPane,
             EnableLaunchGame = source.EnableLaunchGame
@@ -132,6 +130,7 @@ public sealed class MainWindowSettingsProjection : IMainWindowSettingsProjection
         var source = value ?? new AppSettings.GameLaunchSettings();
         return new AppSettings.GameLaunchSettings
         {
+            Ts4RootPath = source.Ts4RootPath,
             GameExecutablePath = source.GameExecutablePath,
             ModsPath = source.ModsPath,
             TrayPath = source.TrayPath,

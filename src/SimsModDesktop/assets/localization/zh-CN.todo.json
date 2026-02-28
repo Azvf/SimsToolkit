@@ -40,7 +40,7 @@
     "preview.lazyCache":  "TODO[zh-CN]: preview.lazyCache",
     "preview.typeNa":  "TODO[zh-CN]: preview.typeNa",
     "preview.type":  "TODO[zh-CN]: preview.type",
-    "preview.dashboardReady":  "TODO[zh-CN]: preview.dashboardReady",
+    "preview.summaryReady":  "TODO[zh-CN]: preview.summaryReady",
     "preview.range":  "TODO[zh-CN]: preview.range",
     "dialog.danger.title":  "TODO[zh-CN]: dialog.danger.title",
     "dialog.danger.message":  "TODO[zh-CN]: dialog.danger.message",
@@ -57,3 +57,4 @@
     "ui.settings.hashWorkerCount.label":  "TODO[zh-CN]: ui.settings.hashWorkerCount.label",
     "ui.settings.performance.hint":  "TODO[zh-CN]: ui.settings.performance.hint"
 }
+

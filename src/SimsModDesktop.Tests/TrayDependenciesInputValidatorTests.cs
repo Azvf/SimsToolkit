@@ -19,8 +19,7 @@ public sealed class TrayDependenciesInputValidatorTests
             {
                 ScriptPath = scriptPath,
                 TrayPath = trayDir.FullName,
-                ModsPath = modsDir.FullName,
-                AnalysisMode = "StrictS4TI"
+                ModsPath = modsDir.FullName
             };
 
             var ok = validator.TryValidate(input, out var error);

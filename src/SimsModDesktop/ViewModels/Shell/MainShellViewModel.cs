@@ -1,8 +1,7 @@
-using System.Collections.ObjectModel;
 using System.ComponentModel;
 using Avalonia;
 using Avalonia.Styling;
-using SimsModDesktop.Application.Results;
+using SimsModDesktop.Infrastructure.Dialogs;
 using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Models;
 using SimsModDesktop.Services;
@@ -13,75 +12,61 @@ namespace SimsModDesktop.ViewModels.Shell;
 
 public sealed class MainShellViewModel : ObservableObject
 {
-    private readonly MainWindowViewModel _legacy;
+    private readonly MainWindowViewModel _workspaceVm;
     private readonly INavigationService _navigation;
+    private readonly IFileDialogService _fileDialogService;
     private readonly ISettingsStore _settingsStore;
     private readonly ITS4PathDiscoveryService _pathDiscovery;
     private readonly IGameLaunchService _gameLaunchService;
-    private readonly IExecutionOutputParserRegistry _parserRegistry;
-    private readonly IActionResultRepository _resultRepository;
     private readonly InspectorViewModel _inspector;
-
-    private readonly ObservableCollection<ActionResultRow> _resultRows = [];
-    private readonly ObservableCollection<string> _availableTypeFilters = ["All", "TrayPreview", "TrayDependency", "FindDuplicates"];
-    private readonly ObservableCollection<string> _availableStatusFilters = ["All", "Conflict", "Review", "Safe", "Duplicate", "Lot", "Room", "Household", "Mixed", "GenericTray", "Unknown"];
-    private readonly ObservableCollection<string> _availableDateFilters = ["All", "Last24h", "Last7d", "Last30d"];
-    private readonly ObservableCollection<string> _availableConfidenceFilters = ["All", "High", "Medium", "Low", "n/a"];
 
     private AppSection _selectedSection = AppSection.Mods;
     private string _selectedModuleKey = "organize";
-    private bool _enableGlobalSidebarShell = true;
     private bool _enableStructuredResults = true;
     private bool _enableInspectorPane = true;
     private bool _enableLaunchGame = true;
     private string _requestedTheme = "Dark";
+    private string _ts4RootPath = string.Empty;
     private string _gameExecutablePath = string.Empty;
     private string _modsPath = string.Empty;
     private string _trayPath = string.Empty;
     private string _savesPath = string.Empty;
     private string _launchGameStatus = string.Empty;
-    private string _shellStatusMessage = "Ready.";
-    private string _selectedTypeFilter = "All";
-    private string _selectedStatusFilter = "All";
-    private string _selectedDateFilter = "All";
-    private string _selectedConfidenceFilter = "All";
-    private ActionResultRow? _selectedResultRow;
-    private SimsAction _latestAction = SimsAction.Organize;
-    private bool _wasBusy;
+    private bool _isApplyingDerivedPaths;
+    private string _lastDerivedModsPath = string.Empty;
+    private string _lastDerivedTrayPath = string.Empty;
+    private string _lastDerivedSavesPath = string.Empty;
     private bool _isInitialized;
 
     public MainShellViewModel(
-        MainWindowViewModel legacy,
+        MainWindowViewModel workspaceVm,
         INavigationService navigation,
+        IFileDialogService fileDialogService,
         ISettingsStore settingsStore,
         ITS4PathDiscoveryService pathDiscovery,
         IGameLaunchService gameLaunchService,
-        IExecutionOutputParserRegistry parserRegistry,
-        IActionResultRepository resultRepository,
         InspectorViewModel inspector)
     {
-        _legacy = legacy;
+        _workspaceVm = workspaceVm;
         _navigation = navigation;
+        _fileDialogService = fileDialogService;
         _settingsStore = settingsStore;
         _pathDiscovery = pathDiscovery;
         _gameLaunchService = gameLaunchService;
-        _parserRegistry = parserRegistry;
-        _resultRepository = resultRepository;
         _inspector = inspector;
 
         SelectSectionCommand = new RelayCommand<string>(SelectSection);
         SelectModuleCommand = new RelayCommand<string>(SelectModule);
-        LaunchGameCommand = new AsyncRelayCommand(LaunchGameAsync, () => EnableLaunchGame);
+        LaunchGameCommand = new AsyncRelayCommand(LaunchGameAsync, () => CanLaunchGame);
         SetDarkThemeCommand = new RelayCommand(() => RequestedTheme = "Dark");
         SetLightThemeCommand = new RelayCommand(() => RequestedTheme = "Light");
-        ClearFiltersCommand = new RelayCommand(ClearFilters);
+        BrowseTs4RootCommand = new AsyncRelayCommand(BrowseTs4RootAsync, () => !_workspaceVm.IsBusy, disableWhileRunning: false);
 
-        _legacy.PropertyChanged += OnLegacyPropertyChanged;
+        _workspaceVm.PropertyChanged += OnWorkspaceVmPropertyChanged;
         _navigation.PropertyChanged += OnNavigationPropertyChanged;
-        _resultRepository.PropertyChanged += OnResultRepositoryPropertyChanged;
     }
 
-    public MainWindowViewModel Legacy => _legacy;
+    public MainWindowViewModel WorkspaceVm => _workspaceVm;
     public InspectorViewModel Inspector => _inspector;
 
     public RelayCommand<string> SelectSectionCommand { get; }
@@ -89,15 +74,10 @@ public sealed class MainShellViewModel : ObservableObject
     public AsyncRelayCommand LaunchGameCommand { get; }
     public RelayCommand SetDarkThemeCommand { get; }
     public RelayCommand SetLightThemeCommand { get; }
-    public RelayCommand ClearFiltersCommand { get; }
+    public AsyncRelayCommand BrowseTs4RootCommand { get; }
 
     public IReadOnlyList<NavigationItem> SectionItems => _navigation.SectionItems;
     public IReadOnlyList<NavigationItem> ModuleItems => _navigation.CurrentModules;
-    public ObservableCollection<ActionResultRow> ResultRows => _resultRows;
-    public ObservableCollection<string> AvailableTypeFilters => _availableTypeFilters;
-    public ObservableCollection<string> AvailableStatusFilters => _availableStatusFilters;
-    public ObservableCollection<string> AvailableDateFilters => _availableDateFilters;
-    public ObservableCollection<string> AvailableConfidenceFilters => _availableConfidenceFilters;
 
     public AppSection SelectedSection
     {
@@ -109,39 +89,52 @@ public sealed class MainShellViewModel : ObservableObject
                 return;
             }
 
-            OnPropertyChanged(nameof(IsDashboardVisible));
             OnPropertyChanged(nameof(IsModsSectionVisible));
             OnPropertyChanged(nameof(IsTraySectionVisible));
             OnPropertyChanged(nameof(IsSavesVisible));
             OnPropertyChanged(nameof(IsSettingsVisible));
             OnPropertyChanged(nameof(ModuleItems));
+            OnPropertyChanged(nameof(IsModsSectionSelected));
+            OnPropertyChanged(nameof(IsTraySectionSelected));
+            OnPropertyChanged(nameof(IsSavesSectionSelected));
+            OnPropertyChanged(nameof(IsSettingsSectionSelected));
+            OnPropertyChanged(nameof(IsWorkspaceSectionVisible));
+            OnPropertyChanged(nameof(IsInspectorVisible));
         }
     }
 
     public string SelectedModuleKey
     {
         get => _selectedModuleKey;
-        private set => SetProperty(ref _selectedModuleKey, value);
-    }
-
-    public bool EnableGlobalSidebarShell
-    {
-        get => _enableGlobalSidebarShell;
-        set
+        private set
         {
-            if (!SetProperty(ref _enableGlobalSidebarShell, value))
+            if (!SetProperty(ref _selectedModuleKey, value))
             {
                 return;
             }
 
-            OnPropertyChanged(nameof(IsLegacyShellMode));
+            OnPropertyChanged(nameof(IsOrganizeModuleSelected));
+            OnPropertyChanged(nameof(IsFlattenModuleSelected));
+            OnPropertyChanged(nameof(IsNormalizeModuleSelected));
+            OnPropertyChanged(nameof(IsMergeModuleSelected));
+            OnPropertyChanged(nameof(IsFindDupModuleSelected));
+            OnPropertyChanged(nameof(IsTrayPreviewModuleSelected));
+            OnPropertyChanged(nameof(IsTrayDepsModuleSelected));
         }
     }
 
     public bool EnableStructuredResults
     {
         get => _enableStructuredResults;
-        set => SetProperty(ref _enableStructuredResults, value);
+        set
+        {
+            if (!SetProperty(ref _enableStructuredResults, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(IsInspectorVisible));
+        }
     }
 
     public bool EnableInspectorPane
@@ -169,6 +162,7 @@ public sealed class MainShellViewModel : ObservableObject
                 return;
             }
 
+            OnPropertyChanged(nameof(CanLaunchGame));
             LaunchGameCommand.NotifyCanExecuteChanged();
         }
     }
@@ -183,32 +177,84 @@ public sealed class MainShellViewModel : ObservableObject
                 return;
             }
 
+            OnPropertyChanged(nameof(IsDarkThemeSelected));
+            OnPropertyChanged(nameof(IsLightThemeSelected));
             ApplyTheme();
+        }
+    }
+
+    public string Ts4RootPath
+    {
+        get => _ts4RootPath;
+        set
+        {
+            var normalized = NormalizePath(value);
+            if (!SetProperty(ref _ts4RootPath, normalized))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(IsDerivedPathsReadOnly));
+            ApplyDerivedPathsFromRoot();
         }
     }
 
     public string GameExecutablePath
     {
         get => _gameExecutablePath;
-        set => SetProperty(ref _gameExecutablePath, value);
+        set
+        {
+            if (!SetProperty(ref _gameExecutablePath, value))
+            {
+                return;
+            }
+
+            NotifyPathHealthChanged();
+        }
     }
 
     public string ModsPath
     {
         get => _modsPath;
-        set => SetProperty(ref _modsPath, value);
+        set
+        {
+            if (!SetProperty(ref _modsPath, value))
+            {
+                return;
+            }
+
+            NotifyPathHealthChanged();
+            SyncTrayPathsToWorkspace();
+        }
     }
 
     public string TrayPath
     {
         get => _trayPath;
-        set => SetProperty(ref _trayPath, value);
+        set
+        {
+            if (!SetProperty(ref _trayPath, value))
+            {
+                return;
+            }
+
+            NotifyPathHealthChanged();
+            SyncTrayPathsToWorkspace();
+        }
     }
 
     public string SavesPath
     {
         get => _savesPath;
-        set => SetProperty(ref _savesPath, value);
+        set
+        {
+            if (!SetProperty(ref _savesPath, value))
+            {
+                return;
+            }
+
+            NotifyPathHealthChanged();
+        }
     }
 
     public string LaunchGameStatus
@@ -217,91 +263,64 @@ public sealed class MainShellViewModel : ObservableObject
         private set => SetProperty(ref _launchGameStatus, value);
     }
 
-    public string ShellStatusMessage
-    {
-        get => _shellStatusMessage;
-        private set => SetProperty(ref _shellStatusMessage, value);
-    }
-
-    public string SelectedTypeFilter
-    {
-        get => _selectedTypeFilter;
-        set
-        {
-            if (!SetProperty(ref _selectedTypeFilter, value))
-            {
-                return;
-            }
-
-            RebuildFilteredRows();
-        }
-    }
-
-    public string SelectedStatusFilter
-    {
-        get => _selectedStatusFilter;
-        set
-        {
-            if (!SetProperty(ref _selectedStatusFilter, value))
-            {
-                return;
-            }
-
-            RebuildFilteredRows();
-        }
-    }
-
-    public string SelectedDateFilter
-    {
-        get => _selectedDateFilter;
-        set
-        {
-            if (!SetProperty(ref _selectedDateFilter, value))
-            {
-                return;
-            }
-
-            RebuildFilteredRows();
-        }
-    }
-
-    public string SelectedConfidenceFilter
-    {
-        get => _selectedConfidenceFilter;
-        set
-        {
-            if (!SetProperty(ref _selectedConfidenceFilter, value))
-            {
-                return;
-            }
-
-            RebuildFilteredRows();
-        }
-    }
-
-    public ActionResultRow? SelectedResultRow
-    {
-        get => _selectedResultRow;
-        set
-        {
-            if (!SetProperty(ref _selectedResultRow, value))
-            {
-                return;
-            }
-
-            _inspector.Update(_latestAction, value);
-        }
-    }
-
-    public bool IsDashboardVisible => SelectedSection == AppSection.Dashboard;
     public bool IsModsSectionVisible => SelectedSection == AppSection.Mods;
     public bool IsTraySectionVisible => SelectedSection == AppSection.Tray;
     public bool IsSavesVisible => SelectedSection == AppSection.Saves;
     public bool IsSettingsVisible => SelectedSection == AppSection.Settings;
-    public bool IsInspectorVisible => EnableInspectorPane && EnableStructuredResults;
-    public bool IsLegacyVisible => IsModsSectionVisible || IsTraySectionVisible;
-    public bool IsLegacyShellMode => !EnableGlobalSidebarShell;
-    public bool HasResults => _resultRows.Count > 0;
+    public bool IsModsSectionSelected => SelectedSection == AppSection.Mods;
+    public bool IsTraySectionSelected => SelectedSection == AppSection.Tray;
+    public bool IsSavesSectionSelected => SelectedSection == AppSection.Saves;
+    public bool IsSettingsSectionSelected => SelectedSection == AppSection.Settings;
+
+    public bool IsOrganizeModuleSelected => string.Equals(SelectedModuleKey, "organize", StringComparison.OrdinalIgnoreCase);
+    public bool IsFlattenModuleSelected => string.Equals(SelectedModuleKey, "flatten", StringComparison.OrdinalIgnoreCase);
+    public bool IsNormalizeModuleSelected => string.Equals(SelectedModuleKey, "normalize", StringComparison.OrdinalIgnoreCase);
+    public bool IsMergeModuleSelected => string.Equals(SelectedModuleKey, "merge", StringComparison.OrdinalIgnoreCase);
+    public bool IsFindDupModuleSelected => string.Equals(SelectedModuleKey, "finddup", StringComparison.OrdinalIgnoreCase);
+    public bool IsTrayPreviewModuleSelected => string.Equals(SelectedModuleKey, "traypreview", StringComparison.OrdinalIgnoreCase);
+    public bool IsTrayDepsModuleSelected => string.Equals(SelectedModuleKey, "traydeps", StringComparison.OrdinalIgnoreCase);
+
+    public bool HasGameExecutable => !string.IsNullOrWhiteSpace(GameExecutablePath) && File.Exists(GameExecutablePath);
+    public bool HasModsPath => !string.IsNullOrWhiteSpace(ModsPath) && Directory.Exists(ModsPath);
+    public bool HasTrayPath => !string.IsNullOrWhiteSpace(TrayPath) && Directory.Exists(TrayPath);
+    public bool HasSavesPath => !string.IsNullOrWhiteSpace(SavesPath) && Directory.Exists(SavesPath);
+
+    public bool IsGameExecutableWarning => !string.IsNullOrWhiteSpace(GameExecutablePath) && !File.Exists(GameExecutablePath);
+    public bool IsModsPathWarning => !string.IsNullOrWhiteSpace(ModsPath) && !Directory.Exists(ModsPath);
+    public bool IsTrayPathWarning => !string.IsNullOrWhiteSpace(TrayPath) && !Directory.Exists(TrayPath);
+    public bool IsSavesPathWarning => !string.IsNullOrWhiteSpace(SavesPath) && !Directory.Exists(SavesPath);
+
+    public bool IsGameExecutableMissing => string.IsNullOrWhiteSpace(GameExecutablePath);
+    public bool IsModsPathMissing => string.IsNullOrWhiteSpace(ModsPath);
+    public bool IsTrayPathMissing => string.IsNullOrWhiteSpace(TrayPath);
+    public bool IsSavesPathMissing => string.IsNullOrWhiteSpace(SavesPath);
+
+    public string GameStatusBadgeText => ResolveStatusBadgeText(HasGameExecutable, IsGameExecutableWarning);
+    public string ModsStatusBadgeText => ResolveStatusBadgeText(HasModsPath, IsModsPathWarning);
+    public string TrayStatusBadgeText => ResolveStatusBadgeText(HasTrayPath, IsTrayPathWarning);
+    public string SavesStatusBadgeText => ResolveStatusBadgeText(HasSavesPath, IsSavesPathWarning);
+
+    public string PathHealthSummary
+    {
+        get
+        {
+            var ready = 0;
+            if (HasGameExecutable) { ready++; }
+            if (HasModsPath) { ready++; }
+            if (HasTrayPath) { ready++; }
+            if (HasSavesPath) { ready++; }
+
+            return $"{ready}/4 core paths ready";
+        }
+    }
+
+    public bool CanLaunchGame => EnableLaunchGame && HasGameExecutable;
+    public string LaunchButtonText => HasGameExecutable ? "Launch The Sims 4" : "Set Game Path First";
+    public bool IsInspectorVisible => EnableInspectorPane && EnableStructuredResults && IsWorkspaceSectionVisible;
+    public bool IsWorkspaceSectionVisible => IsModsSectionVisible || IsTraySectionVisible;
+    public bool IsDerivedPathsReadOnly => !string.IsNullOrWhiteSpace(Ts4RootPath);
+    public bool IsDarkThemeSelected => string.Equals(RequestedTheme, "Dark", StringComparison.OrdinalIgnoreCase);
+    public bool IsLightThemeSelected => string.Equals(RequestedTheme, "Light", StringComparison.OrdinalIgnoreCase);
 
     public async Task InitializeAsync()
     {
@@ -310,20 +329,24 @@ public sealed class MainShellViewModel : ObservableObject
             return;
         }
 
-        await _legacy.InitializeAsync();
+        await _workspaceVm.InitializeAsync();
         await LoadShellSettingsAsync();
 
-        if (string.IsNullOrWhiteSpace(GameExecutablePath) ||
-            string.IsNullOrWhiteSpace(ModsPath) ||
-            string.IsNullOrWhiteSpace(TrayPath) ||
-            string.IsNullOrWhiteSpace(SavesPath))
-        {
-            var discovered = _pathDiscovery.Discover();
-            if (string.IsNullOrWhiteSpace(GameExecutablePath))
-            {
-                GameExecutablePath = discovered.GameExecutablePath;
-            }
+        var discovered = _pathDiscovery.Discover();
 
+        if (string.IsNullOrWhiteSpace(Ts4RootPath) &&
+            !string.IsNullOrWhiteSpace(discovered.Ts4RootPath))
+        {
+            Ts4RootPath = discovered.Ts4RootPath;
+        }
+
+        if (string.IsNullOrWhiteSpace(GameExecutablePath))
+        {
+            GameExecutablePath = discovered.GameExecutablePath;
+        }
+
+        if (string.IsNullOrWhiteSpace(Ts4RootPath))
+        {
             if (string.IsNullOrWhiteSpace(ModsPath))
             {
                 ModsPath = discovered.ModsPath;
@@ -342,13 +365,14 @@ public sealed class MainShellViewModel : ObservableObject
 
         _inspector.IsOpen = EnableInspectorPane;
         ApplyTheme();
-        ApplyNavigationToLegacy();
+        ApplyNavigationToWorkspace();
+        SyncTrayPathsToWorkspace();
         _isInitialized = true;
     }
 
     public async Task PersistSettingsAsync()
     {
-        await _legacy.PersistSettingsAsync();
+        await _workspaceVm.PersistSettingsAsync();
 
         var settings = await _settingsStore.LoadAsync();
         settings.Navigation = new AppSettings.NavigationSettings
@@ -358,13 +382,13 @@ public sealed class MainShellViewModel : ObservableObject
         };
         settings.FeatureFlags = new AppSettings.FeatureFlagsSettings
         {
-            EnableGlobalSidebarShell = EnableGlobalSidebarShell,
             EnableStructuredResults = EnableStructuredResults,
             EnableInspectorPane = EnableInspectorPane,
             EnableLaunchGame = EnableLaunchGame
         };
         settings.GameLaunch = new AppSettings.GameLaunchSettings
         {
+            Ts4RootPath = Ts4RootPath,
             GameExecutablePath = GameExecutablePath,
             ModsPath = ModsPath,
             TrayPath = TrayPath,
@@ -381,7 +405,6 @@ public sealed class MainShellViewModel : ObservableObject
     private async Task LoadShellSettingsAsync()
     {
         var settings = await _settingsStore.LoadAsync();
-        EnableGlobalSidebarShell = settings.FeatureFlags.EnableGlobalSidebarShell;
         EnableStructuredResults = settings.FeatureFlags.EnableStructuredResults;
         EnableInspectorPane = settings.FeatureFlags.EnableInspectorPane;
         EnableLaunchGame = settings.FeatureFlags.EnableLaunchGame;
@@ -392,6 +415,7 @@ public sealed class MainShellViewModel : ObservableObject
         ModsPath = settings.GameLaunch.ModsPath;
         TrayPath = settings.GameLaunch.TrayPath;
         SavesPath = settings.GameLaunch.SavesPath;
+        Ts4RootPath = settings.GameLaunch.Ts4RootPath;
 
         _navigation.SelectSection(settings.Navigation.SelectedSection);
         _navigation.SelectModule(string.IsNullOrWhiteSpace(settings.Navigation.SelectedModuleKey)
@@ -430,7 +454,7 @@ public sealed class MainShellViewModel : ObservableObject
         _navigation.SelectSection(section);
         SelectedSection = _navigation.SelectedSection;
         SelectedModuleKey = _navigation.SelectedModuleKey;
-        ApplyNavigationToLegacy();
+        ApplyNavigationToWorkspace();
     }
 
     private void SelectModule(string? moduleKey)
@@ -442,41 +466,43 @@ public sealed class MainShellViewModel : ObservableObject
 
         _navigation.SelectModule(moduleKey);
         SelectedModuleKey = _navigation.SelectedModuleKey;
-        ApplyNavigationToLegacy();
+        ApplyNavigationToWorkspace();
     }
 
-    private void ApplyNavigationToLegacy()
+    private void ApplyNavigationToWorkspace()
     {
         switch (SelectedModuleKey.ToLowerInvariant())
         {
             case "organize":
-                _legacy.Workspace = AppWorkspace.Toolkit;
-                _legacy.SelectedAction = SimsAction.Organize;
+                _workspaceVm.Workspace = AppWorkspace.Toolkit;
+                _workspaceVm.SelectedAction = SimsAction.Organize;
                 break;
             case "flatten":
-                _legacy.Workspace = AppWorkspace.Toolkit;
-                _legacy.SelectedAction = SimsAction.Flatten;
+                _workspaceVm.Workspace = AppWorkspace.Toolkit;
+                _workspaceVm.SelectedAction = SimsAction.Flatten;
                 break;
             case "normalize":
-                _legacy.Workspace = AppWorkspace.Toolkit;
-                _legacy.SelectedAction = SimsAction.Normalize;
+                _workspaceVm.Workspace = AppWorkspace.Toolkit;
+                _workspaceVm.SelectedAction = SimsAction.Normalize;
                 break;
             case "merge":
-                _legacy.Workspace = AppWorkspace.Toolkit;
-                _legacy.SelectedAction = SimsAction.Merge;
+                _workspaceVm.Workspace = AppWorkspace.Toolkit;
+                _workspaceVm.SelectedAction = SimsAction.Merge;
                 break;
             case "finddup":
-                _legacy.Workspace = AppWorkspace.Toolkit;
-                _legacy.SelectedAction = SimsAction.FindDuplicates;
+                _workspaceVm.Workspace = AppWorkspace.Toolkit;
+                _workspaceVm.SelectedAction = SimsAction.FindDuplicates;
                 break;
             case "traydeps":
-                _legacy.Workspace = AppWorkspace.Toolkit;
-                _legacy.SelectedAction = SimsAction.TrayDependencies;
+                _workspaceVm.Workspace = AppWorkspace.Toolkit;
+                _workspaceVm.SelectedAction = SimsAction.TrayDependencies;
                 break;
             case "traypreview":
-                _legacy.Workspace = AppWorkspace.TrayPreview;
+                _workspaceVm.Workspace = AppWorkspace.TrayPreview;
                 break;
         }
+
+        SyncTrayPathsToWorkspace();
     }
 
     private async Task LaunchGameAsync()
@@ -491,31 +517,29 @@ public sealed class MainShellViewModel : ObservableObject
 
         var result = _gameLaunchService.Launch(request);
         LaunchGameStatus = result.Message;
-        ShellStatusMessage = result.Message;
         await Task.CompletedTask;
     }
 
-    private void ClearFilters()
-    {
-        SelectedTypeFilter = "All";
-        SelectedStatusFilter = "All";
-        SelectedDateFilter = "All";
-        SelectedConfidenceFilter = "All";
-    }
-
-    private void OnLegacyPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    private void OnWorkspaceVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (!string.Equals(e.PropertyName, nameof(MainWindowViewModel.IsBusy), StringComparison.Ordinal))
         {
             return;
         }
 
-        if (_wasBusy && !_legacy.IsBusy)
+        BrowseTs4RootCommand.NotifyCanExecuteChanged();
+    }
+
+    private async Task BrowseTs4RootAsync()
+    {
+        var selectedPaths = await _fileDialogService.PickFolderPathsAsync("Select The Sims 4 Root", allowMultiple: false);
+        var selectedPath = selectedPaths.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(selectedPath))
         {
-            CaptureStructuredResults();
+            return;
         }
 
-        _wasBusy = _legacy.IsBusy;
+        Ts4RootPath = selectedPath;
     }
 
     private void OnNavigationPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -537,96 +561,108 @@ public sealed class MainShellViewModel : ObservableObject
         }
     }
 
-    private void OnResultRepositoryPropertyChanged(object? sender, PropertyChangedEventArgs e)
+
+    private void ApplyDerivedPathsFromRoot()
     {
-        if (!string.Equals(e.PropertyName, nameof(IActionResultRepository.Latest), StringComparison.Ordinal))
+        if (_isApplyingDerivedPaths)
         {
             return;
         }
 
-        RebuildFilteredRows();
+        _isApplyingDerivedPaths = true;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(Ts4RootPath))
+            {
+                if (PathEquals(ModsPath, _lastDerivedModsPath))
+                {
+                    ModsPath = string.Empty;
+                }
+
+                if (PathEquals(TrayPath, _lastDerivedTrayPath))
+                {
+                    TrayPath = string.Empty;
+                }
+
+                if (PathEquals(SavesPath, _lastDerivedSavesPath))
+                {
+                    SavesPath = string.Empty;
+                }
+
+                _lastDerivedModsPath = string.Empty;
+                _lastDerivedTrayPath = string.Empty;
+                _lastDerivedSavesPath = string.Empty;
+                return;
+            }
+
+            _lastDerivedModsPath = Path.Combine(Ts4RootPath, "Mods");
+            _lastDerivedTrayPath = Path.Combine(Ts4RootPath, "Tray");
+            _lastDerivedSavesPath = Path.Combine(Ts4RootPath, "saves");
+
+            ModsPath = _lastDerivedModsPath;
+            TrayPath = _lastDerivedTrayPath;
+            SavesPath = _lastDerivedSavesPath;
+        }
+        finally
+        {
+            _isApplyingDerivedPaths = false;
+        }
     }
 
-    private void CaptureStructuredResults()
+    private void NotifyPathHealthChanged()
     {
-        if (!EnableStructuredResults)
-        {
-            return;
-        }
-
-        var action = _legacy.IsTrayPreviewWorkspace ? SimsAction.TrayPreview : _legacy.SelectedAction;
-        var context = new ExecutionOutputParseContext
-        {
-            Action = action,
-            LogText = _legacy.LogText,
-            TrayPreviewItems = _legacy.PreviewItems.ToArray()
-        };
-
-        if (!_parserRegistry.TryParse(context, out var envelope, out var parseError))
-        {
-            ShellStatusMessage = $"Structured result parse skipped: {parseError}";
-            return;
-        }
-
-        _latestAction = action;
-        _resultRepository.Save(envelope);
-        ShellStatusMessage = $"Structured results updated: {envelope.Rows.Count} rows.";
-        RebuildFilteredRows();
+        OnPropertyChanged(nameof(HasGameExecutable));
+        OnPropertyChanged(nameof(HasModsPath));
+        OnPropertyChanged(nameof(HasTrayPath));
+        OnPropertyChanged(nameof(HasSavesPath));
+        OnPropertyChanged(nameof(IsGameExecutableWarning));
+        OnPropertyChanged(nameof(IsModsPathWarning));
+        OnPropertyChanged(nameof(IsTrayPathWarning));
+        OnPropertyChanged(nameof(IsSavesPathWarning));
+        OnPropertyChanged(nameof(IsGameExecutableMissing));
+        OnPropertyChanged(nameof(IsModsPathMissing));
+        OnPropertyChanged(nameof(IsTrayPathMissing));
+        OnPropertyChanged(nameof(IsSavesPathMissing));
+        OnPropertyChanged(nameof(GameStatusBadgeText));
+        OnPropertyChanged(nameof(ModsStatusBadgeText));
+        OnPropertyChanged(nameof(TrayStatusBadgeText));
+        OnPropertyChanged(nameof(SavesStatusBadgeText));
+        OnPropertyChanged(nameof(PathHealthSummary));
+        OnPropertyChanged(nameof(CanLaunchGame));
+        OnPropertyChanged(nameof(LaunchButtonText));
+        LaunchGameCommand.NotifyCanExecuteChanged();
     }
 
-    private void RebuildFilteredRows()
+    private void SyncTrayPathsToWorkspace()
     {
-        var latest = _resultRepository.Latest;
-        _resultRows.Clear();
+        _workspaceVm.TrayPreview.TrayRoot = TrayPath;
+        _workspaceVm.TrayDependencies.TrayPath = TrayPath;
+        _workspaceVm.TrayDependencies.ModsPath = ModsPath;
+    }
 
-        if (latest is null)
+    private static string NormalizePath(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : value.Trim().Trim('"');
+    }
+
+    private static string ResolveStatusBadgeText(bool isReady, bool isWarning)
+    {
+        if (isReady)
         {
-            OnPropertyChanged(nameof(HasResults));
-            return;
+            return "Ready";
         }
 
-        var rows = latest.Rows.AsEnumerable();
+        return isWarning ? "Check" : "Missing";
+    }
 
-        if (!string.Equals(SelectedTypeFilter, "All", StringComparison.OrdinalIgnoreCase))
-        {
-            rows = rows.Where(row => row.Category.Contains(SelectedTypeFilter, StringComparison.OrdinalIgnoreCase));
-        }
-
-        if (!string.Equals(SelectedStatusFilter, "All", StringComparison.OrdinalIgnoreCase))
-        {
-            rows = rows.Where(row => string.Equals(row.Status, SelectedStatusFilter, StringComparison.OrdinalIgnoreCase));
-        }
-
-        if (!string.Equals(SelectedConfidenceFilter, "All", StringComparison.OrdinalIgnoreCase))
-        {
-            rows = rows.Where(row => string.Equals(row.Confidence, SelectedConfidenceFilter, StringComparison.OrdinalIgnoreCase));
-        }
-
-        var minDate = DateTime.MinValue;
-        if (string.Equals(SelectedDateFilter, "Last24h", StringComparison.OrdinalIgnoreCase))
-        {
-            minDate = DateTime.Now.AddHours(-24);
-        }
-        else if (string.Equals(SelectedDateFilter, "Last7d", StringComparison.OrdinalIgnoreCase))
-        {
-            minDate = DateTime.Now.AddDays(-7);
-        }
-        else if (string.Equals(SelectedDateFilter, "Last30d", StringComparison.OrdinalIgnoreCase))
-        {
-            minDate = DateTime.Now.AddDays(-30);
-        }
-
-        if (minDate > DateTime.MinValue)
-        {
-            rows = rows.Where(row => row.UpdatedLocal is null || row.UpdatedLocal >= minDate);
-        }
-
-        foreach (var row in rows.Take(500))
-        {
-            _resultRows.Add(row);
-        }
-
-        SelectedResultRow = _resultRows.FirstOrDefault();
-        OnPropertyChanged(nameof(HasResults));
+    private static bool PathEquals(string? left, string? right)
+    {
+        return string.Equals(
+            NormalizePath(left),
+            NormalizePath(right),
+            StringComparison.OrdinalIgnoreCase);
     }
 }
+

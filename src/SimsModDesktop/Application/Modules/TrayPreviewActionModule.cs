@@ -1,6 +1,5 @@
 using System.Text.Json.Nodes;
 using SimsModDesktop.Application.Requests;
-using SimsModDesktop.Application.Validation;
 using SimsModDesktop.Models;
 
 namespace SimsModDesktop.Application.Modules;
@@ -9,10 +8,10 @@ public sealed class TrayPreviewActionModule : IActionModule
 {
     private static readonly IReadOnlyList<string> ActionPatchKeys =
     [
-        "trayPath",
-        "trayItemKey",
-        "topN",
-        "maxFilesPerItem"
+        "presetTypeFilter",
+        "authorFilter",
+        "timeFilter",
+        "searchQuery"
     ];
 
     private readonly ITrayPreviewModuleState _panel;
@@ -30,18 +29,18 @@ public sealed class TrayPreviewActionModule : IActionModule
 
     public void LoadFromSettings(AppSettings settings)
     {
-        _panel.TrayRoot = settings.TrayPreview.TrayRoot;
-        _panel.TrayItemKey = settings.TrayPreview.TrayItemKey;
-        _panel.TopNText = settings.TrayPreview.TopNText;
-        _panel.FilesPerItemText = settings.TrayPreview.FilesPerItemText;
+        _panel.PresetTypeFilter = settings.TrayPreview.PresetTypeFilter;
+        _panel.AuthorFilter = settings.TrayPreview.AuthorFilter;
+        _panel.TimeFilter = settings.TrayPreview.TimeFilter;
+        _panel.SearchQuery = settings.TrayPreview.SearchQuery;
     }
 
     public void SaveToSettings(AppSettings settings)
     {
-        settings.TrayPreview.TrayRoot = _panel.TrayRoot;
-        settings.TrayPreview.TrayItemKey = _panel.TrayItemKey;
-        settings.TrayPreview.TopNText = _panel.TopNText;
-        settings.TrayPreview.FilesPerItemText = _panel.FilesPerItemText;
+        settings.TrayPreview.PresetTypeFilter = _panel.PresetTypeFilter;
+        settings.TrayPreview.AuthorFilter = _panel.AuthorFilter;
+        settings.TrayPreview.TimeFilter = _panel.TimeFilter;
+        settings.TrayPreview.SearchQuery = _panel.SearchQuery;
     }
 
     public bool TryBuildPlan(GlobalExecutionOptions options, out ModuleExecutionPlan plan, out string error)
@@ -55,23 +54,14 @@ public sealed class TrayPreviewActionModule : IActionModule
             return false;
         }
 
-        if (!InputParsing.TryParseOptionalInt(_panel.TopNText, 1, 50000, out var topN, out error))
-        {
-            return false;
-        }
-
-        if (!InputParsing.TryParseOptionalInt(_panel.FilesPerItemText, 1, 200, out var filesPerItem, out error))
-        {
-            return false;
-        }
-
         plan = new TrayPreviewExecutionPlan(new TrayPreviewInput
         {
             TrayPath = Path.GetFullPath(trayPath),
-            TrayItemKey = _panel.TrayItemKey.Trim(),
-            TopN = topN,
-            MaxFilesPerItem = filesPerItem ?? 12,
-            PageSize = 50
+            PageSize = 50,
+            PresetTypeFilter = NormalizeFilter(_panel.PresetTypeFilter),
+            AuthorFilter = _panel.AuthorFilter.Trim(),
+            TimeFilter = NormalizeFilter(_panel.TimeFilter),
+            SearchQuery = _panel.SearchQuery.Trim()
         });
         error = string.Empty;
         return true;
@@ -81,38 +71,41 @@ public sealed class TrayPreviewActionModule : IActionModule
     {
         error = string.Empty;
 
-        if (!ModuleHelpers.TryGetString(patch, "trayPath", out var hasTrayPath, out var trayPath, out error) ||
-            !ModuleHelpers.TryGetString(patch, "trayItemKey", out var hasTrayItemKey, out var trayItemKey, out error))
+        if (!ModuleHelpers.TryGetString(patch, "presetTypeFilter", out var hasPresetTypeFilter, out var presetTypeFilter, out error) ||
+            !ModuleHelpers.TryGetString(patch, "authorFilter", out var hasAuthorFilter, out var authorFilter, out error) ||
+            !ModuleHelpers.TryGetString(patch, "timeFilter", out var hasTimeFilter, out var timeFilter, out error) ||
+            !ModuleHelpers.TryGetString(patch, "searchQuery", out var hasSearchQuery, out var searchQuery, out error))
         {
             return false;
         }
 
-        if (!ModuleHelpers.TryGetInt32(patch, "topN", out var hasTopN, out var topN, out error) ||
-            !ModuleHelpers.TryGetInt32(patch, "maxFilesPerItem", out var hasMaxFilesPerItem, out var maxFilesPerItem, out error))
+        if (hasPresetTypeFilter)
         {
-            return false;
+            _panel.PresetTypeFilter = NormalizeFilter(presetTypeFilter);
         }
 
-        if (hasTrayPath)
+        if (hasAuthorFilter)
         {
-            _panel.TrayRoot = trayPath ?? string.Empty;
+            _panel.AuthorFilter = authorFilter ?? string.Empty;
         }
 
-        if (hasTrayItemKey)
+        if (hasTimeFilter)
         {
-            _panel.TrayItemKey = trayItemKey ?? string.Empty;
+            _panel.TimeFilter = NormalizeFilter(timeFilter);
         }
 
-        if (hasTopN)
+        if (hasSearchQuery)
         {
-            _panel.TopNText = topN.ToString();
-        }
-
-        if (hasMaxFilesPerItem)
-        {
-            _panel.FilesPerItemText = maxFilesPerItem.ToString();
+            _panel.SearchQuery = searchQuery ?? string.Empty;
         }
 
         return true;
+    }
+
+    private static string NormalizeFilter(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? "All"
+            : value.Trim();
     }
 }

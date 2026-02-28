@@ -10,7 +10,6 @@ public sealed record TrayDependenciesInput : ISimsExecutionInput
     public string? TrayPath { get; init; }
     public string? ModsPath { get; init; }
     public string? TrayItemKey { get; init; }
-    public string AnalysisMode { get; init; } = "StrictS4TI";
     public string? S4tiPath { get; init; }
     public int? MinMatchCount { get; init; }
     public int? TopN { get; init; }

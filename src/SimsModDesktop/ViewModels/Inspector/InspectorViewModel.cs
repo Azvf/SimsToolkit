@@ -12,12 +12,19 @@ public sealed class InspectorViewModel : ObservableObject
     private ActionResultRow? _selectedRow;
     private SimsAction _currentAction;
     private bool _isOpen;
+    private string _headerTitle = "Inspector";
+    private string _headerSubtitle = "No selection";
     private string _status = string.Empty;
 
     public InspectorViewModel(IEnumerable<IInspectorPresenter> presenters)
     {
         _presenters = presenters.ToArray();
         Details = new ObservableCollection<string>();
+        Details.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(HasDetails));
+            OnPropertyChanged(nameof(IsEmpty));
+        };
 
         OpenPathCommand = new RelayCommand(OpenPath, () => _selectedRow is not null);
         CopyPathCommand = new RelayCommand(CopyPath, () => _selectedRow is not null);
@@ -44,6 +51,21 @@ public sealed class InspectorViewModel : ObservableObject
         private set => SetProperty(ref _status, value);
     }
 
+    public string HeaderTitle
+    {
+        get => _headerTitle;
+        private set => SetProperty(ref _headerTitle, value);
+    }
+
+    public string HeaderSubtitle
+    {
+        get => _headerSubtitle;
+        private set => SetProperty(ref _headerSubtitle, value);
+    }
+
+    public bool HasDetails => Details.Count > 0;
+    public bool IsEmpty => !HasDetails;
+
     public ActionResultRow? SelectedRow
     {
         get => _selectedRow;
@@ -66,9 +88,14 @@ public sealed class InspectorViewModel : ObservableObject
 
         if (selectedRow is null)
         {
+            HeaderTitle = "Inspector";
+            HeaderSubtitle = "No selection";
             Status = "Select a result to inspect details.";
             return;
         }
+
+        HeaderTitle = selectedRow.Name;
+        HeaderSubtitle = string.IsNullOrWhiteSpace(selectedRow.Status) ? "Details" : selectedRow.Status;
 
         var presenter = _presenters.FirstOrDefault(item => item.CanPresent(action));
         var lines = presenter?.BuildDetails(selectedRow)

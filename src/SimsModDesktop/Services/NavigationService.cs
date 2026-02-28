@@ -7,7 +7,6 @@ public sealed class NavigationService : INavigationService
 {
     private static readonly IReadOnlyList<NavigationItem> AllItems =
     [
-        new(AppSection.Dashboard, "Dashboard", "dashboard"),
         new(AppSection.Mods, "Mods", "organize"),
         new(AppSection.Tray, "Tray", "traypreview"),
         new(AppSection.Saves, "Saves", "saves"),
@@ -17,7 +16,6 @@ public sealed class NavigationService : INavigationService
     private static readonly IReadOnlyDictionary<AppSection, IReadOnlyList<NavigationItem>> SectionModules =
         new Dictionary<AppSection, IReadOnlyList<NavigationItem>>
         {
-            [AppSection.Dashboard] = [new(AppSection.Dashboard, "Overview", "dashboard")],
             [AppSection.Mods] =
             [
                 new(AppSection.Mods, "Organize", "organize"),

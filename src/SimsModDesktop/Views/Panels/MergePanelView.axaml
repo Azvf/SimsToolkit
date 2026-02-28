@@ -7,13 +7,13 @@
     <Border Classes="card-muted" Padding="10" IsVisible="{Binding IsMergeVisible}">
         <StackPanel Spacing="10">
             <StackPanel Spacing="2">
-                <TextBlock Classes="section-title" Text="Merge Directories (merge)" />
+                <TextBlock Classes="section-title" Text="Merge Directories" />
                 <TextBlock Classes="helper-text" Text="One source directory per row; use + and - for quick add/remove." />
             </StackPanel>
 
             <Border Classes="card" Padding="10">
                 <StackPanel Spacing="8">
-                    <TextBlock Classes="sub-title" Text="Source Directories (MergeSourcePaths)" />
+                    <TextBlock Classes="sub-title" Text="Source Directories" />
                     <ScrollViewer MaxHeight="220"
                                   HorizontalScrollBarVisibility="Disabled"
                                   VerticalScrollBarVisibility="Auto">
@@ -53,7 +53,7 @@
             </Border>
 
             <Grid ColumnDefinitions="180,*,Auto" RowDefinitions="Auto" RowSpacing="8" ColumnSpacing="8">
-                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="Target Directory (MergeTargetPath)" />
+                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="Target Directory" />
                 <TextBox Grid.Row="0" Grid.Column="1" Classes="path-field" Text="{Binding Merge.TargetPath}" />
                 <Button Grid.Row="0" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="MergeTargetPath" />
             </Grid>

@@ -44,7 +44,6 @@ public interface ITrayDependenciesModuleState
     string TrayPath { get; set; }
     string ModsPath { get; set; }
     string TrayItemKey { get; set; }
-    string AnalysisMode { get; set; }
     string S4tiPath { get; set; }
     string MinMatchCountText { get; set; }
     string TopNText { get; set; }
@@ -60,7 +59,8 @@ public interface ITrayDependenciesModuleState
 public interface ITrayPreviewModuleState
 {
     string TrayRoot { get; set; }
-    string TrayItemKey { get; set; }
-    string TopNText { get; set; }
-    string FilesPerItemText { get; set; }
+    string PresetTypeFilter { get; set; }
+    string AuthorFilter { get; set; }
+    string TimeFilter { get; set; }
+    string SearchQuery { get; set; }
 }

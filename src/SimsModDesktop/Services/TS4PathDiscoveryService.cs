@@ -7,21 +7,32 @@ public sealed class TS4PathDiscoveryService : ITS4PathDiscoveryService
     public TS4PathDiscoveryResult Discover()
     {
         var docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-        var sims4UserRoot = Path.Combine(docs, "Electronic Arts", "The Sims 4");
+        var rootCandidate = string.IsNullOrWhiteSpace(docs)
+            ? string.Empty
+            : Path.Combine(docs, "Electronic Arts", "The Sims 4");
+        var hasValidRoot = !string.IsNullOrWhiteSpace(rootCandidate) && Directory.Exists(rootCandidate);
+        var sims4UserRoot = hasValidRoot ? rootCandidate : string.Empty;
 
-        var modsPath = Path.Combine(sims4UserRoot, "Mods");
-        var trayPath = Path.Combine(sims4UserRoot, "Tray");
-        var savesPath = Path.Combine(sims4UserRoot, "saves");
+        var modsPath = hasValidRoot
+            ? Path.Combine(sims4UserRoot, "Mods")
+            : string.Empty;
+        var trayPath = hasValidRoot
+            ? Path.Combine(sims4UserRoot, "Tray")
+            : string.Empty;
+        var savesPath = hasValidRoot
+            ? Path.Combine(sims4UserRoot, "saves")
+            : string.Empty;
 
         var candidates = BuildExecutableCandidates();
         var detectedExe = candidates.FirstOrDefault(File.Exists) ?? string.Empty;
 
         return new TS4PathDiscoveryResult
         {
+            Ts4RootPath = sims4UserRoot,
             GameExecutablePath = detectedExe,
-            ModsPath = Directory.Exists(modsPath) ? modsPath : string.Empty,
-            TrayPath = Directory.Exists(trayPath) ? trayPath : string.Empty,
-            SavesPath = Directory.Exists(savesPath) ? savesPath : string.Empty,
+            ModsPath = modsPath,
+            TrayPath = trayPath,
+            SavesPath = savesPath,
             GameExecutableCandidates = candidates
         };
     }

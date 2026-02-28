@@ -22,8 +22,7 @@ public sealed class TrayPreviewCoordinatorTests
             var input = new TrayPreviewInput
             {
                 TrayPath = trayDir.FullName,
-                PageSize = 50,
-                MaxFilesPerItem = 12
+                PageSize = 50
             };
 
             var firstLoad = await coordinator.LoadAsync(input);
@@ -46,13 +45,48 @@ public sealed class TrayPreviewCoordinatorTests
         }
     }
 
+    [Fact]
+    public async Task TryGetCached_RespectsTrayPreviewFilters()
+    {
+        var trayDir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")));
+
+        try
+        {
+            var coordinator = new TrayPreviewCoordinator(
+                new FakeTrayPreviewService(),
+                new TrayPreviewInputValidator());
+
+            var inputA = new TrayPreviewInput
+            {
+                TrayPath = trayDir.FullName,
+                PageSize = 50,
+                PresetTypeFilter = "Lot",
+                AuthorFilter = "author-1",
+                TimeFilter = "Last7d",
+                SearchQuery = "villa"
+            };
+            var inputB = inputA with
+            {
+                SearchQuery = "other"
+            };
+
+            await coordinator.LoadAsync(inputA);
+            Assert.True(coordinator.TryGetCached(inputA, out _));
+            Assert.False(coordinator.TryGetCached(inputB, out _));
+        }
+        finally
+        {
+            trayDir.Delete(recursive: true);
+        }
+    }
+
     private sealed class FakeTrayPreviewService : ISimsTrayPreviewService
     {
-        public Task<SimsTrayPreviewDashboard> BuildDashboardAsync(
+        public Task<SimsTrayPreviewSummary> BuildSummaryAsync(
             SimsTrayPreviewRequest request,
             CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(new SimsTrayPreviewDashboard
+            return Task.FromResult(new SimsTrayPreviewSummary
             {
                 TotalItems = 120,
                 TotalFiles = 600,
@@ -87,3 +121,4 @@ public sealed class TrayPreviewCoordinatorTests
         }
     }
 }
+

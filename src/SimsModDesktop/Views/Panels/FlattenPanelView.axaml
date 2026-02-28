@@ -5,15 +5,15 @@
              x:DataType="vm:MainWindowViewModel">
     <Border Classes="card-muted" Padding="10" IsVisible="{Binding IsFlattenVisible}">
         <StackPanel Spacing="10">
-            <TextBlock Classes="section-title" Text="Flatten Directory (flatten)" />
+            <TextBlock Classes="section-title" Text="Flatten Directory" />
             <Grid ColumnDefinitions="180,*,Auto" RowDefinitions="Auto" RowSpacing="8" ColumnSpacing="8">
-                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="Root Path (RootPath)" />
+                <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="Root Path" />
                 <TextBox Grid.Row="0" Grid.Column="1" Classes="path-field" Text="{Binding Flatten.RootPath}" />
                 <Button Grid.Row="0" Grid.Column="2" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="FlattenRootPath" />
             </Grid>
 
             <Border Classes="card" Padding="10" Margin="0,8,0,0" IsVisible="{Binding IsToolkitAdvancedOpen}">
-                <CheckBox Content="Flatten into root directory (FlattenToRoot)" IsChecked="{Binding Flatten.FlattenToRoot}" />
+                <CheckBox Content="Flatten into root directory" IsChecked="{Binding Flatten.FlattenToRoot}" />
             </Border>
         </StackPanel>
     </Border>

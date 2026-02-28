@@ -5,7 +5,7 @@ namespace SimsModDesktop.Application.Execution;
 
 public interface ITrayPreviewRunner
 {
-    Task<TrayPreviewDashboardRunResult> LoadDashboardAsync(
+    Task<TrayPreviewLoadRunResult> LoadPreviewAsync(
         TrayPreviewInput input,
         CancellationToken cancellationToken = default);
 
@@ -18,7 +18,7 @@ public interface ITrayPreviewRunner
     void Reset();
 }
 
-public sealed record TrayPreviewDashboardRunResult
+public sealed record TrayPreviewLoadRunResult
 {
     public ExecutionRunStatus Status { get; init; }
     public TrayPreviewLoadResult? LoadResult { get; init; }
@@ -31,3 +31,4 @@ public sealed record TrayPreviewPageRunResult
     public TrayPreviewPageResult? PageResult { get; init; }
     public string ErrorMessage { get; init; } = string.Empty;
 }
+

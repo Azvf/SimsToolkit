@@ -6,12 +6,12 @@
              xmlns:panels="clr-namespace:SimsModDesktop.Views.Panels"
              xmlns:vm="clr-namespace:SimsModDesktop.ViewModels"
              mc:Ignorable="d"
-             x:Class="SimsModDesktop.Views.Legacy.LegacyWorkspaceView"
+             x:Class="SimsModDesktop.Views.Workspace.WorkspaceView"
              x:DataType="vm:MainWindowViewModel">
     <Grid RowDefinitions="*,Auto" RowSpacing="12">
         <Grid>
             <Border Classes="card" IsVisible="{Binding IsToolkitWorkspace}" Padding="12">
-                <Grid RowDefinitions="Auto,Auto,*" RowSpacing="12">
+                <Grid RowDefinitions="Auto,*" RowSpacing="12">
                     <Border Classes="card-muted" Padding="10">
                         <Grid ColumnDefinitions="Auto,190,*" ColumnSpacing="8">
                             <TextBlock VerticalAlignment="Center" Text="Action" />
@@ -20,14 +20,7 @@
                         </Grid>
                     </Border>
 
-                    <Border Grid.Row="1" Classes="card-muted" Padding="10">
-                        <StackPanel Spacing="6">
-                            <TextBlock Classes="sub-title" Text="Validation Status" />
-                            <TextBlock TextWrapping="Wrap" Text="{Binding ValidationSummaryText}" />
-                        </StackPanel>
-                    </Border>
-
-                    <ScrollViewer Grid.Row="2">
+                    <ScrollViewer Grid.Row="1">
                         <StackPanel Spacing="12">
                             <panels:OrganizePanelView />
                             <panels:FlattenPanelView />
@@ -44,19 +37,19 @@
                                       ColumnSpacing="8">
                                     <TextBlock Grid.ColumnSpan="2"
                                                Classes="sub-title"
-                                               Text="Shared File Operation Options (Flatten / Merge / FindDuplicates)" />
+                                               Text="Shared File Operation Options for Flatten, Merge, and FindDuplicates" />
 
                                     <CheckBox Grid.Row="1"
                                               Grid.Column="1"
-                                              Content="Skip empty directory cleanup (SkipPruneEmptyDirs)"
+                                              Content="Skip empty directory cleanup"
                                               IsChecked="{Binding SharedFileOps.SkipPruneEmptyDirs}" />
                                     <CheckBox Grid.Row="2"
                                               Grid.Column="1"
-                                              Content="Process mod files only (ModFilesOnly)"
+                                              Content="Process mod files only"
                                               IsChecked="{Binding SharedFileOps.ModFilesOnly}" />
                                     <CheckBox Grid.Row="3"
                                               Grid.Column="1"
-                                              Content="Verify content on name conflicts (VerifyContentOnNameConflict)"
+                                              Content="Verify content on name conflicts"
                                               IsChecked="{Binding SharedFileOps.VerifyContentOnNameConflict}" />
                                 </Grid>
                             </Border>
@@ -65,7 +58,7 @@
                                     Padding="10"
                                     IsVisible="{Binding IsSharedFileOpsVisible}">
                                 <Grid ColumnDefinitions="210,*" ColumnSpacing="8">
-                                    <TextBlock VerticalAlignment="Center" Text="Extensions (ModExtensions)" />
+                                    <TextBlock VerticalAlignment="Center" Text="Extensions" />
                                     <TextBox Grid.Column="1" Text="{Binding SharedFileOps.ModExtensionsText}" />
                                 </Grid>
                             </Border>
@@ -75,39 +68,43 @@
             </Border>
 
             <Border Classes="card" IsVisible="{Binding IsTrayPreviewWorkspace}" Padding="12">
-                <Grid RowDefinitions="Auto,Auto,*" RowSpacing="12">
+                <Grid RowDefinitions="Auto,*" RowSpacing="12">
                     <Border Classes="card-muted" Padding="10">
-                        <Grid RowDefinitions="Auto,Auto" RowSpacing="8">
-                            <Grid ColumnDefinitions="130,*,Auto,Auto,Auto" ColumnSpacing="8">
-                                <TextBlock VerticalAlignment="Center" Text="Tray Path (TrayPath)" />
-                                <TextBox Grid.Column="1" Classes="path-field" Text="{Binding TrayPreview.TrayRoot}" />
-                                <Button Grid.Column="2" Classes="secondary" Content="Browse" Command="{Binding BrowseFolderCommand}" CommandParameter="PreviewTrayRoot" />
-                                <Button Grid.Column="3" Classes="primary" Content="Load Dashboard" Command="{Binding RunTrayPreviewCommand}" />
-                                <Button Grid.Column="4" Classes="secondary" Content="Advanced Options" Command="{Binding ToggleTrayPreviewAdvancedCommand}" />
-                            </Grid>
-                            <TextBlock Grid.Row="1" Classes="helper-text" Text="Supports paging and lazy cache; default is 50 items per page." />
+                        <Grid ColumnDefinitions="Auto,180,Auto,200,Auto,180"
+                              RowDefinitions="Auto,Auto"
+                              ColumnSpacing="8"
+                              RowSpacing="8">
+                            <TextBlock VerticalAlignment="Center" Text="Preset Type" />
+                            <ComboBox Grid.Column="1"
+                                      Width="160"
+                                      ItemsSource="{Binding TrayPreviewPresetTypeFilterOptions}"
+                                      SelectedItem="{Binding TrayPreview.PresetTypeFilter}" />
+                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="Author" />
+                            <TextBox Grid.Column="3"
+                                     Watermark="Author"
+                                     Text="{Binding TrayPreview.AuthorFilter}" />
+                            <TextBlock Grid.Column="4" VerticalAlignment="Center" Text="Time" />
+                            <ComboBox Grid.Column="5"
+                                      Width="160"
+                                      ItemsSource="{Binding TrayPreviewTimeFilterOptions}"
+                                      SelectedItem="{Binding TrayPreview.TimeFilter}" />
+
+                            <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="Search" />
+                            <TextBox Grid.Row="1"
+                                     Grid.Column="1"
+                                     Grid.ColumnSpan="3"
+                                     Watermark="Item Name or Author ID"
+                                     Text="{Binding TrayPreview.SearchQuery}" />
+                            <TextBlock Grid.Row="1"
+                                       Grid.Column="4"
+                                       Grid.ColumnSpan="2"
+                                       Classes="helper-text"
+                                       VerticalAlignment="Center"
+                                       Text="Filters auto-apply when path is valid." />
                         </Grid>
                     </Border>
 
-                    <Border Grid.Row="1"
-                            Classes="card-muted"
-                            Padding="10"
-                            Margin="0,8,0,0"
-                            IsVisible="{Binding IsTrayPreviewAdvancedOpen}">
-                        <Grid ColumnDefinitions="130,*,130,*" RowDefinitions="Auto,Auto" RowSpacing="8" ColumnSpacing="8">
-                            <TextBlock VerticalAlignment="Center" Text="Tray Item Key (TrayItemKey)" />
-                            <TextBox Grid.Column="1" Watermark="0x1234567890ABCDEF" Text="{Binding TrayPreview.TrayItemKey}" />
-                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="TopN" />
-                            <TextBox Grid.Column="3" Watermark="empty=all" Text="{Binding TrayPreview.TopNText}" />
-
-                            <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="Files Per Item (FilesPerItem)" />
-                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding TrayPreview.FilesPerItemText}" />
-                            <TextBlock Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" Classes="helper-text" Text="Paging" />
-                            <TextBlock Grid.Row="1" Grid.Column="3" VerticalAlignment="Center" Classes="helper-text" Text="Fixed at 50 items/page with lazy cache enabled." />
-                        </Grid>
-                    </Border>
-
-                    <Border Grid.Row="2" Classes="card-muted" Padding="10">
+                    <Border Grid.Row="1" Classes="card-muted" Padding="10">
                         <Grid RowDefinitions="Auto,*,Auto" RowSpacing="8">
                             <TextBlock Text="{Binding PreviewSummaryText}" />
                             <ListBox Grid.Row="1" ItemsSource="{Binding PreviewItems}">
@@ -116,13 +113,14 @@
                                         <Border Classes="card" Margin="0,0,0,8" Padding="8">
                                             <StackPanel Spacing="4">
                                                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                                                    <TextBlock FontWeight="SemiBold" Text="{Binding TrayItemKey}" />
+                                                    <TextBlock FontWeight="SemiBold" Text="{Binding ItemName}" />
                                                     <TextBlock Grid.Column="1" Classes="helper-text" Text="{Binding PresetType}" />
                                                 </Grid>
+                                                <TextBlock Classes="helper-text" Text="{Binding TrayItemKey}" />
                                                 <Grid ColumnDefinitions="Auto,Auto,Auto,*" ColumnSpacing="8">
                                                     <TextBlock Text="Files:" />
                                                     <TextBlock Grid.Column="1" Text="{Binding FileCount}" />
-                                                    <TextBlock Grid.Column="2" Text="Size(MB):" />
+                                                    <TextBlock Grid.Column="2" Text="Size MB:" />
                                                     <TextBlock Grid.Column="3" Text="{Binding TotalMB}" />
                                                 </Grid>
                                                 <TextBlock Classes="helper-text" Text="{Binding LatestWriteTimeLocal}" />
@@ -134,11 +132,16 @@
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>
-                            <Grid Grid.Row="2" ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="8">
+                            <Grid Grid.Row="2" ColumnDefinitions="Auto,Auto,Auto,Auto,90,Auto,*,Auto" ColumnSpacing="8">
                                 <Button Content="Prev Page" Command="{Binding PreviewPrevPageCommand}" />
                                 <Button Grid.Column="1" Content="Next Page" Command="{Binding PreviewNextPageCommand}" />
                                 <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="{Binding PreviewPageText}" />
-                                <TextBlock Grid.Column="4" VerticalAlignment="Center" Classes="helper-text" Text="{Binding PreviewLazyLoadText}" />
+                                <TextBlock Grid.Column="3" VerticalAlignment="Center" Text="Jump" />
+                                <TextBox Grid.Column="4"
+                                         Text="{Binding PreviewJumpPageText}"
+                                         Watermark="Page" />
+                                <Button Grid.Column="5" Content="Go" Command="{Binding PreviewJumpPageCommand}" />
+                                <TextBlock Grid.Column="7" VerticalAlignment="Center" Classes="helper-text" Text="{Binding PreviewLazyLoadText}" />
                             </Grid>
                         </Grid>
                     </Border>
@@ -147,26 +150,20 @@
         </Grid>
 
         <Border Grid.Row="1" Classes="card" Padding="12" IsVisible="{Binding IsToolkitWorkspace}">
-            <Grid RowDefinitions="Auto,Auto,Auto" RowSpacing="8">
-                <Grid ColumnDefinitions="Auto,Auto,Auto,*" ColumnSpacing="10">
+            <Grid RowDefinitions="Auto,Auto" RowSpacing="8">
+                <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="10">
                     <Button Classes="primary" MinWidth="150" Content="Run" Command="{Binding RunActiveWorkspaceCommand}" />
                     <Button Grid.Column="1" Classes="danger" Content="Cancel" Command="{Binding CancelCommand}" />
                     <CheckBox Grid.Column="2" VerticalAlignment="Center" Content="WhatIf" IsChecked="{Binding WhatIf}" />
-                    <TextBlock Grid.Column="3" VerticalAlignment="Center" Classes="helper-text" Text="{Binding StatusMessage}" />
                 </Grid>
 
-                <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                <Grid Grid.Row="1">
                     <ProgressBar Height="10"
                                  Minimum="0"
                                  Maximum="100"
                                  IsIndeterminate="{Binding IsProgressIndeterminate}"
                                  Value="{Binding ProgressValue}" />
-                    <TextBlock Grid.Column="1" VerticalAlignment="Center" Classes="helper-text" Text="{Binding ProgressMessage}" />
                 </Grid>
-
-                <Border Grid.Row="2" Classes="card-muted" Padding="8">
-                    <TextBlock TextWrapping="Wrap" Text="{Binding ValidationSummaryText}" />
-                </Border>
             </Grid>
         </Border>
     </Grid>

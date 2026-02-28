@@ -34,6 +34,7 @@ public sealed class MainWindowViewModel : ObservableObject
     private readonly StringWriter _logWriter = new();
     private CancellationTokenSource? _executionCts;
     private CancellationTokenSource? _validationDebounceCts;
+    private CancellationTokenSource? _trayPreviewAutoLoadDebounceCts;
     private bool _isTrayPreviewPageLoading;
     private bool _isBusy;
     private AppWorkspace _workspace = AppWorkspace.Toolkit;
@@ -49,18 +50,18 @@ public sealed class MainWindowViewModel : ObservableObject
     private int _trayPreviewCurrentPage = 1;
     private int _trayPreviewTotalPages = 1;
     private string _previewSummaryText = "No preview data loaded.";
-    private string _previewDashboardTotalItems = "0";
-    private string _previewDashboardTotalFiles = "0";
-    private string _previewDashboardTotalSize = "0 MB";
-    private string _previewDashboardLatestWrite = "-";
+    private string _previewTotalItems = "0";
+    private string _previewTotalFiles = "0";
+    private string _previewTotalSize = "0 MB";
+    private string _previewLatestWrite = "-";
     private string _previewPageText = "Page 0/0";
     private string _previewLazyLoadText = "Lazy cache 0/0 pages";
+    private string _previewJumpPageText = string.Empty;
     private string _validationSummaryText = string.Empty;
     private bool _hasValidationErrors;
     private bool _isToolkitLogDrawerOpen;
     private bool _isTrayPreviewLogDrawerOpen;
     private bool _isToolkitAdvancedOpen;
-    private bool _isTrayPreviewAdvancedOpen;
     private bool _isInitialized;
 
     public MainWindowViewModel(
@@ -125,14 +126,16 @@ public sealed class MainWindowViewModel : ObservableObject
         RemoveMergeSourcePathCommand = new RelayCommand<MergeSourcePathEntryViewModel>(
             RemoveMergeSourcePath,
             _ => !IsBusy && Merge.SourcePaths.Count > 1);
-        RunCommand = new AsyncRelayCommand(RunToolkitAsync, () => !IsBusy && IsToolkitWorkspace && !HasValidationErrors);
-        RunTrayPreviewCommand = new AsyncRelayCommand(() => RunTrayPreviewAsync(), () => !IsBusy && IsTrayPreviewWorkspace && !HasValidationErrors);
-        RunActiveWorkspaceCommand = new AsyncRelayCommand(RunActiveWorkspaceAsync, () => !IsBusy && !HasValidationErrors);
+        RunCommand = new AsyncRelayCommand(RunToolkitAsync, () => !IsBusy && IsToolkitWorkspace);
+        RunTrayPreviewCommand = new AsyncRelayCommand(
+            () => RunTrayPreviewAsync(),
+            () => !IsBusy && IsTrayPreviewWorkspace && HasValidTrayPreviewPath);
+        RunActiveWorkspaceCommand = new AsyncRelayCommand(RunActiveWorkspaceAsync, () => !IsBusy);
         CancelCommand = new RelayCommand(CancelExecution, () => IsBusy);
         PreviewPrevPageCommand = new AsyncRelayCommand(LoadPreviousTrayPreviewPageAsync, () => CanGoPrevPage);
         PreviewNextPageCommand = new AsyncRelayCommand(LoadNextTrayPreviewPageAsync, () => CanGoNextPage);
+        PreviewJumpPageCommand = new AsyncRelayCommand(JumpToTrayPreviewPageAsync, () => CanJumpToPage);
         ToggleToolkitAdvancedCommand = new RelayCommand(() => IsToolkitAdvancedOpen = !IsToolkitAdvancedOpen, () => IsToolkitWorkspace);
-        ToggleTrayPreviewAdvancedCommand = new RelayCommand(() => IsTrayPreviewAdvancedOpen = !IsTrayPreviewAdvancedOpen, () => IsTrayPreviewWorkspace);
         ClearLogCommand = new RelayCommand(ClearLog, () => !string.IsNullOrWhiteSpace(LogText));
 
         _localization.PropertyChanged += OnLocalizationPropertyChanged;
@@ -175,6 +178,8 @@ public sealed class MainWindowViewModel : ObservableObject
     public string SettingsPrefixHashBytesLabelText => L("ui.settings.prefixHashBytes.label");
     public string SettingsHashWorkerCountLabelText => L("ui.settings.hashWorkerCount.label");
     public string SettingsPerformanceHintText => L("ui.settings.performance.hint");
+    public IReadOnlyList<string> TrayPreviewPresetTypeFilterOptions => ["All", "Lot", "Room", "Household"];
+    public IReadOnlyList<string> TrayPreviewTimeFilterOptions => ["All", "Last24h", "Last7d", "Last30d", "Last90d"];
 
     public AsyncRelayCommand<string> BrowseFolderCommand { get; }
     public AsyncRelayCommand<string> BrowseCsvPathCommand { get; }
@@ -189,8 +194,8 @@ public sealed class MainWindowViewModel : ObservableObject
     public RelayCommand CancelCommand { get; }
     public AsyncRelayCommand PreviewPrevPageCommand { get; }
     public AsyncRelayCommand PreviewNextPageCommand { get; }
+    public AsyncRelayCommand PreviewJumpPageCommand { get; }
     public RelayCommand ToggleToolkitAdvancedCommand { get; }
-    public RelayCommand ToggleTrayPreviewAdvancedCommand { get; }
     public RelayCommand ClearLogCommand { get; }
 
     public string SelectedLanguageCode
@@ -362,28 +367,28 @@ public sealed class MainWindowViewModel : ObservableObject
         private set => SetProperty(ref _previewSummaryText, value);
     }
 
-    public string PreviewDashboardTotalItems
+    public string PreviewTotalItems
     {
-        get => _previewDashboardTotalItems;
-        private set => SetProperty(ref _previewDashboardTotalItems, value);
+        get => _previewTotalItems;
+        private set => SetProperty(ref _previewTotalItems, value);
     }
 
-    public string PreviewDashboardTotalFiles
+    public string PreviewTotalFiles
     {
-        get => _previewDashboardTotalFiles;
-        private set => SetProperty(ref _previewDashboardTotalFiles, value);
+        get => _previewTotalFiles;
+        private set => SetProperty(ref _previewTotalFiles, value);
     }
 
-    public string PreviewDashboardTotalSize
+    public string PreviewTotalSize
     {
-        get => _previewDashboardTotalSize;
-        private set => SetProperty(ref _previewDashboardTotalSize, value);
+        get => _previewTotalSize;
+        private set => SetProperty(ref _previewTotalSize, value);
     }
 
-    public string PreviewDashboardLatestWrite
+    public string PreviewLatestWrite
     {
-        get => _previewDashboardLatestWrite;
-        private set => SetProperty(ref _previewDashboardLatestWrite, value);
+        get => _previewLatestWrite;
+        private set => SetProperty(ref _previewLatestWrite, value);
     }
 
     public string PreviewPageText
@@ -396,6 +401,21 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         get => _previewLazyLoadText;
         private set => SetProperty(ref _previewLazyLoadText, value);
+    }
+
+    public string PreviewJumpPageText
+    {
+        get => _previewJumpPageText;
+        set
+        {
+            if (!SetProperty(ref _previewJumpPageText, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(CanJumpToPage));
+            PreviewJumpPageCommand.NotifyCanExecuteChanged();
+        }
     }
 
     public bool IsToolkitLogDrawerOpen
@@ -432,12 +452,6 @@ public sealed class MainWindowViewModel : ObservableObject
         set => SetProperty(ref _isToolkitAdvancedOpen, value);
     }
 
-    public bool IsTrayPreviewAdvancedOpen
-    {
-        get => _isTrayPreviewAdvancedOpen;
-        set => SetProperty(ref _isTrayPreviewAdvancedOpen, value);
-    }
-
     public string ValidationSummaryText
     {
         get => _validationSummaryText;
@@ -470,8 +484,17 @@ public sealed class MainWindowViewModel : ObservableObject
         IsToolkitWorkspace &&
         _moduleRegistry.All.Any(module => module.Action == SelectedAction && module.UsesSharedFileOps);
 
+    public bool HasValidTrayPreviewPath =>
+        !string.IsNullOrWhiteSpace(TrayPreview.TrayRoot) &&
+        Directory.Exists(TrayPreview.TrayRoot);
+
+    public string TrayPreviewPathHintText => HasValidTrayPreviewPath
+        ? "Tray Path comes from Settings."
+        : "Set a valid Tray Path in Settings before loading preview.";
+
     public bool CanGoPrevPage => !IsBusy && !_isTrayPreviewPageLoading && _trayPreviewCurrentPage > 1;
     public bool CanGoNextPage => !IsBusy && !_isTrayPreviewPageLoading && _trayPreviewCurrentPage < _trayPreviewTotalPages;
+    public bool CanJumpToPage => !IsBusy && !_isTrayPreviewPageLoading && TryParsePreviewJumpPage(PreviewJumpPageText, out var page) && page >= 1 && page <= _trayPreviewTotalPages;
 
     public async Task InitializeAsync()
     {
@@ -496,7 +519,6 @@ public sealed class MainWindowViewModel : ObservableObject
         IsToolkitLogDrawerOpen = resolved.UiState.ToolkitLogDrawerOpen;
         IsTrayPreviewLogDrawerOpen = resolved.UiState.TrayPreviewLogDrawerOpen;
         IsToolkitAdvancedOpen = resolved.UiState.ToolkitAdvancedOpen;
-        IsTrayPreviewAdvancedOpen = resolved.UiState.TrayPreviewAdvancedOpen;
 
         _settingsProjection.LoadModuleSettings(settings, _moduleRegistry);
         SelectedAction = resolved.SelectedAction;
@@ -525,6 +547,7 @@ public sealed class MainWindowViewModel : ObservableObject
     public async Task PersistSettingsAsync()
     {
         _validationDebounceCts?.Cancel();
+        _trayPreviewAutoLoadDebounceCts?.Cancel();
         var settings = _settingsProjection.Capture(
             new MainWindowSettingsSnapshot
             {
@@ -546,8 +569,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 {
                     ToolkitLogDrawerOpen = IsToolkitLogDrawerOpen,
                     TrayPreviewLogDrawerOpen = IsTrayPreviewLogDrawerOpen,
-                    ToolkitAdvancedOpen = IsToolkitAdvancedOpen,
-                    TrayPreviewAdvancedOpen = IsTrayPreviewAdvancedOpen
+                    ToolkitAdvancedOpen = IsToolkitAdvancedOpen
                 }
             },
             _moduleRegistry);
@@ -573,7 +595,64 @@ public sealed class MainWindowViewModel : ObservableObject
 
     private void SubscribeForValidation(INotifyPropertyChanged source)
     {
-        source.PropertyChanged += (_, _) => QueueValidationRefresh();
+        source.PropertyChanged += OnPanelPropertyChanged;
+    }
+
+    private void OnPanelPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        QueueValidationRefresh();
+
+        if (!ReferenceEquals(sender, TrayPreview) || !IsTrayPreviewAutoReloadProperty(e.PropertyName))
+        {
+            return;
+        }
+
+        if (!HasValidTrayPreviewPath)
+        {
+            ClearTrayPreview();
+            return;
+        }
+
+        if (IsTrayPreviewWorkspace)
+        {
+            QueueTrayPreviewAutoLoad();
+        }
+    }
+
+    private static bool IsTrayPreviewAutoReloadProperty(string? propertyName)
+    {
+        return string.Equals(propertyName, nameof(TrayPreviewPanelViewModel.TrayRoot), StringComparison.Ordinal) ||
+               string.Equals(propertyName, nameof(TrayPreviewPanelViewModel.PresetTypeFilter), StringComparison.Ordinal) ||
+               string.Equals(propertyName, nameof(TrayPreviewPanelViewModel.AuthorFilter), StringComparison.Ordinal) ||
+               string.Equals(propertyName, nameof(TrayPreviewPanelViewModel.TimeFilter), StringComparison.Ordinal) ||
+               string.Equals(propertyName, nameof(TrayPreviewPanelViewModel.SearchQuery), StringComparison.Ordinal);
+    }
+
+    private void QueueTrayPreviewAutoLoad()
+    {
+        _trayPreviewAutoLoadDebounceCts?.Cancel();
+        _trayPreviewAutoLoadDebounceCts?.Dispose();
+        _trayPreviewAutoLoadDebounceCts = new CancellationTokenSource();
+        var cancellationToken = _trayPreviewAutoLoadDebounceCts.Token;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(300, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            if (cancellationToken.IsCancellationRequested || !IsTrayPreviewWorkspace || !HasValidTrayPreviewPath)
+            {
+                return;
+            }
+
+            ExecuteOnUi(() => _ = TryAutoLoadTrayPreviewAsync());
+        }, cancellationToken);
     }
 
     private void OnMergeSourcePathsChanged(object? sender, NotifyCollectionChangedEventArgs e)
@@ -686,11 +765,14 @@ public sealed class MainWindowViewModel : ObservableObject
         CancelCommand.NotifyCanExecuteChanged();
         PreviewPrevPageCommand.NotifyCanExecuteChanged();
         PreviewNextPageCommand.NotifyCanExecuteChanged();
+        PreviewJumpPageCommand.NotifyCanExecuteChanged();
         ToggleToolkitAdvancedCommand.NotifyCanExecuteChanged();
-        ToggleTrayPreviewAdvancedCommand.NotifyCanExecuteChanged();
         ClearLogCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(HasValidTrayPreviewPath));
+        OnPropertyChanged(nameof(TrayPreviewPathHintText));
         OnPropertyChanged(nameof(CanGoPrevPage));
         OnPropertyChanged(nameof(CanGoNextPage));
+        OnPropertyChanged(nameof(CanJumpToPage));
     }
 
     private async Task RunActiveWorkspaceAsync()
@@ -735,20 +817,11 @@ public sealed class MainWindowViewModel : ObservableObject
             case "FindDupRootPath":
                 await BrowseSingleFolderAsync("Select FindDup RootPath", path => FindDup.RootPath = path);
                 break;
-            case "ProbeTrayPath":
-                await BrowseSingleFolderAsync("Select TrayPath (Dependency Probe)", path => TrayDependencies.TrayPath = path);
-                break;
-            case "ProbeModsPath":
-                await BrowseSingleFolderAsync("Select ModsPath (Dependency Probe)", path => TrayDependencies.ModsPath = path);
-                break;
             case "ProbeS4tiPath":
                 await BrowseSingleFolderAsync("Select S4TI Install Folder", path => TrayDependencies.S4tiPath = path);
                 break;
             case "ProbeExportTargetPath":
                 await BrowseSingleFolderAsync("Select ExportTargetPath", path => TrayDependencies.ExportTargetPath = path);
-                break;
-            case "PreviewTrayRoot":
-                await BrowseSingleFolderAsync("Select TrayPath (Preview)", path => TrayPreview.TrayRoot = path);
                 break;
             default:
                 ReportUnsupportedBrowseTarget("folder", target);
@@ -839,6 +912,29 @@ public sealed class MainWindowViewModel : ObservableObject
         return true;
     }
 
+    private async Task ShowErrorPopupAsync(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        try
+        {
+            await _confirmationDialogService.ConfirmAsync(new ConfirmationRequest
+            {
+                Title = L("dialog.error.title"),
+                Message = $"{message}{Environment.NewLine}{L("dialog.error.checkLog")}",
+                ConfirmText = L("dialog.error.confirm"),
+                ShowCancel = false
+            });
+        }
+        catch (Exception ex)
+        {
+            AppendLog("[ui] failed to show error dialog: " + ex.Message);
+        }
+    }
+
     private async Task RunToolkitAsync()
     {
         if (_executionCts is not null)
@@ -851,6 +947,7 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             StatusMessage = error;
             AppendLog("[validation] " + error);
+            await ShowErrorPopupAsync(L("status.validationFailed"));
             return;
         }
 
@@ -892,6 +989,11 @@ public sealed class MainWindowViewModel : ObservableObject
                     isIndeterminate: false,
                     percent: result.ExitCode == 0 ? 100 : 0,
                     message: result.ExitCode == 0 ? L("progress.completed") : L("progress.failed"));
+
+                if (result.ExitCode != 0)
+                {
+                    await ShowErrorPopupAsync(L("status.executionFailed"));
+                }
             }
             else if (runResult.Status == ExecutionRunStatus.Cancelled)
             {
@@ -907,6 +1009,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 AppendLog("[error] " + errorMessage);
                 StatusMessage = L("status.executionFailed");
                 SetProgress(isIndeterminate: false, percent: 0, message: L("progress.executionFailed"));
+                await ShowErrorPopupAsync(L("status.executionFailed"));
             }
         }
         finally
@@ -933,6 +1036,7 @@ public sealed class MainWindowViewModel : ObservableObject
             {
                 StatusMessage = validationError;
                 AppendLog("[validation] " + validationError);
+                await ShowErrorPopupAsync(L("status.validationFailed"));
                 return;
             }
 
@@ -959,29 +1063,33 @@ public sealed class MainWindowViewModel : ObservableObject
 
         try
         {
-            var runResult = await _trayPreviewRunner.LoadDashboardAsync(input, _executionCts.Token);
+            var runResult = await _trayPreviewRunner.LoadPreviewAsync(input, _executionCts.Token);
             stopwatch.Stop();
 
             if (runResult.Status == ExecutionRunStatus.Success)
             {
                 var result = runResult.LoadResult!;
-                SetTrayPreviewDashboard(result.Dashboard);
+                SetTrayPreviewSummary(result.Summary);
                 SetTrayPreviewPage(result.Page, result.LoadedPageCount);
 
                 AppendLog($"[preview] trayPath={input.TrayPath}");
-                if (!string.IsNullOrWhiteSpace(input.TrayItemKey))
+                if (!string.IsNullOrWhiteSpace(input.AuthorFilter))
                 {
-                    AppendLog($"[preview] trayItemKey={input.TrayItemKey}");
+                    AppendLog($"[preview] authorFilter={input.AuthorFilter}");
                 }
 
-                AppendLog(input.TopN is int topN && topN > 0
-                    ? $"[preview] topN={topN}"
-                    : "[preview] topN=all");
+                if (!string.IsNullOrWhiteSpace(input.SearchQuery))
+                {
+                    AppendLog($"[preview] search={input.SearchQuery}");
+                }
+
+                AppendLog($"[preview] presetType={input.PresetTypeFilter}");
+                AppendLog($"[preview] timeFilter={input.TimeFilter}");
                 AppendLog($"[preview] pageSize={input.PageSize}");
-                AppendLog($"[preview] totalItems={result.Dashboard.TotalItems}");
+                AppendLog($"[preview] totalItems={result.Summary.TotalItems}");
 
                 StatusMessage =
-                    LF("status.trayPreviewLoaded", result.Dashboard.TotalItems, result.Page.TotalPages, stopwatch.Elapsed.ToString("mm\\:ss"));
+                    LF("status.trayPreviewLoaded", result.Summary.TotalItems, result.Page.TotalPages, stopwatch.Elapsed.ToString("mm\\:ss"));
                 SetProgress(isIndeterminate: false, percent: 100, message: L("progress.trayLoaded"));
             }
             else if (runResult.Status == ExecutionRunStatus.Cancelled)
@@ -998,6 +1106,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 AppendLog("[error] " + errorMessage);
                 StatusMessage = L("status.trayPreviewFailed");
                 SetProgress(isIndeterminate: false, percent: 0, message: L("progress.trayFailed"));
+                await ShowErrorPopupAsync(L("status.trayPreviewFailed"));
             }
         }
         finally
@@ -1018,6 +1127,16 @@ public sealed class MainWindowViewModel : ObservableObject
     private async Task LoadNextTrayPreviewPageAsync()
     {
         await LoadTrayPreviewPageAsync(_trayPreviewCurrentPage + 1);
+    }
+
+    private async Task JumpToTrayPreviewPageAsync()
+    {
+        if (!TryParsePreviewJumpPage(PreviewJumpPageText, out var requestedPageIndex))
+        {
+            return;
+        }
+
+        await LoadTrayPreviewPageAsync(requestedPageIndex);
     }
 
     private async Task LoadTrayPreviewPageAsync(int requestedPageIndex)
@@ -1051,11 +1170,18 @@ public sealed class MainWindowViewModel : ObservableObject
                 : runResult.ErrorMessage;
             AppendLog("[error] " + errorMessage);
             StatusMessage = L("status.trayPageFailed");
+            await ShowErrorPopupAsync(L("status.trayPageFailed"));
         }
         finally
         {
             SetTrayPreviewPageLoading(false);
         }
+    }
+
+    private static bool TryParsePreviewJumpPage(string? rawValue, out int page)
+    {
+        page = 0;
+        return int.TryParse(rawValue?.Trim(), out page);
     }
 
     private async Task TryAutoLoadTrayPreviewAsync()
@@ -1072,7 +1198,7 @@ public sealed class MainWindowViewModel : ObservableObject
 
         if (_trayPreviewRunner.TryGetCached(input, out var cached))
         {
-            SetTrayPreviewDashboard(cached.Dashboard);
+            SetTrayPreviewSummary(cached.Summary);
             SetTrayPreviewPage(cached.Page, cached.LoadedPageCount);
             StatusMessage = LF("status.trayPageLoaded", cached.Page.PageIndex, cached.Page.TotalPages);
             return;
@@ -1176,33 +1302,34 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             PreviewItems.Clear();
             PreviewSummaryText = L("preview.noneLoaded");
-            PreviewDashboardTotalItems = "0";
-            PreviewDashboardTotalFiles = "0";
-            PreviewDashboardTotalSize = "0 MB";
-            PreviewDashboardLatestWrite = "-";
+            PreviewTotalItems = "0";
+            PreviewTotalFiles = "0";
+            PreviewTotalSize = "0 MB";
+            PreviewLatestWrite = "-";
             PreviewPageText = LF("preview.page", 0, 0);
             PreviewLazyLoadText = LF("preview.lazyCache", 0, 0);
+            PreviewJumpPageText = string.Empty;
             _trayPreviewCurrentPage = 1;
             _trayPreviewTotalPages = 1;
             NotifyCommandStates();
         });
     }
 
-    private void SetTrayPreviewDashboard(SimsTrayPreviewDashboard dashboard)
+    private void SetTrayPreviewSummary(SimsTrayPreviewSummary summary)
     {
         ExecuteOnUi(() =>
         {
-            PreviewDashboardTotalItems = dashboard.TotalItems.ToString("N0");
-            PreviewDashboardTotalFiles = dashboard.TotalFiles.ToString("N0");
-            PreviewDashboardTotalSize = $"{dashboard.TotalMB:N2} MB";
-            PreviewDashboardLatestWrite = dashboard.LatestWriteTimeLocal == DateTime.MinValue
+            PreviewTotalItems = summary.TotalItems.ToString("N0");
+            PreviewTotalFiles = summary.TotalFiles.ToString("N0");
+            PreviewTotalSize = $"{summary.TotalMB:N2} MB";
+            PreviewLatestWrite = summary.LatestWriteTimeLocal == DateTime.MinValue
                 ? "-"
-                : dashboard.LatestWriteTimeLocal.ToString("yyyy-MM-dd HH:mm");
+                : summary.LatestWriteTimeLocal.ToString("yyyy-MM-dd HH:mm");
 
-            var breakdown = string.IsNullOrWhiteSpace(dashboard.PresetTypeBreakdown)
+            var breakdown = string.IsNullOrWhiteSpace(summary.PresetTypeBreakdown)
                 ? L("preview.typeNa")
-                : LF("preview.type", dashboard.PresetTypeBreakdown);
-            PreviewSummaryText = LF("preview.dashboardReady", breakdown);
+                : LF("preview.type", summary.PresetTypeBreakdown);
+            PreviewSummaryText = LF("preview.summaryReady", breakdown);
         });
     }
 
@@ -1224,6 +1351,7 @@ public sealed class MainWindowViewModel : ObservableObject
             PreviewSummaryText = LF("preview.range", firstItemIndex, lastItemIndex, page.TotalItems);
             PreviewPageText = LF("preview.page", page.PageIndex, safeTotalPages);
             PreviewLazyLoadText = LF("preview.lazyCache", loadedPageCount, safeTotalPages);
+            PreviewJumpPageText = page.PageIndex.ToString();
             NotifyCommandStates();
         });
     }
@@ -1265,12 +1393,6 @@ public sealed class MainWindowViewModel : ObservableObject
                     File.Exists(Path.Combine(directory.FullName, "SimsDesktopTools.sln")))
                 {
                     return directory.FullName;
-                }
-
-                // Backward-compatible fallback for legacy nested solution layout.
-                if (File.Exists(Path.Combine(directory.FullName, "src.sln")))
-                {
-                    return directory.Parent?.FullName;
                 }
 
                 directory = directory.Parent;
@@ -1332,3 +1454,4 @@ public sealed class MainWindowViewModel : ObservableObject
         Dispatcher.UIThread.Post(action);
     }
 }
+

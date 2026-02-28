@@ -9,10 +9,7 @@ public sealed class TrayDependenciesActionModule : IActionModule
 {
     private static readonly IReadOnlyList<string> ActionPatchKeys =
     [
-        "trayPath",
-        "modsPath",
         "trayItemKey",
-        "analysisMode",
         "s4tiPath",
         "minMatchCount",
         "topN",
@@ -40,10 +37,7 @@ public sealed class TrayDependenciesActionModule : IActionModule
 
     public void LoadFromSettings(AppSettings settings)
     {
-        _panel.TrayPath = settings.TrayDependencies.TrayPath;
-        _panel.ModsPath = settings.TrayDependencies.ModsPath;
         _panel.TrayItemKey = settings.TrayDependencies.TrayItemKey;
-        _panel.AnalysisMode = settings.TrayDependencies.AnalysisMode;
         _panel.S4tiPath = settings.TrayDependencies.S4tiPath;
         _panel.MinMatchCountText = settings.TrayDependencies.MinMatchCountText;
         _panel.TopNText = settings.TrayDependencies.TopNText;
@@ -58,10 +52,7 @@ public sealed class TrayDependenciesActionModule : IActionModule
 
     public void SaveToSettings(AppSettings settings)
     {
-        settings.TrayDependencies.TrayPath = _panel.TrayPath;
-        settings.TrayDependencies.ModsPath = _panel.ModsPath;
         settings.TrayDependencies.TrayItemKey = _panel.TrayItemKey;
-        settings.TrayDependencies.AnalysisMode = _panel.AnalysisMode;
         settings.TrayDependencies.S4tiPath = _panel.S4tiPath;
         settings.TrayDependencies.MinMatchCountText = _panel.MinMatchCountText;
         settings.TrayDependencies.TopNText = _panel.TopNText;
@@ -104,7 +95,6 @@ public sealed class TrayDependenciesActionModule : IActionModule
             TrayPath = ModuleHelpers.ToNullIfWhiteSpace(_panel.TrayPath),
             ModsPath = ModuleHelpers.ToNullIfWhiteSpace(_panel.ModsPath),
             TrayItemKey = ModuleHelpers.ToNullIfWhiteSpace(_panel.TrayItemKey),
-            AnalysisMode = ModuleHelpers.ToNullIfWhiteSpace(_panel.AnalysisMode) ?? "StrictS4TI",
             S4tiPath = ModuleHelpers.ToNullIfWhiteSpace(_panel.S4tiPath),
             MinMatchCount = minMatchCount,
             TopN = topN,
@@ -124,10 +114,7 @@ public sealed class TrayDependenciesActionModule : IActionModule
     {
         error = string.Empty;
 
-        if (!ModuleHelpers.TryGetString(patch, "trayPath", out var hasTrayPath, out var trayPath, out error) ||
-            !ModuleHelpers.TryGetString(patch, "modsPath", out var hasModsPath, out var modsPath, out error) ||
-            !ModuleHelpers.TryGetString(patch, "trayItemKey", out var hasTrayItemKey, out var trayItemKey, out error) ||
-            !ModuleHelpers.TryGetString(patch, "analysisMode", out var hasAnalysisMode, out var analysisMode, out error) ||
+        if (!ModuleHelpers.TryGetString(patch, "trayItemKey", out var hasTrayItemKey, out var trayItemKey, out error) ||
             !ModuleHelpers.TryGetString(patch, "s4tiPath", out var hasS4tiPath, out var s4tiPath, out error) ||
             !ModuleHelpers.TryGetString(patch, "outputCsv", out var hasOutputCsv, out var outputCsv, out error) ||
             !ModuleHelpers.TryGetString(patch, "unusedOutputCsv", out var hasUnusedOutputCsv, out var unusedOutputCsv, out error) ||
@@ -146,24 +133,9 @@ public sealed class TrayDependenciesActionModule : IActionModule
             return false;
         }
 
-        if (hasTrayPath)
-        {
-            _panel.TrayPath = trayPath ?? string.Empty;
-        }
-
-        if (hasModsPath)
-        {
-            _panel.ModsPath = modsPath ?? string.Empty;
-        }
-
         if (hasTrayItemKey)
         {
             _panel.TrayItemKey = trayItemKey ?? string.Empty;
-        }
-
-        if (hasAnalysisMode)
-        {
-            _panel.AnalysisMode = analysisMode ?? string.Empty;
         }
 
         if (hasS4tiPath)

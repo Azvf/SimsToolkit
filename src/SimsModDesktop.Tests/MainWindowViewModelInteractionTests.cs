@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Requests;
@@ -109,7 +109,6 @@ public sealed class MainWindowViewModelInteractionTests
         vm.IsToolkitLogDrawerOpen = true;
         vm.IsTrayPreviewLogDrawerOpen = true;
         vm.IsToolkitAdvancedOpen = true;
-        vm.IsTrayPreviewAdvancedOpen = true;
         var preferredLanguage = vm.AvailableLanguages
             .Select(option => option.Code)
             .FirstOrDefault(code => !string.Equals(code, "en-US", StringComparison.OrdinalIgnoreCase))
@@ -122,7 +121,6 @@ public sealed class MainWindowViewModelInteractionTests
         Assert.True(settingsStore.LastSaved!.UiState.ToolkitLogDrawerOpen);
         Assert.True(settingsStore.LastSaved.UiState.TrayPreviewLogDrawerOpen);
         Assert.True(settingsStore.LastSaved.UiState.ToolkitAdvancedOpen);
-        Assert.True(settingsStore.LastSaved.UiState.TrayPreviewAdvancedOpen);
         Assert.Equal(vm.SelectedLanguageCode, settingsStore.LastSaved.UiLanguageCode);
     }
 
@@ -253,7 +251,7 @@ public sealed class MainWindowViewModelInteractionTests
         {
             return Task.FromResult(new TrayPreviewLoadResult
             {
-                Dashboard = new SimsTrayPreviewDashboard(),
+                Summary = new SimsTrayPreviewSummary(),
                 Page = new SimsTrayPreviewPage
                 {
                     PageIndex = 1,
@@ -293,6 +291,11 @@ public sealed class MainWindowViewModelInteractionTests
         public Task<IReadOnlyList<string>> PickFolderPathsAsync(string title, bool allowMultiple)
         {
             return Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
+        }
+
+        public Task<string?> PickFilePathAsync(string title, string fileTypeName, IReadOnlyList<string> patterns)
+        {
+            return Task.FromResult<string?>(null);
         }
 
         public Task<string?> PickCsvSavePathAsync(string title, string suggestedFileName)
@@ -355,3 +358,4 @@ public sealed class MainWindowViewModelInteractionTests
         }
     }
 }
+

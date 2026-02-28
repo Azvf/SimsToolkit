@@ -35,8 +35,7 @@ public sealed class MainWindowSettingsProjectionTests
             {
                 ToolkitLogDrawerOpen = true,
                 TrayPreviewLogDrawerOpen = true,
-                ToolkitAdvancedOpen = true,
-                TrayPreviewAdvancedOpen = false
+                ToolkitAdvancedOpen = true
             }
         };
 
@@ -56,7 +55,6 @@ public sealed class MainWindowSettingsProjectionTests
         Assert.True(settings.UiState.ToolkitLogDrawerOpen);
         Assert.True(settings.UiState.TrayPreviewLogDrawerOpen);
         Assert.True(settings.UiState.ToolkitAdvancedOpen);
-        Assert.False(settings.UiState.TrayPreviewAdvancedOpen);
         Assert.Equal(@"D:\FromModule", settings.Organize.SourceDir);
         Assert.Equal(1, module.SaveCallCount);
     }

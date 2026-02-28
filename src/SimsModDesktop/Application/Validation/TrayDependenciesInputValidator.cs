@@ -37,28 +37,17 @@ public sealed class TrayDependenciesInputValidator : IActionInputValidator<TrayD
             return false;
         }
 
-        var strictMode = input.AnalysisMode.Equals("StrictS4TI", StringComparison.OrdinalIgnoreCase);
-        var legacyMode = input.AnalysisMode.Equals("Legacy", StringComparison.OrdinalIgnoreCase);
-        if (!strictMode && !legacyMode)
+        var s4tiPath = ValidationHelpers.ToNullIfWhiteSpace(input.S4tiPath);
+        if (string.IsNullOrWhiteSpace(s4tiPath))
         {
-            error = "AnalysisMode must be StrictS4TI or Legacy.";
+            error = "S4TI path is required in StrictS4TI mode.";
             return false;
         }
 
-        if (strictMode)
+        if (!Directory.Exists(s4tiPath))
         {
-            var s4tiPath = ValidationHelpers.ToNullIfWhiteSpace(input.S4tiPath);
-            if (string.IsNullOrWhiteSpace(s4tiPath))
-            {
-                error = "S4TI path is required in StrictS4TI mode.";
-                return false;
-            }
-
-            if (!Directory.Exists(s4tiPath))
-            {
-                error = "S4TI path does not exist.";
-                return false;
-            }
+            error = "S4TI path does not exist.";
+            return false;
         }
 
         if (input.MinMatchCount is int minMatchCount && (minMatchCount < 1 || minMatchCount > 1000))

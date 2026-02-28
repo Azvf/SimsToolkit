@@ -20,15 +20,21 @@ public sealed class TrayPreviewInputValidator : IActionInputValidator<TrayPrevie
             return false;
         }
 
-        if (input.TopN is int topN && (topN < 1 || topN > 50000))
+        if (input.PageSize < 1 || input.PageSize > 500)
         {
-            error = $"Value {topN} is out of range [1, 50000].";
+            error = $"Value {input.PageSize} is out of range [1, 500].";
             return false;
         }
 
-        if (input.MaxFilesPerItem < 1 || input.MaxFilesPerItem > 200)
+        var timeFilter = input.TimeFilter?.Trim();
+        if (!string.IsNullOrWhiteSpace(timeFilter) &&
+            !string.Equals(timeFilter, "All", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(timeFilter, "Last24h", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(timeFilter, "Last7d", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(timeFilter, "Last30d", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(timeFilter, "Last90d", StringComparison.OrdinalIgnoreCase))
         {
-            error = $"Value {input.MaxFilesPerItem} is out of range [1, 200].";
+            error = $"Unsupported time filter: {timeFilter}.";
             return false;
         }
 

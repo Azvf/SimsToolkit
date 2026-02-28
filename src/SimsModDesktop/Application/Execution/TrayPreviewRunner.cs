@@ -12,7 +12,7 @@ public sealed class TrayPreviewRunner : ITrayPreviewRunner
         _trayPreviewCoordinator = trayPreviewCoordinator;
     }
 
-    public async Task<TrayPreviewDashboardRunResult> LoadDashboardAsync(
+    public async Task<TrayPreviewLoadRunResult> LoadPreviewAsync(
         TrayPreviewInput input,
         CancellationToken cancellationToken = default)
     {
@@ -21,7 +21,7 @@ public sealed class TrayPreviewRunner : ITrayPreviewRunner
         try
         {
             var result = await _trayPreviewCoordinator.LoadAsync(input, cancellationToken);
-            return new TrayPreviewDashboardRunResult
+            return new TrayPreviewLoadRunResult
             {
                 Status = ExecutionRunStatus.Success,
                 LoadResult = result
@@ -29,14 +29,14 @@ public sealed class TrayPreviewRunner : ITrayPreviewRunner
         }
         catch (OperationCanceledException)
         {
-            return new TrayPreviewDashboardRunResult
+            return new TrayPreviewLoadRunResult
             {
                 Status = ExecutionRunStatus.Cancelled
             };
         }
         catch (Exception ex)
         {
-            return new TrayPreviewDashboardRunResult
+            return new TrayPreviewLoadRunResult
             {
                 Status = ExecutionRunStatus.Failed,
                 ErrorMessage = ex.Message
@@ -85,3 +85,4 @@ public sealed class TrayPreviewRunner : ITrayPreviewRunner
         _trayPreviewCoordinator.Reset();
     }
 }
+

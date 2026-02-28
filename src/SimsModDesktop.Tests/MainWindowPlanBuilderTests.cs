@@ -115,9 +115,10 @@ public sealed class MainWindowPlanBuilderTests
         var trayPreviewPanel = new TrayPreviewPanelViewModel
         {
             TrayRoot = trayRoot,
-            TrayItemKey = "ABC123",
-            TopNText = "100",
-            FilesPerItemText = "10"
+            PresetTypeFilter = "Lot",
+            AuthorFilter = "Author-01",
+            TimeFilter = "Last30d",
+            SearchQuery = "villa"
         };
         var registry = new ActionModuleRegistry(
         [
@@ -136,8 +137,9 @@ public sealed class MainWindowPlanBuilderTests
 
         Assert.True(ok, error);
         Assert.Equal(Path.GetFullPath(trayRoot), input.TrayPath);
-        Assert.Equal("ABC123", input.TrayItemKey);
-        Assert.Equal(100, input.TopN);
-        Assert.Equal(10, input.MaxFilesPerItem);
+        Assert.Equal("Lot", input.PresetTypeFilter);
+        Assert.Equal("Author-01", input.AuthorFilter);
+        Assert.Equal("Last30d", input.TimeFilter);
+        Assert.Equal("villa", input.SearchQuery);
     }
 }

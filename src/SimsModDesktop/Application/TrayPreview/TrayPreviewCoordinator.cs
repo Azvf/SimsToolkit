@@ -12,7 +12,7 @@ public sealed class TrayPreviewCoordinator : ITrayPreviewCoordinator
     private readonly Dictionary<int, SimsTrayPreviewPage> _pageCache = new();
 
     private TrayPreviewInput? _activeInput;
-    private SimsTrayPreviewDashboard? _activeDashboard;
+    private SimsTrayPreviewSummary? _activeSummary;
     private string _activeFingerprint = string.Empty;
     private int _activePageIndex = 1;
 
@@ -36,7 +36,7 @@ public sealed class TrayPreviewCoordinator : ITrayPreviewCoordinator
 
         var fingerprint = BuildFingerprint(input);
         if (!fingerprint.Equals(_activeFingerprint, StringComparison.Ordinal) ||
-            _activeDashboard is null ||
+            _activeSummary is null ||
             !_pageCache.TryGetValue(_activePageIndex, out var cachedPage))
         {
             return false;
@@ -44,7 +44,7 @@ public sealed class TrayPreviewCoordinator : ITrayPreviewCoordinator
 
         result = new TrayPreviewLoadResult
         {
-            Dashboard = _activeDashboard,
+            Summary = _activeSummary,
             Page = cachedPage,
             LoadedPageCount = _pageCache.Count
         };
@@ -63,11 +63,11 @@ public sealed class TrayPreviewCoordinator : ITrayPreviewCoordinator
         }
 
         var request = ToRequest(input);
-        var dashboard = await _previewService.BuildDashboardAsync(request, cancellationToken);
+        var summary = await _previewService.BuildSummaryAsync(request, cancellationToken);
         var firstPage = await _previewService.BuildPageAsync(request, pageIndex: 1, cancellationToken);
 
         _activeInput = input;
-        _activeDashboard = dashboard;
+        _activeSummary = summary;
         _activeFingerprint = BuildFingerprint(input);
         _activePageIndex = firstPage.PageIndex;
         _pageCache.Clear();
@@ -75,7 +75,7 @@ public sealed class TrayPreviewCoordinator : ITrayPreviewCoordinator
 
         return new TrayPreviewLoadResult
         {
-            Dashboard = dashboard,
+            Summary = summary,
             Page = firstPage,
             LoadedPageCount = _pageCache.Count
         };
@@ -83,14 +83,14 @@ public sealed class TrayPreviewCoordinator : ITrayPreviewCoordinator
 
     public async Task<TrayPreviewPageResult> LoadPageAsync(int requestedPageIndex, CancellationToken cancellationToken = default)
     {
-        if (_activeInput is null || _activeDashboard is null)
+        if (_activeInput is null || _activeSummary is null)
         {
             throw new InvalidOperationException("Tray preview is not loaded yet.");
         }
 
         var totalPages = Math.Max(
             1,
-            (int)Math.Ceiling(_activeDashboard.TotalItems / (double)_activeInput.PageSize));
+            (int)Math.Ceiling(_activeSummary.TotalItems / (double)_activeInput.PageSize));
         var targetPageIndex = Math.Clamp(requestedPageIndex, 1, totalPages);
 
         if (_pageCache.TryGetValue(targetPageIndex, out var cachedPage))
@@ -120,7 +120,7 @@ public sealed class TrayPreviewCoordinator : ITrayPreviewCoordinator
     public void Reset()
     {
         _activeInput = null;
-        _activeDashboard = null;
+        _activeSummary = null;
         _activeFingerprint = string.Empty;
         _activePageIndex = 1;
         _pageCache.Clear();
@@ -131,10 +131,11 @@ public sealed class TrayPreviewCoordinator : ITrayPreviewCoordinator
         return new SimsTrayPreviewRequest
         {
             TrayPath = Path.GetFullPath(input.TrayPath.Trim()),
-            TrayItemKey = input.TrayItemKey.Trim(),
-            TopN = input.TopN,
-            MaxFilesPerItem = input.MaxFilesPerItem,
-            PageSize = input.PageSize
+            PageSize = input.PageSize,
+            PresetTypeFilter = string.IsNullOrWhiteSpace(input.PresetTypeFilter) ? "All" : input.PresetTypeFilter.Trim(),
+            AuthorFilter = input.AuthorFilter.Trim(),
+            TimeFilter = string.IsNullOrWhiteSpace(input.TimeFilter) ? "All" : input.TimeFilter.Trim(),
+            SearchQuery = input.SearchQuery.Trim()
         };
     }
 
@@ -143,9 +144,12 @@ public sealed class TrayPreviewCoordinator : ITrayPreviewCoordinator
         var trayPath = Path.GetFullPath(input.TrayPath.Trim())
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
             .ToLowerInvariant();
-        var trayItemKey = input.TrayItemKey.Trim().ToLowerInvariant();
-        var topN = input.TopN?.ToString() ?? "all";
+        var presetTypeFilter = string.IsNullOrWhiteSpace(input.PresetTypeFilter) ? "all" : input.PresetTypeFilter.Trim().ToLowerInvariant();
+        var authorFilter = string.IsNullOrWhiteSpace(input.AuthorFilter) ? "all" : input.AuthorFilter.Trim().ToLowerInvariant();
+        var timeFilter = string.IsNullOrWhiteSpace(input.TimeFilter) ? "all" : input.TimeFilter.Trim().ToLowerInvariant();
+        var searchQuery = string.IsNullOrWhiteSpace(input.SearchQuery) ? "all" : input.SearchQuery.Trim().ToLowerInvariant();
 
-        return string.Join("|", trayPath, trayItemKey, topN, input.MaxFilesPerItem, input.PageSize);
+        return string.Join("|", trayPath, input.PageSize, presetTypeFilter, authorFilter, timeFilter, searchQuery);
     }
 }
+

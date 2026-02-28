@@ -2,168 +2,266 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             xmlns:models="clr-namespace:SimsModDesktop.Models"
-             xmlns:results="clr-namespace:SimsModDesktop.Application.Results"
              xmlns:shell="clr-namespace:SimsModDesktop.ViewModels.Shell"
-             xmlns:legacy="clr-namespace:SimsModDesktop.Views.Legacy"
-             xmlns:inspector="clr-namespace:SimsModDesktop.ViewModels.Inspector"
+             xmlns:workspace="clr-namespace:SimsModDesktop.Views.Workspace"
              mc:Ignorable="d"
              x:Class="SimsModDesktop.Views.Shell.MainShellView"
              x:DataType="shell:MainShellViewModel">
-    <Grid>
-        <Grid Margin="14" ColumnDefinitions="230,*,340" ColumnSpacing="12" IsVisible="{Binding EnableGlobalSidebarShell}">
-        <Border Classes="card" Padding="12">
-            <Grid RowDefinitions="Auto,*,Auto" RowSpacing="10">
-                <StackPanel Spacing="8">
-                    <TextBlock Classes="app-title" Text="Sims Toolkit" />
-                    <TextBlock Classes="helper-text" Text="TS4 Workspace" />
+    <Grid x:Name="ShellRoot"
+          Focusable="True"
+          PointerPressed="OnShellPointerPressed">
+        <Grid Margin="14" ColumnDefinitions="230,*,Auto" ColumnSpacing="12">
+        <Border Classes="sidebar-shell" Padding="12">
+            <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="10">
+                <StackPanel Spacing="2">
+                    <TextBlock Classes="sidebar-kicker" Text="SimsToolkit" />
+                    <TextBlock Classes="sidebar-minimal-title" Text="Workspace" />
                 </StackPanel>
 
-                <StackPanel Grid.Row="1" Spacing="8">
-                    <Button Classes="secondary" Content="Dashboard" Command="{Binding SelectSectionCommand}" CommandParameter="Dashboard" />
-                    <Button Classes="secondary" Content="Mods" Command="{Binding SelectSectionCommand}" CommandParameter="Mods" />
-                    <Button Classes="secondary" Content="Tray" Command="{Binding SelectSectionCommand}" CommandParameter="Tray" />
-                    <Button Classes="secondary" Content="Saves" Command="{Binding SelectSectionCommand}" CommandParameter="Saves" />
-                    <Button Classes="secondary" Content="Settings" Command="{Binding SelectSectionCommand}" CommandParameter="Settings" />
-                </StackPanel>
+                <Border Grid.Row="1" Classes="sidebar-subtle-block" Padding="8">
+                    <Grid ColumnDefinitions="*,Auto"
+                          RowDefinitions="Auto,Auto,Auto,Auto"
+                          ColumnSpacing="8"
+                          RowSpacing="6">
+                        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <Border Classes="status-dot"
+                                    Classes.status-ok="{Binding HasGameExecutable}"
+                                    Classes.status-warning="{Binding IsGameExecutableWarning}"
+                                    Classes.status-missing="{Binding IsGameExecutableMissing}" />
+                            <TextBlock VerticalAlignment="Center" Text="Game" />
+                        </StackPanel>
+                        <Border Grid.Row="0"
+                                Grid.Column="1"
+                                Classes="status-pill"
+                                Classes.status-ok="{Binding HasGameExecutable}"
+                                Classes.status-warning="{Binding IsGameExecutableWarning}"
+                                Classes.status-missing="{Binding IsGameExecutableMissing}">
+                            <TextBlock Classes="status-pill-text" Text="{Binding GameStatusBadgeText}" />
+                        </Border>
 
-                <StackPanel Grid.Row="2" Spacing="6">
-                    <Button Classes="primary" Height="42" Content="Launch Game" IsEnabled="{Binding EnableLaunchGame}" Command="{Binding LaunchGameCommand}" />
-                    <TextBlock Classes="helper-text" TextWrapping="Wrap" Text="{Binding LaunchGameStatus}" />
-                </StackPanel>
+                        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <Border Classes="status-dot"
+                                    Classes.status-ok="{Binding HasModsPath}"
+                                    Classes.status-warning="{Binding IsModsPathWarning}"
+                                    Classes.status-missing="{Binding IsModsPathMissing}" />
+                            <TextBlock VerticalAlignment="Center" Text="Mods" />
+                        </StackPanel>
+                        <Border Grid.Row="1"
+                                Grid.Column="1"
+                                Classes="status-pill"
+                                Classes.status-ok="{Binding HasModsPath}"
+                                Classes.status-warning="{Binding IsModsPathWarning}"
+                                Classes.status-missing="{Binding IsModsPathMissing}">
+                            <TextBlock Classes="status-pill-text" Text="{Binding ModsStatusBadgeText}" />
+                        </Border>
+
+                        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <Border Classes="status-dot"
+                                    Classes.status-ok="{Binding HasTrayPath}"
+                                    Classes.status-warning="{Binding IsTrayPathWarning}"
+                                    Classes.status-missing="{Binding IsTrayPathMissing}" />
+                            <TextBlock VerticalAlignment="Center" Text="Tray" />
+                        </StackPanel>
+                        <Border Grid.Row="2"
+                                Grid.Column="1"
+                                Classes="status-pill"
+                                Classes.status-ok="{Binding HasTrayPath}"
+                                Classes.status-warning="{Binding IsTrayPathWarning}"
+                                Classes.status-missing="{Binding IsTrayPathMissing}">
+                            <TextBlock Classes="status-pill-text" Text="{Binding TrayStatusBadgeText}" />
+                        </Border>
+
+                        <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <Border Classes="status-dot"
+                                    Classes.status-ok="{Binding HasSavesPath}"
+                                    Classes.status-warning="{Binding IsSavesPathWarning}"
+                                    Classes.status-missing="{Binding IsSavesPathMissing}" />
+                            <TextBlock VerticalAlignment="Center" Text="Saves" />
+                        </StackPanel>
+                        <Border Grid.Row="3"
+                                Grid.Column="1"
+                                Classes="status-pill"
+                                Classes.status-ok="{Binding HasSavesPath}"
+                                Classes.status-warning="{Binding IsSavesPathWarning}"
+                                Classes.status-missing="{Binding IsSavesPathMissing}">
+                            <TextBlock Classes="status-pill-text" Text="{Binding SavesStatusBadgeText}" />
+                        </Border>
+                    </Grid>
+                </Border>
+
+                <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+                    <StackPanel Spacing="6">
+                        <Button Classes="sidebar-link-minimal"
+                                Classes.sidebar-active="{Binding IsModsSectionSelected}"
+                                VerticalContentAlignment="Center"
+                                HorizontalContentAlignment="Left"
+                                Command="{Binding SelectSectionCommand}"
+                                CommandParameter="Mods"
+                                Content="Mods" />
+                        <Button Classes="sidebar-link-minimal"
+                                Classes.sidebar-active="{Binding IsTraySectionSelected}"
+                                VerticalContentAlignment="Center"
+                                HorizontalContentAlignment="Left"
+                                Command="{Binding SelectSectionCommand}"
+                                CommandParameter="Tray"
+                                Content="Tray" />
+                        <Button Classes="sidebar-link-minimal"
+                                Classes.sidebar-active="{Binding IsSavesSectionSelected}"
+                                VerticalContentAlignment="Center"
+                                HorizontalContentAlignment="Left"
+                                Command="{Binding SelectSectionCommand}"
+                                CommandParameter="Saves"
+                                Content="Saves" />
+                        <Button Classes="sidebar-link-minimal"
+                                Classes.sidebar-active="{Binding IsSettingsSectionSelected}"
+                                VerticalContentAlignment="Center"
+                                HorizontalContentAlignment="Left"
+                                Command="{Binding SelectSectionCommand}"
+                                CommandParameter="Settings"
+                                Content="Settings" />
+                    </StackPanel>
+                </ScrollViewer>
+
+                <Button Grid.Row="3"
+                        Classes="primary sidebar-launch-minimal"
+                        Height="42"
+                        VerticalContentAlignment="Center"
+                        HorizontalContentAlignment="Center"
+                        Content="{Binding LaunchButtonText}"
+                        IsEnabled="{Binding CanLaunchGame}"
+                        Command="{Binding LaunchGameCommand}" />
             </Grid>
         </Border>
 
-        <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto" RowSpacing="10">
-            <Border Classes="card" Padding="10">
-                <StackPanel Spacing="8">
-                    <TextBlock Classes="section-title" Text="{Binding SelectedSection}" />
-
-                    <WrapPanel IsVisible="{Binding IsModsSectionVisible}" ItemWidth="130" ItemHeight="34">
-                        <Button Classes="secondary" Content="Organize" Command="{Binding SelectModuleCommand}" CommandParameter="organize" />
-                        <Button Classes="secondary" Content="Flatten" Command="{Binding SelectModuleCommand}" CommandParameter="flatten" />
-                        <Button Classes="secondary" Content="Normalize" Command="{Binding SelectModuleCommand}" CommandParameter="normalize" />
-                        <Button Classes="secondary" Content="Merge" Command="{Binding SelectModuleCommand}" CommandParameter="merge" />
-                        <Button Classes="secondary" Content="Find Duplicates" Command="{Binding SelectModuleCommand}" CommandParameter="finddup" />
-                    </WrapPanel>
-
-                    <WrapPanel IsVisible="{Binding IsTraySectionVisible}" ItemWidth="160" ItemHeight="34">
-                        <Button Classes="secondary" Content="Tray Preview" Command="{Binding SelectModuleCommand}" CommandParameter="traypreview" />
-                        <Button Classes="secondary" Content="Tray Dependencies" Command="{Binding SelectModuleCommand}" CommandParameter="traydeps" />
-                    </WrapPanel>
-                </StackPanel>
-            </Border>
-
-            <Grid Grid.Row="1">
-                <Border Classes="card" Padding="12" IsVisible="{Binding IsDashboardVisible}">
-                    <StackPanel Spacing="10">
-                        <TextBlock Classes="section-title" Text="Dashboard" />
-                        <Grid ColumnDefinitions="220,*" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
-                            <TextBlock Text="Game Executable" />
-                            <TextBox Grid.Column="1" Classes="path-field" Text="{Binding GameExecutablePath}" />
-                            <TextBlock Grid.Row="1" Text="Mods Path" />
-                            <TextBox Grid.Row="1" Grid.Column="1" Classes="path-field" Text="{Binding ModsPath}" />
-                            <TextBlock Grid.Row="2" Text="Tray Path" />
-                            <TextBox Grid.Row="2" Grid.Column="1" Classes="path-field" Text="{Binding TrayPath}" />
-                            <TextBlock Grid.Row="3" Text="Saves Path" />
-                            <TextBox Grid.Row="3" Grid.Column="1" Classes="path-field" Text="{Binding SavesPath}" />
-                        </Grid>
-                    </StackPanel>
-                </Border>
-
+        <Grid Grid.Column="1">
+            <Grid>
                 <Border Classes="card" Padding="12" IsVisible="{Binding IsSavesVisible}">
                     <StackPanel Spacing="8">
-                        <TextBlock Classes="section-title" Text="Saves (MVP Placeholder)" />
-                        <TextBlock TextWrapping="Wrap" Text="Saves workflow is reserved in this phase. Use Dashboard paths to verify save root health." />
+                        <TextBlock Classes="section-title" Text="Saves Placeholder" />
+                        <TextBlock TextWrapping="Wrap" Text="Saves workflow is reserved in this phase. Use Settings paths to verify save root health." />
                     </StackPanel>
                 </Border>
 
                 <Border Classes="card" Padding="12" IsVisible="{Binding IsSettingsVisible}">
-                    <StackPanel Spacing="10">
-                        <TextBlock Classes="section-title" Text="Shell Settings" />
-                        <Grid ColumnDefinitions="240,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
-                            <TextBlock VerticalAlignment="Center" Text="Theme" />
-                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                                <Button Classes="secondary" Content="Dark" Command="{Binding SetDarkThemeCommand}" />
-                                <Button Classes="secondary" Content="Light" Command="{Binding SetLightThemeCommand}" />
+                    <StackPanel Spacing="12">
+                        <TextBlock Classes="section-title" Text="Settings" />
+
+                        <Border Classes="settings-section" Padding="12">
+                            <StackPanel Spacing="10">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Classes="settings-section-title" Text="Game Paths" />
+                                    <TextBlock Classes="settings-section-description"
+                                               Text="Set The Sims 4 Root. Game, Mods, Tray and Saves paths are derived automatically." />
+                                </StackPanel>
+
+                                <Grid Classes="settings-path-grid"
+                                      ColumnDefinitions="220,*,Auto"
+                                      RowDefinitions="Auto,Auto,Auto,Auto,Auto"
+                                      RowSpacing="8"
+                                      ColumnSpacing="8">
+                                    <TextBlock Classes="settings-field-label" Text="The Sims 4 Root" />
+                                    <TextBox Grid.Column="1" Classes="path-field" Text="{Binding Ts4RootPath}" />
+                                    <Button Grid.Column="2"
+                                            Classes="secondary"
+                                            Content="Browse"
+                                            Command="{Binding BrowseTs4RootCommand}" />
+
+                                    <TextBlock Grid.Row="1" Classes="settings-field-label" Text="Game Executable" />
+                                    <Border Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Classes="settings-readonly-field">
+                                        <TextBlock Classes="settings-readonly-value" Text="{Binding GameExecutablePath}" />
+                                    </Border>
+
+                                    <TextBlock Grid.Row="2" Classes="settings-field-label" Text="Mods Path" />
+                                    <Border Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Classes="settings-readonly-field">
+                                        <TextBlock Classes="settings-readonly-value" Text="{Binding ModsPath}" />
+                                    </Border>
+
+                                    <TextBlock Grid.Row="3" Classes="settings-field-label" Text="Tray Path" />
+                                    <Border Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Classes="settings-readonly-field">
+                                        <TextBlock Classes="settings-readonly-value" Text="{Binding TrayPath}" />
+                                    </Border>
+
+                                    <TextBlock Grid.Row="4" Classes="settings-field-label" Text="Saves Path" />
+                                    <Border Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2" Classes="settings-readonly-field">
+                                        <TextBlock Classes="settings-readonly-value" Text="{Binding SavesPath}" />
+                                    </Border>
+                                </Grid>
                             </StackPanel>
+                        </Border>
 
-                            <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="Enable Global Sidebar Shell" />
-                            <CheckBox Grid.Row="1" Grid.Column="1" IsChecked="{Binding EnableGlobalSidebarShell}" />
+                        <Border Classes="settings-section" Padding="12">
+                            <StackPanel Spacing="10">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Classes="settings-section-title" Text="Appearance" />
+                                    <TextBlock Classes="settings-section-description"
+                                               Text="Choose application theme." />
+                                </StackPanel>
 
-                            <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="Enable Structured Results" />
-                            <CheckBox Grid.Row="2" Grid.Column="1" IsChecked="{Binding EnableStructuredResults}" />
-
-                            <TextBlock Grid.Row="3" VerticalAlignment="Center" Text="Enable Inspector Pane" />
-                            <CheckBox Grid.Row="3" Grid.Column="1" IsChecked="{Binding EnableInspectorPane}" />
-
-                            <TextBlock Grid.Row="4" VerticalAlignment="Center" Text="Enable Launch Game" />
-                            <CheckBox Grid.Row="4" Grid.Column="1" IsChecked="{Binding EnableLaunchGame}" />
-
-                            <TextBlock Grid.Row="5" VerticalAlignment="Center" Text="Current Theme" />
-                            <TextBlock Grid.Row="5" Grid.Column="1" VerticalAlignment="Center" Text="{Binding RequestedTheme}" />
-                        </Grid>
+                                <Grid ColumnDefinitions="220,*" RowDefinitions="Auto" RowSpacing="8" ColumnSpacing="8">
+                                    <TextBlock VerticalAlignment="Center" Text="Theme" />
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                        <Button Classes="secondary"
+                                                Classes.sidebar-active="{Binding IsDarkThemeSelected}"
+                                                Content="Dark"
+                                                Command="{Binding SetDarkThemeCommand}" />
+                                        <Button Classes="secondary"
+                                                Classes.sidebar-active="{Binding IsLightThemeSelected}"
+                                                Content="Light"
+                                                Command="{Binding SetLightThemeCommand}" />
+                                    </StackPanel>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </Border>
 
-                <Grid IsVisible="{Binding IsLegacyVisible}" RowDefinitions="*,Auto" RowSpacing="10">
-                    <legacy:LegacyWorkspaceView DataContext="{Binding Legacy}" />
-
-                    <Border Grid.Row="1" Classes="card" Padding="10" IsVisible="{Binding EnableStructuredResults}">
-                        <Grid RowDefinitions="Auto,Auto,*" RowSpacing="8">
-                            <TextBlock Classes="sub-title" Text="Structured Results" />
-
-                            <Grid Grid.Row="1" ColumnDefinitions="*,*,*,*,Auto" ColumnSpacing="8">
-                                <ComboBox ItemsSource="{Binding AvailableTypeFilters}" SelectedItem="{Binding SelectedTypeFilter}" />
-                                <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableStatusFilters}" SelectedItem="{Binding SelectedStatusFilter}" />
-                                <ComboBox Grid.Column="2" ItemsSource="{Binding AvailableDateFilters}" SelectedItem="{Binding SelectedDateFilter}" />
-                                <ComboBox Grid.Column="3" ItemsSource="{Binding AvailableConfidenceFilters}" SelectedItem="{Binding SelectedConfidenceFilter}" />
-                                <Button Grid.Column="4" Classes="secondary" Content="Clear Filters" Command="{Binding ClearFiltersCommand}" />
-                            </Grid>
-
-                            <ListBox Grid.Row="2" ItemsSource="{Binding ResultRows}" SelectedItem="{Binding SelectedResultRow}">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate x:DataType="results:ActionResultRow">
-                                        <Border Classes="card" Margin="0,0,0,6" Padding="8">
-                                            <Grid ColumnDefinitions="2*,Auto,Auto,Auto" ColumnSpacing="8">
-                                                <TextBlock Text="{Binding Name}" />
-                                                <TextBlock Grid.Column="1" Classes="helper-text" Text="{Binding Status}" />
-                                                <TextBlock Grid.Column="2" Classes="helper-text" Text="{Binding Confidence}" />
-                                                <TextBlock Grid.Column="3" Classes="helper-text" Text="{Binding UpdatedLocal}" />
-                                            </Grid>
-                                        </Border>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                        </Grid>
-                    </Border>
+                <Grid IsVisible="{Binding IsWorkspaceSectionVisible}">
+                    <workspace:WorkspaceView DataContext="{Binding WorkspaceVm}" />
                 </Grid>
             </Grid>
 
-            <Border Grid.Row="2" Classes="card" Padding="8">
-                <TextBlock Classes="helper-text" TextWrapping="Wrap" Text="{Binding ShellStatusMessage}" />
-            </Border>
         </Grid>
 
-        <Border Grid.Column="2" Classes="card" Padding="10" IsVisible="{Binding IsInspectorVisible}">
-            <Grid RowDefinitions="Auto,*,Auto" RowSpacing="8" DataContext="{Binding Inspector}">
-                <TextBlock Classes="section-title" Text="Inspector" />
-                <ListBox Grid.Row="1" ItemsSource="{Binding Details}" />
+        <Border Grid.Column="2" Width="340" Classes="inspector-shell" Padding="10" IsVisible="{Binding IsInspectorVisible}">
+            <Grid RowDefinitions="Auto,*,Auto" RowSpacing="10" DataContext="{Binding Inspector}">
+                <Border Classes="inspector-header" Padding="10">
+                    <StackPanel Spacing="2">
+                        <TextBlock Classes="inspector-title" Text="{Binding HeaderTitle}" />
+                        <TextBlock Classes="inspector-subtitle" Text="{Binding HeaderSubtitle}" />
+                    </StackPanel>
+                </Border>
+
+                <Grid Grid.Row="1">
+                    <Border Classes="inspector-empty" IsVisible="{Binding IsEmpty}" Padding="14">
+                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="6">
+                            <TextBlock Classes="inspector-empty-title" Text="No selection" />
+                        </StackPanel>
+                    </Border>
+
+                    <ScrollViewer IsVisible="{Binding HasDetails}">
+                        <ItemsControl ItemsSource="{Binding Details}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Classes="inspector-detail" Margin="0,0,0,8" Padding="10">
+                                        <TextBlock Classes="inspector-detail-text" TextWrapping="Wrap" Text="{Binding .}" />
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </Grid>
+
                 <StackPanel Grid.Row="2" Spacing="8">
-                    <WrapPanel ItemWidth="120" ItemHeight="32">
-                        <Button Classes="secondary" Content="Open Path" Command="{Binding OpenPathCommand}" />
-                        <Button Classes="secondary" Content="Copy Path" Command="{Binding CopyPathCommand}" />
-                        <Button Classes="secondary" Content="Export" Command="{Binding ExportSelectionCommand}" />
-                        <Button Classes="secondary" Content="Related Action" Command="{Binding RunRelatedActionCommand}" />
-                    </WrapPanel>
-                    <TextBlock Classes="helper-text" TextWrapping="Wrap" Text="{Binding Status}" />
+                    <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="8">
+                        <Button Classes="secondary inspector-action" Content="Open Path" Command="{Binding OpenPathCommand}" />
+                        <Button Grid.Column="1" Classes="secondary inspector-action" Content="Copy Path" Command="{Binding CopyPathCommand}" />
+                        <Button Grid.Row="1" Classes="secondary inspector-action" Content="Export" Command="{Binding ExportSelectionCommand}" />
+                        <Button Grid.Row="1" Grid.Column="1" Classes="secondary inspector-action" Content="Related Action" Command="{Binding RunRelatedActionCommand}" />
+                    </Grid>
                 </StackPanel>
             </Grid>
         </Border>
         </Grid>
-
-        <Border Margin="14" Classes="card" Padding="10" IsVisible="{Binding IsLegacyShellMode}">
-            <legacy:LegacyWorkspaceView DataContext="{Binding Legacy}" />
-        </Border>
     </Grid>
 </UserControl>
+

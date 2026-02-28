@@ -71,15 +71,14 @@ public sealed class ExecutionRunnersTests
     }
 
     [Fact]
-    public async Task TrayPreviewRunner_Success_ReturnsDashboardResult()
+    public async Task TrayPreviewRunner_Success_ReturnsPreviewResult()
     {
         var coordinator = new FakeTrayPreviewCoordinator();
         var runner = new TrayPreviewRunner(coordinator);
 
-        var result = await runner.LoadDashboardAsync(new TrayPreviewInput
+        var result = await runner.LoadPreviewAsync(new TrayPreviewInput
         {
             TrayPath = Path.GetTempPath(),
-            MaxFilesPerItem = 12,
             PageSize = 50
         });
 
@@ -147,7 +146,7 @@ public sealed class ExecutionRunnersTests
 
             return Task.FromResult(new TrayPreviewLoadResult
             {
-                Dashboard = new SimsTrayPreviewDashboard(),
+                Summary = new SimsTrayPreviewSummary(),
                 Page = new SimsTrayPreviewPage
                 {
                     PageIndex = 1,
@@ -187,3 +186,4 @@ public sealed class ExecutionRunnersTests
         }
     }
 }
+

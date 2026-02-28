@@ -4,7 +4,7 @@ namespace SimsModDesktop.Services;
 
 public interface ISimsTrayPreviewService
 {
-    Task<SimsTrayPreviewDashboard> BuildDashboardAsync(
+    Task<SimsTrayPreviewSummary> BuildSummaryAsync(
         SimsTrayPreviewRequest request,
         CancellationToken cancellationToken = default);
 
@@ -13,3 +13,4 @@ public interface ISimsTrayPreviewService
         int pageIndex,
         CancellationToken cancellationToken = default);
 }
+

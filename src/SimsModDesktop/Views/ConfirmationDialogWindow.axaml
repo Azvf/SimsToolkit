@@ -22,8 +22,15 @@
             </StackPanel>
 
             <Grid Grid.Row="2" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
-                <TextBlock VerticalAlignment="Center" Classes="helper-text" Text="Please confirm to continue." />
-                <Button Grid.Column="1" Classes="secondary" Content="{Binding CancelText}" Click="CancelButton_OnClick" />
+                <TextBlock VerticalAlignment="Center"
+                           Classes="helper-text"
+                           IsVisible="{Binding ShowCancel}"
+                           Text="Please confirm to continue." />
+                <Button Grid.Column="1"
+                        Classes="secondary"
+                        IsVisible="{Binding ShowCancel}"
+                        Content="{Binding CancelText}"
+                        Click="CancelButton_OnClick" />
                 <Button Grid.Column="2"
                         Classes="primary"
                         Content="{Binding ConfirmText}"

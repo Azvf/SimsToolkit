@@ -6,9 +6,10 @@ namespace SimsModDesktop.ViewModels.Panels;
 public sealed class TrayPreviewPanelViewModel : ObservableObject, ITrayPreviewModuleState
 {
     private string _trayRoot = string.Empty;
-    private string _trayItemKey = string.Empty;
-    private string _topNText = string.Empty;
-    private string _filesPerItemText = "12";
+    private string _presetTypeFilter = "All";
+    private string _authorFilter = string.Empty;
+    private string _timeFilter = "All";
+    private string _searchQuery = string.Empty;
 
     public string TrayRoot
     {
@@ -16,21 +17,27 @@ public sealed class TrayPreviewPanelViewModel : ObservableObject, ITrayPreviewMo
         set => SetProperty(ref _trayRoot, value);
     }
 
-    public string TrayItemKey
+    public string PresetTypeFilter
     {
-        get => _trayItemKey;
-        set => SetProperty(ref _trayItemKey, value);
+        get => _presetTypeFilter;
+        set => SetProperty(ref _presetTypeFilter, value);
     }
 
-    public string TopNText
+    public string AuthorFilter
     {
-        get => _topNText;
-        set => SetProperty(ref _topNText, value);
+        get => _authorFilter;
+        set => SetProperty(ref _authorFilter, value);
     }
 
-    public string FilesPerItemText
+    public string TimeFilter
     {
-        get => _filesPerItemText;
-        set => SetProperty(ref _filesPerItemText, value);
+        get => _timeFilter;
+        set => SetProperty(ref _timeFilter, value);
+    }
+
+    public string SearchQuery
+    {
+        get => _searchQuery;
+        set => SetProperty(ref _searchQuery, value);
     }
 }

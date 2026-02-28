@@ -10,14 +10,6 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         "^0x([0-9a-fA-F]{1,8})!0x([0-9a-fA-F]{1,16})$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-    private static readonly Regex TrayFullKeyRegex = new(
-        "^0x[0-9a-fA-F]{1,8}!0x([0-9a-fA-F]{1,16})$",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
-    private static readonly Regex TrayInstanceRegex = new(
-        "^0x([0-9a-fA-F]{1,16})$",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
     private static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".trayitem",
@@ -30,11 +22,12 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         ".sgi"
     };
 
+    private const int MaxPreviewFileNames = 12;
     private const int MaxCachedSnapshots = 8;
     private readonly object _cacheGate = new();
     private readonly Dictionary<string, CachedSnapshot> _snapshotCache = new(StringComparer.Ordinal);
 
-    public Task<SimsTrayPreviewDashboard> BuildDashboardAsync(
+    public Task<SimsTrayPreviewSummary> BuildSummaryAsync(
         SimsTrayPreviewRequest request,
         CancellationToken cancellationToken = default)
     {
@@ -43,7 +36,7 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         return Task.Run(() =>
         {
             var snapshot = GetOrBuildSnapshot(request, cancellationToken);
-            return snapshot.Dashboard;
+            return snapshot.Summary;
         }, cancellationToken);
     }
 
@@ -131,7 +124,7 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
             .OrderBy(file => file.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var selectedFiles = ResolveSelection(allFiles, request.TrayItemKey);
+        var selectedFiles = allFiles;
         var groups = new Dictionary<string, GroupAccumulator>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var file in selectedFiles)
@@ -160,9 +153,15 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
 
             group.Extensions.Add(file.Extension);
 
-            if (group.FileNames.Count < request.MaxFilesPerItem)
+            if (group.FileNames.Count < MaxPreviewFileNames)
             {
                 group.FileNames.Add(file.Name);
+            }
+
+            if (string.IsNullOrWhiteSpace(group.ItemName) &&
+                string.Equals(file.Extension, ".trayitem", StringComparison.OrdinalIgnoreCase))
+            {
+                group.ItemName = Path.GetFileNameWithoutExtension(file.Name);
             }
         }
 
@@ -178,6 +177,8 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
                 {
                     TrayItemKey = group.Key,
                     PresetType = InferPresetType(orderedExtensions),
+                    ItemName = string.IsNullOrWhiteSpace(group.ItemName) ? group.Key : group.ItemName,
+                    AuthorId = string.Empty,
                     FileCount = group.FileCount,
                     TotalBytes = group.TotalBytes,
                     TotalMB = Math.Round(group.TotalBytes / (1024d * 1024d), 4),
@@ -194,10 +195,10 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
             .ThenByDescending(item => item.TotalBytes)
             .ThenBy(item => item.TrayItemKey, StringComparer.OrdinalIgnoreCase);
 
-        if (request.TopN is int topN && topN > 0)
-        {
-            orderedRows = orderedRows.Take(topN);
-        }
+        orderedRows = ApplyPresetTypeFilter(orderedRows, request.PresetTypeFilter);
+        orderedRows = ApplyAuthorFilter(orderedRows, request.AuthorFilter);
+        orderedRows = ApplyTimeFilter(orderedRows, request.TimeFilter);
+        orderedRows = ApplySearchFilter(orderedRows, request.SearchQuery);
 
         var rows = orderedRows.ToList();
         var totalBytes = rows.Sum(item => item.TotalBytes);
@@ -210,7 +211,7 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
             .Select(group => $"{group.Key}:{group.Count()}")
             .ToList();
 
-        var dashboard = new SimsTrayPreviewDashboard
+        var summary = new SimsTrayPreviewSummary
         {
             TotalItems = rows.Count,
             TotalFiles = rows.Sum(item => item.FileCount),
@@ -224,7 +225,7 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         {
             CacheKey = cacheKey,
             Rows = rows,
-            Dashboard = dashboard,
+            Summary = summary,
             CachedAtUtc = DateTime.UtcNow
         };
     }
@@ -232,76 +233,12 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
     private static string BuildCacheKey(SimsTrayPreviewRequest request)
     {
         var normalizedTrayPath = Path.GetFullPath(request.TrayPath.Trim()).TrimEnd(Path.DirectorySeparatorChar).ToLowerInvariant();
-        var normalizedKey = request.TrayItemKey.Trim().ToLowerInvariant();
-        var normalizedTopN = request.TopN?.ToString(CultureInfo.InvariantCulture) ?? "all";
-        var normalizedFilesPerItem = request.MaxFilesPerItem.ToString(CultureInfo.InvariantCulture);
+        var normalizedPresetTypeFilter = NormalizeFilterToken(request.PresetTypeFilter);
+        var normalizedAuthorFilter = NormalizeFilterToken(request.AuthorFilter);
+        var normalizedTimeFilter = NormalizeFilterToken(request.TimeFilter);
+        var normalizedSearchQuery = NormalizeFilterToken(request.SearchQuery);
 
-        return string.Join("|", normalizedTrayPath, normalizedKey, normalizedTopN, normalizedFilesPerItem);
-    }
-
-    private static List<FileInfo> ResolveSelection(IReadOnlyList<FileInfo> files, string? trayItemKeyRaw)
-    {
-        if (string.IsNullOrWhiteSpace(trayItemKeyRaw))
-        {
-            return files.ToList();
-        }
-
-        var trimmed = trayItemKeyRaw.Trim();
-        var instanceHex = string.Empty;
-
-        var fullMatch = TrayFullKeyRegex.Match(trimmed);
-        if (fullMatch.Success)
-        {
-            instanceHex = NormalizeInstanceHex("0x" + fullMatch.Groups[1].Value);
-        }
-        else
-        {
-            instanceHex = NormalizeInstanceHex(trimmed);
-        }
-
-        if (!string.IsNullOrWhiteSpace(instanceHex))
-        {
-            var byInstance = files
-                .Where(file =>
-                {
-                    var identity = ParseIdentity(file.Name);
-                    return identity.ParseSuccess &&
-                           identity.InstanceHex.Equals(instanceHex, StringComparison.OrdinalIgnoreCase);
-                })
-                .ToList();
-
-            var byBaseName = files
-                .Where(file =>
-                    Path.GetFileNameWithoutExtension(file.Name)
-                        .Equals(trimmed, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-
-            return byInstance
-                .Concat(byBaseName)
-                .GroupBy(file => file.FullName, StringComparer.OrdinalIgnoreCase)
-                .Select(group => group.First())
-                .OrderBy(file => file.Name, StringComparer.OrdinalIgnoreCase)
-                .ToList();
-        }
-
-        return files
-            .Where(file =>
-                Path.GetFileNameWithoutExtension(file.Name)
-                    .Equals(trimmed, StringComparison.OrdinalIgnoreCase))
-            .OrderBy(file => file.Name, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-    }
-
-    private static string NormalizeInstanceHex(string value)
-    {
-        var match = TrayInstanceRegex.Match(value.Trim());
-        if (!match.Success)
-        {
-            return string.Empty;
-        }
-
-        var numeric = ulong.Parse(match.Groups[1].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture);
-        return $"0x{numeric:x16}";
+        return string.Join("|", normalizedTrayPath, request.PageSize, normalizedPresetTypeFilter, normalizedAuthorFilter, normalizedTimeFilter, normalizedSearchQuery);
     }
 
     private static TrayIdentity ParseIdentity(string fileName)
@@ -367,11 +304,124 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         return "Unknown";
     }
 
+    private static IEnumerable<SimsTrayPreviewItem> ApplyPresetTypeFilter(
+        IEnumerable<SimsTrayPreviewItem> rows,
+        string? presetTypeFilter)
+    {
+        if (string.IsNullOrWhiteSpace(presetTypeFilter) ||
+            string.Equals(presetTypeFilter, "All", StringComparison.OrdinalIgnoreCase))
+        {
+            return rows;
+        }
+
+        var normalized = presetTypeFilter.Trim();
+        return rows.Where(item => item.PresetType.Equals(normalized, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static IEnumerable<SimsTrayPreviewItem> ApplyAuthorFilter(
+        IEnumerable<SimsTrayPreviewItem> rows,
+        string? authorFilter)
+    {
+        if (string.IsNullOrWhiteSpace(authorFilter) ||
+            string.Equals(authorFilter, "All", StringComparison.OrdinalIgnoreCase))
+        {
+            return rows;
+        }
+
+        var needle = authorFilter.Trim();
+        if (string.IsNullOrWhiteSpace(needle))
+        {
+            return rows;
+        }
+
+        return rows.Where(item =>
+            item.AuthorId.Contains(needle, StringComparison.OrdinalIgnoreCase) ||
+            item.TrayItemKey.Contains(needle, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static IEnumerable<SimsTrayPreviewItem> ApplyTimeFilter(
+        IEnumerable<SimsTrayPreviewItem> rows,
+        string? timeFilter)
+    {
+        if (string.IsNullOrWhiteSpace(timeFilter) ||
+            string.Equals(timeFilter, "All", StringComparison.OrdinalIgnoreCase))
+        {
+            return rows;
+        }
+
+        var now = DateTime.Now;
+        DateTime minDate;
+        if (string.Equals(timeFilter, "Last24h", StringComparison.OrdinalIgnoreCase))
+        {
+            minDate = now.AddHours(-24);
+        }
+        else if (string.Equals(timeFilter, "Last7d", StringComparison.OrdinalIgnoreCase))
+        {
+            minDate = now.AddDays(-7);
+        }
+        else if (string.Equals(timeFilter, "Last30d", StringComparison.OrdinalIgnoreCase))
+        {
+            minDate = now.AddDays(-30);
+        }
+        else if (string.Equals(timeFilter, "Last90d", StringComparison.OrdinalIgnoreCase))
+        {
+            minDate = now.AddDays(-90);
+        }
+        else
+        {
+            return rows;
+        }
+
+        return rows.Where(item => item.LatestWriteTimeLocal != DateTime.MinValue && item.LatestWriteTimeLocal >= minDate);
+    }
+
+    private static IEnumerable<SimsTrayPreviewItem> ApplySearchFilter(
+        IEnumerable<SimsTrayPreviewItem> rows,
+        string? searchQuery)
+    {
+        if (string.IsNullOrWhiteSpace(searchQuery))
+        {
+            return rows;
+        }
+
+        var needle = NormalizeSearch(searchQuery);
+        if (needle.Length == 0)
+        {
+            return rows;
+        }
+
+        return rows.Where(item =>
+            NormalizeSearch(item.ItemName).Contains(needle, StringComparison.Ordinal) ||
+            NormalizeSearch(item.AuthorId).Contains(needle, StringComparison.Ordinal) ||
+            NormalizeSearch(item.TrayItemKey).Contains(needle, StringComparison.Ordinal));
+    }
+
+    private static string NormalizeSearch(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        return new string(value
+            .Trim()
+            .ToLowerInvariant()
+            .Where(c => !char.IsWhiteSpace(c))
+            .ToArray());
+    }
+
+    private static string NormalizeFilterToken(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? "all"
+            : value.Trim().ToLowerInvariant();
+    }
+
     private sealed class CachedSnapshot
     {
         public required string CacheKey { get; init; }
         public required IReadOnlyList<SimsTrayPreviewItem> Rows { get; init; }
-        public required SimsTrayPreviewDashboard Dashboard { get; init; }
+        public required SimsTrayPreviewSummary Summary { get; init; }
         public required DateTime CachedAtUtc { get; init; }
     }
 
@@ -383,6 +433,7 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         }
 
         public string Key { get; }
+        public string ItemName { get; set; } = string.Empty;
         public int FileCount { get; set; }
         public long TotalBytes { get; set; }
         public DateTime LatestWriteTimeUtc { get; set; } = DateTime.MinValue;
@@ -398,3 +449,4 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         public string InstanceHex { get; init; } = string.Empty;
     }
 }
+

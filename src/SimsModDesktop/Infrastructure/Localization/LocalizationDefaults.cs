@@ -7,6 +7,7 @@ internal static class LocalizationDefaults
         {
             ["status.ready"] = "Ready.",
             ["status.scriptNotFound"] = "Script not found: {0}",
+            ["status.validationFailed"] = "Validation failed.",
             ["validation.notStarted"] = "Validation has not started yet.",
             ["validation.failed"] = "Validation failed: {0}",
             ["validation.okToolkit"] = "Validation passed: {0} parameters are valid.",
@@ -20,7 +21,7 @@ internal static class LocalizationDefaults
             ["status.executionCancelled"] = "Execution cancelled.",
             ["status.executionFailed"] = "Execution failed.",
             ["status.unknownExecutionError"] = "Unknown execution error.",
-            ["status.trayPreviewLoading"] = "Loading tray preview dashboard...",
+            ["status.trayPreviewLoading"] = "Loading tray preview...",
             ["status.trayPreviewLoaded"] = "Tray preview loaded: {0} items, page 1/{1}, {2}.",
             ["status.trayPreviewCancelled"] = "Tray preview cancelled.",
             ["status.trayPreviewFailed"] = "Tray preview failed.",
@@ -38,15 +39,15 @@ internal static class LocalizationDefaults
             ["progress.failed"] = "Failed.",
             ["progress.cancelled"] = "Cancelled.",
             ["progress.executionFailed"] = "Execution failed.",
-            ["progress.trayLoaded"] = "Tray preview dashboard loaded.",
+            ["progress.trayLoaded"] = "Tray preview loaded.",
             ["progress.trayFailed"] = "Tray preview failed.",
-            ["progress.loadingTray"] = "Loading tray preview dashboard...",
+            ["progress.loadingTray"] = "Loading tray preview...",
             ["preview.noneLoaded"] = "No preview data loaded.",
             ["preview.page"] = "Page {0}/{1}",
             ["preview.lazyCache"] = "Lazy cache {0}/{1} pages",
             ["preview.typeNa"] = "Type: n/a",
             ["preview.type"] = "Type: {0}",
-            ["preview.dashboardReady"] = "Dashboard ready. {0}",
+            ["preview.summaryReady"] = "Preview ready. {0}",
             ["preview.range"] = "Showing {0}-{1} / {2} tray presets.",
             ["dialog.danger.title"] = "Confirm Dangerous Action",
             ["dialog.danger.message"] = "You are about to run FindDuplicates cleanup mode; duplicate files will be deleted (first path kept).",
@@ -54,6 +55,9 @@ internal static class LocalizationDefaults
             ["dialog.danger.cancel"] = "Cancel",
             ["dialog.danger.note"] = "This action may delete files and cannot be undone.",
             ["dialog.confirm.continue"] = "Please confirm to continue.",
+            ["dialog.error.title"] = "Operation Failed",
+            ["dialog.error.confirm"] = "OK",
+            ["dialog.error.checkLog"] = "See logs for details.",
             ["ui.settings.title"] = "Option Settings",
             ["ui.settings.section.lowFrequency"] = "Low-frequency Advanced Tuning",
             ["ui.settings.section.lowFrequencyHint"] = "High-frequency options are now shown on each feature page; only low-frequency tuning stays here.",
@@ -64,3 +68,4 @@ internal static class LocalizationDefaults
             ["ui.settings.performance.hint"] = "Adjust these only for large directories or performance tuning scenarios."
         };
 }
+

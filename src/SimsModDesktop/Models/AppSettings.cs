@@ -58,10 +58,7 @@ public sealed class AppSettings
 
     public sealed class TrayDependenciesSettings
     {
-        public string TrayPath { get; set; } = string.Empty;
-        public string ModsPath { get; set; } = string.Empty;
         public string TrayItemKey { get; set; } = string.Empty;
-        public string AnalysisMode { get; set; } = "StrictS4TI";
         public string S4tiPath { get; set; } = string.Empty;
         public string MinMatchCountText { get; set; } = "1";
         public string TopNText { get; set; } = "200";
@@ -76,10 +73,10 @@ public sealed class AppSettings
 
     public sealed class TrayPreviewSettings
     {
-        public string TrayRoot { get; set; } = string.Empty;
-        public string TrayItemKey { get; set; } = string.Empty;
-        public string TopNText { get; set; } = string.Empty;
-        public string FilesPerItemText { get; set; } = "12";
+        public string PresetTypeFilter { get; set; } = "All";
+        public string AuthorFilter { get; set; } = string.Empty;
+        public string TimeFilter { get; set; } = "All";
+        public string SearchQuery { get; set; } = string.Empty;
     }
 
     public sealed class SharedFileOpsSettings
@@ -97,7 +94,6 @@ public sealed class AppSettings
         public bool ToolkitLogDrawerOpen { get; set; }
         public bool TrayPreviewLogDrawerOpen { get; set; }
         public bool ToolkitAdvancedOpen { get; set; }
-        public bool TrayPreviewAdvancedOpen { get; set; }
     }
 
     public sealed class NavigationSettings
@@ -108,7 +104,6 @@ public sealed class AppSettings
 
     public sealed class FeatureFlagsSettings
     {
-        public bool EnableGlobalSidebarShell { get; set; } = true;
         public bool EnableStructuredResults { get; set; } = true;
         public bool EnableInspectorPane { get; set; } = true;
         public bool EnableLaunchGame { get; set; } = true;
@@ -116,6 +111,7 @@ public sealed class AppSettings
 
     public sealed class GameLaunchSettings
     {
+        public string Ts4RootPath { get; set; } = string.Empty;
         public string GameExecutablePath { get; set; } = string.Empty;
         public string ModsPath { get; set; } = string.Empty;
         public string TrayPath { get; set; } = string.Empty;

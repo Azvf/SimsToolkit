@@ -1,6 +1,6 @@
 namespace SimsModDesktop.Models;
 
-public sealed class SimsTrayPreviewDashboard
+public sealed class SimsTrayPreviewSummary
 {
     public int TotalItems { get; init; }
     public int TotalFiles { get; init; }
@@ -9,3 +9,4 @@ public sealed class SimsTrayPreviewDashboard
     public DateTime LatestWriteTimeLocal { get; init; }
     public string PresetTypeBreakdown { get; init; } = string.Empty;
 }
+

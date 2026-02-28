@@ -18,7 +18,7 @@ public sealed class TrayDependenciesCliArgumentMapper : IActionCliArgumentMapper
         CliArgumentWriter.AddString(args, "-TrayPath", trayDependencies.TrayPath);
         CliArgumentWriter.AddString(args, "-ModsPath", trayDependencies.ModsPath);
         CliArgumentWriter.AddString(args, "-TrayItemKey", trayDependencies.TrayItemKey);
-        CliArgumentWriter.AddString(args, "-AnalysisMode", trayDependencies.AnalysisMode);
+        CliArgumentWriter.AddString(args, "-AnalysisMode", "StrictS4TI");
         CliArgumentWriter.AddString(args, "-S4tiPath", trayDependencies.S4tiPath);
         CliArgumentWriter.AddInt(args, "-MinMatchCount", trayDependencies.MinMatchCount);
         CliArgumentWriter.AddInt(args, "-TopN", trayDependencies.TopN);

@@ -28,6 +28,27 @@ public sealed class AvaloniaFileDialogService : IFileDialogService
             .ToList();
     }
 
+    public async Task<string?> PickFilePathAsync(string title, string fileTypeName, IReadOnlyList<string> patterns)
+    {
+        var storageProvider = GetStorageProviderOrThrow();
+        var files = await storageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = title,
+            AllowMultiple = false,
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType(string.IsNullOrWhiteSpace(fileTypeName) ? "Files" : fileTypeName)
+                {
+                    Patterns = patterns is { Count: > 0 } ? patterns : new[] { "*.*" }
+                }
+            }
+        });
+
+        return files
+            .Select(file => file.TryGetLocalPath())
+            .FirstOrDefault(path => !string.IsNullOrWhiteSpace(path));
+    }
+
     public async Task<string?> PickCsvSavePathAsync(string title, string suggestedFileName)
     {
         var storageProvider = GetStorageProviderOrThrow();

@@ -2,7 +2,6 @@ using Microsoft.Extensions.DependencyInjection;
 using SimsModDesktop.Application.Cli;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Modules;
-using SimsModDesktop.Application.Results;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Application.TrayPreview;
@@ -72,11 +71,6 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<IToolkitExecutionRunner, ToolkitExecutionRunner>();
         services.AddSingleton<ITrayPreviewRunner, TrayPreviewRunner>();
 
-        services.AddSingleton<IExecutionOutputParser, TrayPreviewOutputParser>();
-        services.AddSingleton<IExecutionOutputParser, TrayDependenciesOutputParser>();
-        services.AddSingleton<IExecutionOutputParser, FindDupOutputParser>();
-        services.AddSingleton<IExecutionOutputParserRegistry, ExecutionOutputParserRegistry>();
-        services.AddSingleton<IActionResultRepository, ActionResultRepository>();
         return services;
     }
 

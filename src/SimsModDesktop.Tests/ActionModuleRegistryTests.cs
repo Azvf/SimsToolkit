@@ -89,6 +89,77 @@ public sealed class ActionModuleRegistryTests
         Assert.Contains("non-empty ModuleKey", ex.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void TrayPreviewModule_SupportedPatchKeys_DoNotContainPathOverride()
+    {
+        var panel = new TrayPreviewPanelState
+        {
+            TrayRoot = @"D:\Tray"
+        };
+        var module = new TrayPreviewActionModule(panel);
+
+        Assert.DoesNotContain("trayPath", module.SupportedActionPatchKeys, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TrayPreviewModule_ApplyPatch_IgnoresTrayPathOverride()
+    {
+        var panel = new TrayPreviewPanelState
+        {
+            TrayRoot = @"D:\Tray"
+        };
+        var module = new TrayPreviewActionModule(panel);
+        var patch = new JsonObject
+        {
+            ["trayPath"] = @"E:\HijackTray",
+            ["authorFilter"] = "alice"
+        };
+
+        var ok = module.TryApplyActionPatch(patch, out var error);
+
+        Assert.True(ok, error);
+        Assert.Equal(@"D:\Tray", panel.TrayRoot);
+        Assert.Equal("alice", panel.AuthorFilter);
+    }
+
+    [Fact]
+    public void TrayDependenciesModule_SupportedPatchKeys_DoNotContainPathOverride()
+    {
+        var panel = new TrayDependenciesPanelState
+        {
+            TrayPath = @"D:\Tray",
+            ModsPath = @"D:\Mods"
+        };
+        var module = new TrayDependenciesActionModule(panel);
+
+        Assert.DoesNotContain("trayPath", module.SupportedActionPatchKeys, StringComparer.OrdinalIgnoreCase);
+        Assert.DoesNotContain("modsPath", module.SupportedActionPatchKeys, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TrayDependenciesModule_ApplyPatch_IgnoresPathOverride()
+    {
+        var panel = new TrayDependenciesPanelState
+        {
+            TrayPath = @"D:\Tray",
+            ModsPath = @"D:\Mods"
+        };
+        var module = new TrayDependenciesActionModule(panel);
+        var patch = new JsonObject
+        {
+            ["trayPath"] = @"E:\HijackTray",
+            ["modsPath"] = @"E:\HijackMods",
+            ["trayItemKey"] = "0x1"
+        };
+
+        var ok = module.TryApplyActionPatch(patch, out var error);
+
+        Assert.True(ok, error);
+        Assert.Equal(@"D:\Tray", panel.TrayPath);
+        Assert.Equal(@"D:\Mods", panel.ModsPath);
+        Assert.Equal("0x1", panel.TrayItemKey);
+    }
+
     private sealed class FakeModule : IActionModule
     {
         public FakeModule(SimsAction action, string moduleKey)
@@ -167,5 +238,31 @@ public sealed class ActionModuleRegistryTests
             _sourcePaths.Clear();
             _sourcePaths.AddRange(sourcePaths);
         }
+    }
+
+    private sealed class TrayPreviewPanelState : ITrayPreviewModuleState
+    {
+        public string TrayRoot { get; set; } = string.Empty;
+        public string PresetTypeFilter { get; set; } = "All";
+        public string AuthorFilter { get; set; } = string.Empty;
+        public string TimeFilter { get; set; } = "All";
+        public string SearchQuery { get; set; } = string.Empty;
+    }
+
+    private sealed class TrayDependenciesPanelState : ITrayDependenciesModuleState
+    {
+        public string TrayPath { get; set; } = string.Empty;
+        public string ModsPath { get; set; } = string.Empty;
+        public string TrayItemKey { get; set; } = string.Empty;
+        public string S4tiPath { get; set; } = string.Empty;
+        public string MinMatchCountText { get; set; } = "1";
+        public string TopNText { get; set; } = "200";
+        public string MaxPackageCountText { get; set; } = "0";
+        public bool ExportUnusedPackages { get; set; }
+        public bool ExportMatchedPackages { get; set; }
+        public string OutputCsv { get; set; } = string.Empty;
+        public string UnusedOutputCsv { get; set; } = string.Empty;
+        public string ExportTargetPath { get; set; } = string.Empty;
+        public string ExportMinConfidence { get; set; } = "Low";
     }
 }
