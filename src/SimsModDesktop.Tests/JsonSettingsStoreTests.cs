@@ -35,4 +35,29 @@ public sealed class JsonSettingsStoreTests
             tempDir.Delete(recursive: true);
         }
     }
+
+    [Fact]
+    public async Task SaveAsync_DoesNotLeaveTempFiles()
+    {
+        var tempDir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")));
+        var path = Path.Combine(tempDir.FullName, "settings.json");
+
+        try
+        {
+            var store = new JsonSettingsStore(path);
+
+            await store.SaveAsync(new AppSettings { ScriptPath = "C:\\tools\\a.ps1" });
+            await store.SaveAsync(new AppSettings { ScriptPath = "C:\\tools\\b.ps1" });
+
+            var leftovers = Directory
+                .GetFiles(tempDir.FullName, "settings.json.*.tmp", SearchOption.TopDirectoryOnly);
+
+            Assert.True(File.Exists(path));
+            Assert.Empty(leftovers);
+        }
+        finally
+        {
+            tempDir.Delete(recursive: true);
+        }
+    }
 }

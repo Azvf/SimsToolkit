@@ -2,15 +2,22 @@ using System.Text.Json.Nodes;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Validation;
 using SimsModDesktop.Models;
-using SimsModDesktop.ViewModels.Panels;
 
 namespace SimsModDesktop.Application.Modules;
 
 public sealed class TrayPreviewActionModule : IActionModule
 {
-    private readonly TrayPreviewPanelViewModel _panel;
+    private static readonly IReadOnlyList<string> ActionPatchKeys =
+    [
+        "trayPath",
+        "trayItemKey",
+        "topN",
+        "maxFilesPerItem"
+    ];
 
-    public TrayPreviewActionModule(TrayPreviewPanelViewModel panel)
+    private readonly ITrayPreviewModuleState _panel;
+
+    public TrayPreviewActionModule(ITrayPreviewModuleState panel)
     {
         _panel = panel;
     }
@@ -19,6 +26,7 @@ public sealed class TrayPreviewActionModule : IActionModule
     public string ModuleKey => "traypreview";
     public string DisplayName => "Tray Preview";
     public bool UsesSharedFileOps => false;
+    public IReadOnlyCollection<string> SupportedActionPatchKeys => ActionPatchKeys;
 
     public void LoadFromSettings(AppSettings settings)
     {

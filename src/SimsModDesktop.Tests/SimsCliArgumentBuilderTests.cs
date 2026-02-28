@@ -45,6 +45,28 @@ public sealed class SimsCliArgumentBuilderTests
         Assert.Contains("-WhatIf", command.Arguments);
     }
 
+    [Fact]
+    public void Constructor_NoMappers_ThrowsClearError()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            new SimsCliArgumentBuilder(Array.Empty<IActionCliArgumentMapper>()));
+
+        Assert.Contains("No CLI argument mappers were registered", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Constructor_DuplicateMappers_ThrowsClearError()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            new SimsCliArgumentBuilder(new IActionCliArgumentMapper[]
+            {
+                new OrganizeCliArgumentMapper(),
+                new OrganizeCliArgumentMapper()
+            }));
+
+        Assert.Contains("Duplicate CLI mappers were registered", ex.Message, StringComparison.Ordinal);
+    }
+
     private static SimsCliArgumentBuilder CreateBuilder()
     {
         return new SimsCliArgumentBuilder(new IActionCliArgumentMapper[]

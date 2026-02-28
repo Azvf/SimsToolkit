@@ -1,8 +1,9 @@
+using SimsModDesktop.Application.Modules;
 using SimsModDesktop.ViewModels.Infrastructure;
 
 namespace SimsModDesktop.ViewModels.Panels;
 
-public sealed class NormalizePanelViewModel : ObservableObject
+public sealed class NormalizePanelViewModel : ObservableObject, INormalizeModuleState
 {
     private string _rootPath = string.Empty;
 

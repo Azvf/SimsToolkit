@@ -13,8 +13,29 @@ public sealed class ExecutionCoordinator : IExecutionCoordinator
         ISimsPowerShellRunner runner,
         IEnumerable<IActionExecutionStrategy> strategies)
     {
+        ArgumentNullException.ThrowIfNull(runner);
+        ArgumentNullException.ThrowIfNull(strategies);
+
+        var allStrategies = strategies.ToList();
+        if (allStrategies.Count == 0)
+        {
+            throw new InvalidOperationException("No execution strategies were registered.");
+        }
+
+        var duplicateActions = allStrategies
+            .GroupBy(strategy => strategy.Action)
+            .Where(group => group.Count() > 1)
+            .Select(group => group.Key.ToString())
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        if (duplicateActions.Length > 0)
+        {
+            throw new InvalidOperationException(
+                "Duplicate execution strategies were registered: " + string.Join(", ", duplicateActions));
+        }
+
         _runner = runner;
-        _strategies = strategies.ToDictionary(strategy => strategy.Action);
+        _strategies = allStrategies.ToDictionary(strategy => strategy.Action);
     }
 
     public async Task<SimsExecutionResult> ExecuteAsync(

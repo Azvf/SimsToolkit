@@ -1,15 +1,20 @@
 using System.Text.Json.Nodes;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Models;
-using SimsModDesktop.ViewModels.Panels;
 
 namespace SimsModDesktop.Application.Modules;
 
 public sealed class FlattenActionModule : IActionModule
 {
-    private readonly FlattenPanelViewModel _panel;
+    private static readonly IReadOnlyList<string> ActionPatchKeys =
+    [
+        "rootPath",
+        "flattenToRoot"
+    ];
 
-    public FlattenActionModule(FlattenPanelViewModel panel)
+    private readonly IFlattenModuleState _panel;
+
+    public FlattenActionModule(IFlattenModuleState panel)
     {
         _panel = panel;
     }
@@ -18,6 +23,7 @@ public sealed class FlattenActionModule : IActionModule
     public string ModuleKey => "flatten";
     public string DisplayName => "Flatten";
     public bool UsesSharedFileOps => true;
+    public IReadOnlyCollection<string> SupportedActionPatchKeys => ActionPatchKeys;
 
     public void LoadFromSettings(AppSettings settings)
     {

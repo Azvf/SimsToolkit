@@ -1,8 +1,9 @@
+using SimsModDesktop.Application.Modules;
 using SimsModDesktop.ViewModels.Infrastructure;
 
 namespace SimsModDesktop.ViewModels.Panels;
 
-public sealed class OrganizePanelViewModel : ObservableObject
+public sealed class OrganizePanelViewModel : ObservableObject, IOrganizeModuleState
 {
     private string _sourceDir = string.Empty;
     private string _zipNamePattern = "*";

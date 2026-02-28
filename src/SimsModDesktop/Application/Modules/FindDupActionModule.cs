@@ -1,15 +1,22 @@
 using System.Text.Json.Nodes;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Models;
-using SimsModDesktop.ViewModels.Panels;
 
 namespace SimsModDesktop.Application.Modules;
 
 public sealed class FindDupActionModule : IActionModule
 {
-    private readonly FindDupPanelViewModel _panel;
+    private static readonly IReadOnlyList<string> ActionPatchKeys =
+    [
+        "rootPath",
+        "outputCsv",
+        "recurse",
+        "cleanup"
+    ];
 
-    public FindDupActionModule(FindDupPanelViewModel panel)
+    private readonly IFindDupModuleState _panel;
+
+    public FindDupActionModule(IFindDupModuleState panel)
     {
         _panel = panel;
     }
@@ -18,6 +25,7 @@ public sealed class FindDupActionModule : IActionModule
     public string ModuleKey => "finddup";
     public string DisplayName => "FindDuplicates";
     public bool UsesSharedFileOps => true;
+    public IReadOnlyCollection<string> SupportedActionPatchKeys => ActionPatchKeys;
 
     public void LoadFromSettings(AppSettings settings)
     {

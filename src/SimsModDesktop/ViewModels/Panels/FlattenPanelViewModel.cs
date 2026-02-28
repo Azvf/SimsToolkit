@@ -1,8 +1,9 @@
+using SimsModDesktop.Application.Modules;
 using SimsModDesktop.ViewModels.Infrastructure;
 
 namespace SimsModDesktop.ViewModels.Panels;
 
-public sealed class FlattenPanelViewModel : ObservableObject
+public sealed class FlattenPanelViewModel : ObservableObject, IFlattenModuleState
 {
     private string _rootPath = string.Empty;
     private bool _flattenToRoot;

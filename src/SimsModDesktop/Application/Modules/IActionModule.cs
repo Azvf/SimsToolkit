@@ -9,6 +9,7 @@ public interface IActionModule
     string ModuleKey { get; }
     string DisplayName { get; }
     bool UsesSharedFileOps { get; }
+    IReadOnlyCollection<string> SupportedActionPatchKeys { get; }
 
     void LoadFromSettings(AppSettings settings);
     void SaveToSettings(AppSettings settings);

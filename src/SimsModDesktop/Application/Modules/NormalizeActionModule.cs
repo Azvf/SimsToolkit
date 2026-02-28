@@ -1,15 +1,19 @@
 using System.Text.Json.Nodes;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Models;
-using SimsModDesktop.ViewModels.Panels;
 
 namespace SimsModDesktop.Application.Modules;
 
 public sealed class NormalizeActionModule : IActionModule
 {
-    private readonly NormalizePanelViewModel _panel;
+    private static readonly IReadOnlyList<string> ActionPatchKeys =
+    [
+        "rootPath"
+    ];
 
-    public NormalizeActionModule(NormalizePanelViewModel panel)
+    private readonly INormalizeModuleState _panel;
+
+    public NormalizeActionModule(INormalizeModuleState panel)
     {
         _panel = panel;
     }
@@ -18,6 +22,7 @@ public sealed class NormalizeActionModule : IActionModule
     public string ModuleKey => "normalize";
     public string DisplayName => "Normalize";
     public bool UsesSharedFileOps => false;
+    public IReadOnlyCollection<string> SupportedActionPatchKeys => ActionPatchKeys;
 
     public void LoadFromSettings(AppSettings settings)
     {

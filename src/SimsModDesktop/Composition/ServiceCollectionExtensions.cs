@@ -2,8 +2,8 @@ using Microsoft.Extensions.DependencyInjection;
 using SimsModDesktop.Application.Cli;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Modules;
-using SimsModDesktop.Application.Presets;
 using SimsModDesktop.Application.Requests;
+using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Application.Validation;
 using SimsModDesktop.Infrastructure.Dialogs;
@@ -25,10 +25,10 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<IFileDialogService, AvaloniaFileDialogService>();
         services.AddSingleton<IConfirmationDialogService, AvaloniaConfirmationDialogService>();
         services.AddSingleton<ISettingsStore, JsonSettingsStore>();
+        services.AddSingleton<IMainWindowSettingsProjection, MainWindowSettingsProjection>();
 
         services.AddSingleton<ISimsPowerShellRunner, SimsPowerShellRunner>();
         services.AddSingleton<ISimsTrayPreviewService, SimsTrayPreviewService>();
-        services.AddSingleton<IQuickPresetCatalog, QuickPresetCatalog>();
         return services;
     }
 
@@ -60,6 +60,9 @@ internal static class ServiceCollectionExtensions
 
         services.AddSingleton<IExecutionCoordinator, ExecutionCoordinator>();
         services.AddSingleton<ITrayPreviewCoordinator, TrayPreviewCoordinator>();
+        services.AddSingleton<IMainWindowPlanBuilder, MainWindowPlanBuilder>();
+        services.AddSingleton<IToolkitExecutionRunner, ToolkitExecutionRunner>();
+        services.AddSingleton<ITrayPreviewRunner, TrayPreviewRunner>();
         return services;
     }
 
@@ -74,16 +77,23 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<TrayPreviewPanelViewModel>();
         services.AddSingleton<SharedFileOpsPanelViewModel>();
 
-        services.AddSingleton<IActionModule>(sp => new OrganizeActionModule(sp.GetRequiredService<OrganizePanelViewModel>()));
-        services.AddSingleton<IActionModule>(sp => new FlattenActionModule(sp.GetRequiredService<FlattenPanelViewModel>()));
-        services.AddSingleton<IActionModule>(sp => new NormalizeActionModule(sp.GetRequiredService<NormalizePanelViewModel>()));
-        services.AddSingleton<IActionModule>(sp => new MergeActionModule(sp.GetRequiredService<MergePanelViewModel>()));
-        services.AddSingleton<IActionModule>(sp => new FindDupActionModule(sp.GetRequiredService<FindDupPanelViewModel>()));
-        services.AddSingleton<IActionModule>(sp => new TrayDependenciesActionModule(sp.GetRequiredService<TrayDependenciesPanelViewModel>()));
-        services.AddSingleton<IActionModule>(sp => new TrayPreviewActionModule(sp.GetRequiredService<TrayPreviewPanelViewModel>()));
+        services.AddSingleton<IOrganizeModuleState>(sp => sp.GetRequiredService<OrganizePanelViewModel>());
+        services.AddSingleton<IFlattenModuleState>(sp => sp.GetRequiredService<FlattenPanelViewModel>());
+        services.AddSingleton<INormalizeModuleState>(sp => sp.GetRequiredService<NormalizePanelViewModel>());
+        services.AddSingleton<IMergeModuleState>(sp => sp.GetRequiredService<MergePanelViewModel>());
+        services.AddSingleton<IFindDupModuleState>(sp => sp.GetRequiredService<FindDupPanelViewModel>());
+        services.AddSingleton<ITrayDependenciesModuleState>(sp => sp.GetRequiredService<TrayDependenciesPanelViewModel>());
+        services.AddSingleton<ITrayPreviewModuleState>(sp => sp.GetRequiredService<TrayPreviewPanelViewModel>());
+
+        services.AddSingleton<IActionModule>(sp => new OrganizeActionModule(sp.GetRequiredService<IOrganizeModuleState>()));
+        services.AddSingleton<IActionModule>(sp => new FlattenActionModule(sp.GetRequiredService<IFlattenModuleState>()));
+        services.AddSingleton<IActionModule>(sp => new NormalizeActionModule(sp.GetRequiredService<INormalizeModuleState>()));
+        services.AddSingleton<IActionModule>(sp => new MergeActionModule(sp.GetRequiredService<IMergeModuleState>()));
+        services.AddSingleton<IActionModule>(sp => new FindDupActionModule(sp.GetRequiredService<IFindDupModuleState>()));
+        services.AddSingleton<IActionModule>(sp => new TrayDependenciesActionModule(sp.GetRequiredService<ITrayDependenciesModuleState>()));
+        services.AddSingleton<IActionModule>(sp => new TrayPreviewActionModule(sp.GetRequiredService<ITrayPreviewModuleState>()));
 
         services.AddSingleton<IActionModuleRegistry>(sp => new ActionModuleRegistry(sp.GetServices<IActionModule>()));
-        services.AddSingleton<IQuickPresetApplier, QuickPresetApplier>();
         return services;
     }
 

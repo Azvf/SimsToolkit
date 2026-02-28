@@ -1,15 +1,24 @@
 using System.Text.Json.Nodes;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Models;
-using SimsModDesktop.ViewModels.Panels;
 
 namespace SimsModDesktop.Application.Modules;
 
 public sealed class OrganizeActionModule : IActionModule
 {
-    private readonly OrganizePanelViewModel _panel;
+    private static readonly IReadOnlyList<string> ActionPatchKeys =
+    [
+        "sourceDir",
+        "zipNamePattern",
+        "modsRoot",
+        "unifiedModsFolder",
+        "trayRoot",
+        "keepZip"
+    ];
 
-    public OrganizeActionModule(OrganizePanelViewModel panel)
+    private readonly IOrganizeModuleState _panel;
+
+    public OrganizeActionModule(IOrganizeModuleState panel)
     {
         _panel = panel;
     }
@@ -18,6 +27,7 @@ public sealed class OrganizeActionModule : IActionModule
     public string ModuleKey => "organize";
     public string DisplayName => "Organize";
     public bool UsesSharedFileOps => false;
+    public IReadOnlyCollection<string> SupportedActionPatchKeys => ActionPatchKeys;
 
     public void LoadFromSettings(AppSettings settings)
     {

@@ -16,8 +16,8 @@
     <Grid Margin="16" RowDefinitions="Auto,*" RowSpacing="12">
         <Border Classes="card" Padding="12">
             <StackPanel Spacing="4">
-                <TextBlock Classes="section-title" Text="共享执行选项 (Shared Options)" />
-                <TextBlock Classes="helper-text" Text="适用于 Flatten / Merge / FindDuplicates，修改后会参与执行预检。" />
+                <TextBlock Classes="section-title" Text="低频调优选项 (Advanced Tuning)" />
+                <TextBlock Classes="helper-text" Text="高频参数已放到对应功能页；这里保留低频性能调优项。" />
             </StackPanel>
         </Border>
 
@@ -25,36 +25,22 @@
             <StackPanel Spacing="12">
                 <Border Classes="card" Padding="12">
                     <Grid ColumnDefinitions="220,*"
-                          RowDefinitions="Auto,Auto,Auto,Auto,Auto"
+                          RowDefinitions="Auto,Auto"
                           RowSpacing="8"
                           ColumnSpacing="8">
-                        <CheckBox Grid.Row="0" Grid.Column="1" Content="跳过空目录清理 (SkipPruneEmptyDirs)" IsChecked="{Binding SharedFileOps.SkipPruneEmptyDirs}" />
-                        <CheckBox Grid.Row="1" Grid.Column="1" Content="仅处理 Mod 文件 (ModFilesOnly)" IsChecked="{Binding SharedFileOps.ModFilesOnly}" />
-                        <CheckBox Grid.Row="2" Grid.Column="1" Content="重名校验内容 (VerifyContentOnNameConflict)" IsChecked="{Binding SharedFileOps.VerifyContentOnNameConflict}" />
-
-                        <TextBlock Grid.Row="3" VerticalAlignment="Center" Text="扩展名列表 (ModExtensions)" />
-                        <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding SharedFileOps.ModExtensionsText}" />
-
-                        <Grid Grid.Row="4" Grid.ColumnSpan="2" ColumnDefinitions="220,*,220,*" ColumnSpacing="8">
+                        <Grid Grid.Row="0" Grid.ColumnSpan="2" ColumnDefinitions="220,*,220,*" ColumnSpacing="8">
                             <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="前缀哈希字节 (PrefixHashBytes)" />
                             <TextBox Grid.Column="1" Text="{Binding SharedFileOps.PrefixHashBytesText}" />
 
                             <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="哈希线程数 (HashWorkerCount)" />
                             <TextBox Grid.Column="3" Text="{Binding SharedFileOps.HashWorkerCountText}" />
                         </Grid>
-                    </Grid>
-                </Border>
 
-                <Border Classes="card" Padding="12">
-                    <StackPanel Spacing="8">
-                        <TextBlock Classes="sub-title" Text="Quick Presets 管理" />
-                        <TextBlock Classes="helper-text" Text="预设模板来源: 内置 defaults + %LocalAppData%\SimsModDesktop\quick-presets.json" />
-                        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="8">
-                            <Button Classes="secondary" Content="Reload Presets" Command="{Binding ReloadQuickPresetsCommand}" />
-                            <Button Grid.Column="1" Classes="secondary" Content="Open Preset Folder" Command="{Binding OpenQuickPresetFolderCommand}" />
-                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Classes="helper-text" Text="{Binding QuickPresetStatusText}" />
-                        </Grid>
-                    </StackPanel>
+                        <TextBlock Grid.Row="1"
+                                   Grid.ColumnSpan="2"
+                                   Classes="helper-text"
+                                   Text="建议仅在大规模目录或性能问题场景下调整。默认值适合大多数使用场景。" />
+                    </Grid>
                 </Border>
             </StackPanel>
         </ScrollViewer>

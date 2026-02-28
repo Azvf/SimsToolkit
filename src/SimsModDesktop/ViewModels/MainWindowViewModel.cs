@@ -6,10 +6,8 @@ using System.Diagnostics;
 using Avalonia.Threading;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Modules;
-using SimsModDesktop.Application.Presets;
 using SimsModDesktop.Application.Requests;
-using SimsModDesktop.Application.TrayPreview;
-using SimsModDesktop.Application.Validation;
+using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Infrastructure.Dialogs;
 using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Models;
@@ -20,17 +18,16 @@ namespace SimsModDesktop.ViewModels;
 
 public sealed class MainWindowViewModel : ObservableObject
 {
-    private readonly IExecutionCoordinator _executionCoordinator;
-    private readonly ITrayPreviewCoordinator _trayPreviewCoordinator;
+    private readonly IToolkitExecutionRunner _toolkitExecutionRunner;
+    private readonly ITrayPreviewRunner _trayPreviewRunner;
     private readonly IFileDialogService _fileDialogService;
     private readonly IConfirmationDialogService _confirmationDialogService;
     private readonly ISettingsStore _settingsStore;
+    private readonly IMainWindowSettingsProjection _settingsProjection;
     private readonly IActionModuleRegistry _moduleRegistry;
-    private readonly IQuickPresetCatalog _quickPresetCatalog;
-    private readonly IQuickPresetApplier _quickPresetApplier;
+    private readonly IMainWindowPlanBuilder _planBuilder;
 
     private readonly StringWriter _logWriter = new();
-    private readonly List<QuickPresetDefinition> _allQuickPresets = new();
     private CancellationTokenSource? _executionCts;
     private CancellationTokenSource? _validationDebounceCts;
     private bool _isTrayPreviewPageLoading;
@@ -53,26 +50,23 @@ public sealed class MainWindowViewModel : ObservableObject
     private string _previewDashboardLatestWrite = "-";
     private string _previewPageText = "Page 0/0";
     private string _previewLazyLoadText = "Lazy cache 0/0 pages";
-    private string _quickPresetStatusText = "Preset templates not loaded.";
-    private string _quickPresetSearchText = string.Empty;
     private string _validationSummaryText = "预检尚未开始。";
     private bool _hasValidationErrors;
     private bool _isToolkitLogDrawerOpen;
     private bool _isTrayPreviewLogDrawerOpen;
     private bool _isToolkitAdvancedOpen;
     private bool _isTrayPreviewAdvancedOpen;
-    private AppSettings.QuickPresetSettings _quickPresetSettings = new();
     private bool _isInitialized;
 
     public MainWindowViewModel(
-        IExecutionCoordinator executionCoordinator,
-        ITrayPreviewCoordinator trayPreviewCoordinator,
+        IToolkitExecutionRunner toolkitExecutionRunner,
+        ITrayPreviewRunner trayPreviewRunner,
         IFileDialogService fileDialogService,
         IConfirmationDialogService confirmationDialogService,
         ISettingsStore settingsStore,
-        IQuickPresetCatalog quickPresetCatalog,
+        IMainWindowSettingsProjection settingsProjection,
         IActionModuleRegistry moduleRegistry,
-        IQuickPresetApplier quickPresetApplier,
+        IMainWindowPlanBuilder planBuilder,
         OrganizePanelViewModel organize,
         FlattenPanelViewModel flatten,
         NormalizePanelViewModel normalize,
@@ -82,14 +76,14 @@ public sealed class MainWindowViewModel : ObservableObject
         TrayPreviewPanelViewModel trayPreview,
         SharedFileOpsPanelViewModel sharedFileOps)
     {
-        _executionCoordinator = executionCoordinator;
-        _trayPreviewCoordinator = trayPreviewCoordinator;
+        _toolkitExecutionRunner = toolkitExecutionRunner;
+        _trayPreviewRunner = trayPreviewRunner;
         _fileDialogService = fileDialogService;
         _confirmationDialogService = confirmationDialogService;
         _settingsStore = settingsStore;
-        _quickPresetCatalog = quickPresetCatalog;
+        _settingsProjection = settingsProjection;
         _moduleRegistry = moduleRegistry;
-        _quickPresetApplier = quickPresetApplier;
+        _planBuilder = planBuilder;
 
         Organize = organize;
         Flatten = flatten;
@@ -101,7 +95,6 @@ public sealed class MainWindowViewModel : ObservableObject
         TrayPreview = trayPreview;
         SharedFileOps = sharedFileOps;
         PreviewItems = new ObservableCollection<SimsTrayPreviewItem>();
-        QuickPresets = new ObservableCollection<QuickPresetListItem>();
 
         var registeredToolkitActions = _moduleRegistry.All
             .Select(module => module.Action)
@@ -128,9 +121,6 @@ public sealed class MainWindowViewModel : ObservableObject
         RunCommand = new AsyncRelayCommand(RunToolkitAsync, () => !IsBusy && IsToolkitWorkspace && !HasValidationErrors);
         RunTrayPreviewCommand = new AsyncRelayCommand(() => RunTrayPreviewAsync(), () => !IsBusy && IsTrayPreviewWorkspace && !HasValidationErrors);
         RunActiveWorkspaceCommand = new AsyncRelayCommand(RunActiveWorkspaceAsync, () => !IsBusy && !HasValidationErrors);
-        RunQuickPresetCommand = new AsyncRelayCommand<QuickPresetDefinition>(RunQuickPresetAsync, preset => !IsBusy && preset is not null);
-        ReloadQuickPresetsCommand = new AsyncRelayCommand(ReloadQuickPresetsAsync, () => !IsBusy);
-        OpenQuickPresetFolderCommand = new RelayCommand(OpenQuickPresetFolder, () => !IsBusy);
         CancelCommand = new RelayCommand(CancelExecution, () => IsBusy);
         PreviewPrevPageCommand = new AsyncRelayCommand(LoadPreviousTrayPreviewPageAsync, () => CanGoPrevPage);
         PreviewNextPageCommand = new AsyncRelayCommand(LoadNextTrayPreviewPageAsync, () => CanGoNextPage);
@@ -150,7 +140,6 @@ public sealed class MainWindowViewModel : ObservableObject
     public TrayPreviewPanelViewModel TrayPreview { get; }
     public SharedFileOpsPanelViewModel SharedFileOps { get; }
     public ObservableCollection<SimsTrayPreviewItem> PreviewItems { get; }
-    public ObservableCollection<QuickPresetListItem> QuickPresets { get; }
 
     public IReadOnlyList<SimsAction> AvailableToolkitActions { get; }
 
@@ -164,9 +153,6 @@ public sealed class MainWindowViewModel : ObservableObject
     public AsyncRelayCommand RunCommand { get; }
     public AsyncRelayCommand RunTrayPreviewCommand { get; }
     public AsyncRelayCommand RunActiveWorkspaceCommand { get; }
-    public AsyncRelayCommand<QuickPresetDefinition> RunQuickPresetCommand { get; }
-    public AsyncRelayCommand ReloadQuickPresetsCommand { get; }
-    public RelayCommand OpenQuickPresetFolderCommand { get; }
     public RelayCommand CancelCommand { get; }
     public AsyncRelayCommand PreviewPrevPageCommand { get; }
     public AsyncRelayCommand PreviewNextPageCommand { get; }
@@ -186,6 +172,7 @@ public sealed class MainWindowViewModel : ObservableObject
 
             OnPropertyChanged(nameof(IsToolkitWorkspace));
             OnPropertyChanged(nameof(IsTrayPreviewWorkspace));
+            OnPropertyChanged(nameof(IsSharedFileOpsVisible));
             StatusMessage = "Ready.";
             NotifyCommandStates();
             QueueValidationRefresh();
@@ -213,6 +200,7 @@ public sealed class MainWindowViewModel : ObservableObject
             OnPropertyChanged(nameof(IsMergeVisible));
             OnPropertyChanged(nameof(IsFindDupVisible));
             OnPropertyChanged(nameof(IsTrayDependenciesVisible));
+            OnPropertyChanged(nameof(IsSharedFileOpsVisible));
             StatusMessage = "Ready.";
             QueueValidationRefresh();
         }
@@ -340,26 +328,6 @@ public sealed class MainWindowViewModel : ObservableObject
         private set => SetProperty(ref _previewLazyLoadText, value);
     }
 
-    public string QuickPresetStatusText
-    {
-        get => _quickPresetStatusText;
-        private set => SetProperty(ref _quickPresetStatusText, value);
-    }
-
-    public string QuickPresetSearchText
-    {
-        get => _quickPresetSearchText;
-        set
-        {
-            if (!SetProperty(ref _quickPresetSearchText, value))
-            {
-                return;
-            }
-
-            RefreshQuickPresetItems();
-        }
-    }
-
     public bool IsToolkitLogDrawerOpen
     {
         get => _isToolkitLogDrawerOpen;
@@ -428,6 +396,9 @@ public sealed class MainWindowViewModel : ObservableObject
     public bool IsTrayDependenciesVisible => SelectedAction == SimsAction.TrayDependencies;
     public bool IsToolkitWorkspace => Workspace == AppWorkspace.Toolkit;
     public bool IsTrayPreviewWorkspace => Workspace == AppWorkspace.TrayPreview;
+    public bool IsSharedFileOpsVisible =>
+        IsToolkitWorkspace &&
+        _moduleRegistry.All.Any(module => module.Action == SelectedAction && module.UsesSharedFileOps);
 
     public bool CanGoPrevPage => !IsBusy && !_isTrayPreviewPageLoading && _trayPreviewCurrentPage > 1;
     public bool CanGoNextPage => !IsBusy && !_isTrayPreviewPageLoading && _trayPreviewCurrentPage < _trayPreviewTotalPages;
@@ -440,8 +411,25 @@ public sealed class MainWindowViewModel : ObservableObject
         }
 
         var settings = await _settingsStore.LoadAsync();
-        ApplySettings(settings);
-        await ReloadQuickPresetsAsync();
+        var resolved = _settingsProjection.Resolve(settings, AvailableToolkitActions);
+
+        ScriptPath = resolved.ScriptPath;
+        WhatIf = resolved.WhatIf;
+
+        SharedFileOps.SkipPruneEmptyDirs = resolved.SharedFileOps.SkipPruneEmptyDirs;
+        SharedFileOps.ModFilesOnly = resolved.SharedFileOps.ModFilesOnly;
+        SharedFileOps.VerifyContentOnNameConflict = resolved.SharedFileOps.VerifyContentOnNameConflict;
+        SharedFileOps.ModExtensionsText = resolved.SharedFileOps.ModExtensionsText;
+        SharedFileOps.PrefixHashBytesText = resolved.SharedFileOps.PrefixHashBytesText;
+        SharedFileOps.HashWorkerCountText = resolved.SharedFileOps.HashWorkerCountText;
+        IsToolkitLogDrawerOpen = resolved.UiState.ToolkitLogDrawerOpen;
+        IsTrayPreviewLogDrawerOpen = resolved.UiState.TrayPreviewLogDrawerOpen;
+        IsToolkitAdvancedOpen = resolved.UiState.ToolkitAdvancedOpen;
+        IsTrayPreviewAdvancedOpen = resolved.UiState.TrayPreviewAdvancedOpen;
+
+        _settingsProjection.LoadModuleSettings(settings, _moduleRegistry);
+        SelectedAction = resolved.SelectedAction;
+        Workspace = resolved.Workspace;
 
         ScriptPath = ResolveFixedScriptPath();
         if (!File.Exists(ScriptPath))
@@ -466,7 +454,31 @@ public sealed class MainWindowViewModel : ObservableObject
     public async Task PersistSettingsAsync()
     {
         _validationDebounceCts?.Cancel();
-        var settings = CaptureSettings();
+        var settings = _settingsProjection.Capture(
+            new MainWindowSettingsSnapshot
+            {
+                ScriptPath = ScriptPath,
+                Workspace = Workspace,
+                SelectedAction = SelectedAction,
+                WhatIf = WhatIf,
+                SharedFileOps = new AppSettings.SharedFileOpsSettings
+                {
+                    SkipPruneEmptyDirs = SharedFileOps.SkipPruneEmptyDirs,
+                    ModFilesOnly = SharedFileOps.ModFilesOnly,
+                    VerifyContentOnNameConflict = SharedFileOps.VerifyContentOnNameConflict,
+                    ModExtensionsText = SharedFileOps.ModExtensionsText,
+                    PrefixHashBytesText = SharedFileOps.PrefixHashBytesText,
+                    HashWorkerCountText = SharedFileOps.HashWorkerCountText
+                },
+                UiState = new AppSettings.UiStateSettings
+                {
+                    ToolkitLogDrawerOpen = IsToolkitLogDrawerOpen,
+                    TrayPreviewLogDrawerOpen = IsTrayPreviewLogDrawerOpen,
+                    ToolkitAdvancedOpen = IsToolkitAdvancedOpen,
+                    TrayPreviewAdvancedOpen = IsTrayPreviewAdvancedOpen
+                }
+            },
+            _moduleRegistry);
         await _settingsStore.SaveAsync(settings);
     }
 
@@ -563,14 +575,7 @@ public sealed class MainWindowViewModel : ObservableObject
             if (IsToolkitWorkspace)
             {
                 var module = _moduleRegistry.Get(SelectedAction);
-                if (!TryBuildGlobalExecutionOptions(requireScriptPath: true, includeShared: module.UsesSharedFileOps, out var options, out var error))
-                {
-                    HasValidationErrors = true;
-                    ValidationSummaryText = $"预检失败: {error}";
-                    return;
-                }
-
-                if (!module.TryBuildPlan(options, out _, out error))
+                if (!_planBuilder.TryBuildToolkitCliPlan(CreatePlanBuilderState(), out _, out _, out var error))
                 {
                     HasValidationErrors = true;
                     ValidationSummaryText = $"预检失败: {error}";
@@ -582,7 +587,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 return;
             }
 
-            if (!TryBuildTrayPreviewInput(out _, out var trayPreviewError))
+            if (!_planBuilder.TryBuildTrayPreviewInput(CreatePlanBuilderState(), out _, out var trayPreviewError))
             {
                 HasValidationErrors = true;
                 ValidationSummaryText = $"预检失败: {trayPreviewError}";
@@ -606,9 +611,6 @@ public sealed class MainWindowViewModel : ObservableObject
         RunCommand.NotifyCanExecuteChanged();
         RunTrayPreviewCommand.NotifyCanExecuteChanged();
         RunActiveWorkspaceCommand.NotifyCanExecuteChanged();
-        RunQuickPresetCommand.NotifyCanExecuteChanged();
-        ReloadQuickPresetsCommand.NotifyCanExecuteChanged();
-        OpenQuickPresetFolderCommand.NotifyCanExecuteChanged();
         CancelCommand.NotifyCanExecuteChanged();
         PreviewPrevPageCommand.NotifyCanExecuteChanged();
         PreviewNextPageCommand.NotifyCanExecuteChanged();
@@ -634,6 +636,7 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         if (string.IsNullOrWhiteSpace(target))
         {
+            ReportUnsupportedBrowseTarget("folder", target);
             return;
         }
 
@@ -675,6 +678,9 @@ public sealed class MainWindowViewModel : ObservableObject
             case "PreviewTrayRoot":
                 await BrowseSingleFolderAsync("Select TrayPath (Preview)", path => TrayPreview.TrayRoot = path);
                 break;
+            default:
+                ReportUnsupportedBrowseTarget("folder", target);
+                break;
         }
     }
 
@@ -682,6 +688,7 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         if (!string.Equals(target, "FindDupOutputCsv", StringComparison.Ordinal))
         {
+            ReportUnsupportedBrowseTarget("csv", target);
             return;
         }
 
@@ -690,6 +697,13 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             FindDup.OutputCsv = path;
         }
+    }
+
+    private void ReportUnsupportedBrowseTarget(string kind, string? target)
+    {
+        var normalizedTarget = string.IsNullOrWhiteSpace(target) ? "<empty>" : target.Trim();
+        StatusMessage = $"Unsupported {kind} browse target: {normalizedTarget}";
+        AppendLog($"[ui] unsupported {kind} browse target: {normalizedTarget}");
     }
 
     private async Task BrowseSingleFolderAsync(string title, Action<string> setter)
@@ -727,122 +741,6 @@ public sealed class MainWindowViewModel : ObservableObject
         Merge.RemoveSourcePath(entry);
     }
 
-    private async Task ReloadQuickPresetsAsync()
-    {
-        await _quickPresetCatalog.ReloadAsync();
-        _allQuickPresets.Clear();
-        _allQuickPresets.AddRange(_quickPresetCatalog.GetAll());
-        RefreshQuickPresetItems();
-
-        var warnings = _quickPresetCatalog.LastWarnings;
-        foreach (var warning in warnings)
-        {
-            AppendLog("[preset] " + warning);
-        }
-    }
-
-    private void RefreshQuickPresetItems()
-    {
-        ExecuteOnUi(() =>
-        {
-            var keyword = QuickPresetSearchText.Trim();
-            var filtered = _allQuickPresets
-                .Where(preset => string.IsNullOrWhiteSpace(keyword)
-                    || preset.Name.Contains(keyword, StringComparison.OrdinalIgnoreCase)
-                    || preset.Id.Contains(keyword, StringComparison.OrdinalIgnoreCase)
-                    || preset.Description.Contains(keyword, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-
-            QuickPresets.Clear();
-            foreach (var preset in filtered)
-            {
-                var isLastApplied = string.Equals(preset.Id, _quickPresetSettings.LastPresetId, StringComparison.OrdinalIgnoreCase);
-                QuickPresets.Add(new QuickPresetListItem(preset, isLastApplied));
-            }
-
-            if (_allQuickPresets.Count == 0)
-            {
-                QuickPresetStatusText = "No quick presets found.";
-                return;
-            }
-
-            var appliedText = string.IsNullOrWhiteSpace(_quickPresetSettings.LastPresetId)
-                ? "暂无最近应用"
-                : $"最近应用: {_quickPresetSettings.LastPresetId}";
-            QuickPresetStatusText = $"显示 {filtered.Count}/{_allQuickPresets.Count} 个预设。{appliedText}";
-        });
-    }
-
-    private async Task RunQuickPresetAsync(QuickPresetDefinition? preset)
-    {
-        if (preset is null)
-        {
-            return;
-        }
-
-        if (!_quickPresetApplier.TryApply(preset, out var error))
-        {
-            StatusMessage = "Quick preset apply failed.";
-            AppendLog("[preset-error] " + error);
-            return;
-        }
-
-        if (preset.Action == SimsAction.TrayPreview)
-        {
-            Workspace = AppWorkspace.TrayPreview;
-        }
-        else
-        {
-            Workspace = AppWorkspace.Toolkit;
-            SelectedAction = preset.Action;
-        }
-
-        _quickPresetSettings.LastPresetId = preset.Id;
-        RefreshQuickPresetItems();
-        AppendLog($"[preset] applied {preset.Id} ({preset.Name})");
-
-        if (!preset.AutoRun)
-        {
-            StatusMessage = $"Preset applied: {preset.Name}";
-            return;
-        }
-
-        if (preset.Action == SimsAction.TrayPreview)
-        {
-            await RunTrayPreviewAsync();
-            return;
-        }
-
-        await RunToolkitAsync();
-    }
-
-    private void OpenQuickPresetFolder()
-    {
-        var directory = _quickPresetCatalog.UserPresetDirectory;
-        if (string.IsNullOrWhiteSpace(directory))
-        {
-            StatusMessage = "Preset folder is unavailable.";
-            return;
-        }
-
-        Directory.CreateDirectory(directory);
-
-        try
-        {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = directory,
-                UseShellExecute = true
-            });
-            StatusMessage = $"Preset folder opened: {directory}";
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = "Failed to open preset folder.";
-            AppendLog("[preset-error] " + ex.Message);
-        }
-    }
-
     private async Task<bool> ConfirmDangerousFindDupCleanupAsync()
     {
         if (SelectedAction != SimsAction.FindDuplicates || !FindDup.Cleanup || WhatIf)
@@ -877,25 +775,10 @@ public sealed class MainWindowViewModel : ObservableObject
             return;
         }
 
-        var module = _moduleRegistry.Get(SelectedAction);
-        if (!TryBuildGlobalExecutionOptions(requireScriptPath: true, includeShared: module.UsesSharedFileOps, out var options, out var error))
+        if (!_planBuilder.TryBuildToolkitCliPlan(CreatePlanBuilderState(), out _, out var cliPlan, out var error))
         {
             StatusMessage = error;
             AppendLog("[validation] " + error);
-            return;
-        }
-
-        if (!module.TryBuildPlan(options, out var plan, out error))
-        {
-            StatusMessage = error;
-            AppendLog("[validation] " + error);
-            return;
-        }
-
-        if (plan is not CliExecutionPlan cliPlan)
-        {
-            StatusMessage = $"Action {SelectedAction} is not a CLI action.";
-            AppendLog("[validation] " + StatusMessage);
             return;
         }
 
@@ -919,35 +802,40 @@ public sealed class MainWindowViewModel : ObservableObject
 
         try
         {
-            var result = await _executionCoordinator.ExecuteAsync(
-                input,
+            var runResult = await _toolkitExecutionRunner.RunAsync(
+                cliPlan,
                 onOutput: AppendLog,
                 onProgress: HandleProgress,
                 cancellationToken: _executionCts.Token);
             stopwatch.Stop();
 
-            AppendLog($"[exit] code={result.ExitCode}");
-            StatusMessage = result.ExitCode == 0
-                ? $"Completed in {stopwatch.Elapsed:mm\\:ss}."
-                : $"Failed with exit code {result.ExitCode} in {stopwatch.Elapsed:mm\\:ss}.";
-            SetProgress(
-                isIndeterminate: false,
-                percent: result.ExitCode == 0 ? 100 : 0,
-                message: result.ExitCode == 0 ? "Completed." : "Failed.");
-        }
-        catch (OperationCanceledException)
-        {
-            stopwatch.Stop();
-            AppendLog("[cancelled]");
-            StatusMessage = "Execution cancelled.";
-            SetProgress(isIndeterminate: false, percent: 0, message: "Cancelled.");
-        }
-        catch (Exception ex)
-        {
-            stopwatch.Stop();
-            AppendLog("[error] " + ex.Message);
-            StatusMessage = "Execution failed.";
-            SetProgress(isIndeterminate: false, percent: 0, message: "Execution failed.");
+            if (runResult.Status == ExecutionRunStatus.Success)
+            {
+                var result = runResult.ExecutionResult!;
+                AppendLog($"[exit] code={result.ExitCode}");
+                StatusMessage = result.ExitCode == 0
+                    ? $"Completed in {stopwatch.Elapsed:mm\\:ss}."
+                    : $"Failed with exit code {result.ExitCode} in {stopwatch.Elapsed:mm\\:ss}.";
+                SetProgress(
+                    isIndeterminate: false,
+                    percent: result.ExitCode == 0 ? 100 : 0,
+                    message: result.ExitCode == 0 ? "Completed." : "Failed.");
+            }
+            else if (runResult.Status == ExecutionRunStatus.Cancelled)
+            {
+                AppendLog("[cancelled]");
+                StatusMessage = "Execution cancelled.";
+                SetProgress(isIndeterminate: false, percent: 0, message: "Cancelled.");
+            }
+            else
+            {
+                var errorMessage = string.IsNullOrWhiteSpace(runResult.ErrorMessage)
+                    ? "Unknown execution error."
+                    : runResult.ErrorMessage;
+                AppendLog("[error] " + errorMessage);
+                StatusMessage = "Execution failed.";
+                SetProgress(isIndeterminate: false, percent: 0, message: "Execution failed.");
+            }
         }
         finally
         {
@@ -969,7 +857,7 @@ public sealed class MainWindowViewModel : ObservableObject
         TrayPreviewInput input;
         if (explicitInput is null)
         {
-            if (!TryBuildTrayPreviewInput(out var built, out var validationError))
+            if (!_planBuilder.TryBuildTrayPreviewInput(CreatePlanBuilderState(), out var built, out var validationError))
             {
                 StatusMessage = validationError;
                 AppendLog("[validation] " + validationError);
@@ -987,7 +875,7 @@ public sealed class MainWindowViewModel : ObservableObject
         var startedAt = DateTimeOffset.Now;
         var stopwatch = Stopwatch.StartNew();
 
-        _trayPreviewCoordinator.Reset();
+        _trayPreviewRunner.Reset();
         ClearLog();
         ClearTrayPreview();
         IsBusy = true;
@@ -999,41 +887,46 @@ public sealed class MainWindowViewModel : ObservableObject
 
         try
         {
-            var result = await _trayPreviewCoordinator.LoadAsync(input, _executionCts.Token);
+            var runResult = await _trayPreviewRunner.LoadDashboardAsync(input, _executionCts.Token);
             stopwatch.Stop();
 
-            SetTrayPreviewDashboard(result.Dashboard);
-            SetTrayPreviewPage(result.Page, result.LoadedPageCount);
-
-            AppendLog($"[preview] trayPath={input.TrayPath}");
-            if (!string.IsNullOrWhiteSpace(input.TrayItemKey))
+            if (runResult.Status == ExecutionRunStatus.Success)
             {
-                AppendLog($"[preview] trayItemKey={input.TrayItemKey}");
+                var result = runResult.LoadResult!;
+                SetTrayPreviewDashboard(result.Dashboard);
+                SetTrayPreviewPage(result.Page, result.LoadedPageCount);
+
+                AppendLog($"[preview] trayPath={input.TrayPath}");
+                if (!string.IsNullOrWhiteSpace(input.TrayItemKey))
+                {
+                    AppendLog($"[preview] trayItemKey={input.TrayItemKey}");
+                }
+
+                AppendLog(input.TopN is int topN && topN > 0
+                    ? $"[preview] topN={topN}"
+                    : "[preview] topN=all");
+                AppendLog($"[preview] pageSize={input.PageSize}");
+                AppendLog($"[preview] totalItems={result.Dashboard.TotalItems}");
+
+                StatusMessage =
+                    $"Tray preview loaded: {result.Dashboard.TotalItems} items, page 1/{result.Page.TotalPages}, {stopwatch.Elapsed:mm\\:ss}.";
+                SetProgress(isIndeterminate: false, percent: 100, message: "Tray preview dashboard loaded.");
             }
-
-            AppendLog(input.TopN is int topN && topN > 0
-                ? $"[preview] topN={topN}"
-                : "[preview] topN=all");
-            AppendLog($"[preview] pageSize={input.PageSize}");
-            AppendLog($"[preview] totalItems={result.Dashboard.TotalItems}");
-
-            StatusMessage =
-                $"Tray preview loaded: {result.Dashboard.TotalItems} items, page 1/{result.Page.TotalPages}, {stopwatch.Elapsed:mm\\:ss}.";
-            SetProgress(isIndeterminate: false, percent: 100, message: "Tray preview dashboard loaded.");
-        }
-        catch (OperationCanceledException)
-        {
-            stopwatch.Stop();
-            AppendLog("[cancelled]");
-            StatusMessage = "Tray preview cancelled.";
-            SetProgress(isIndeterminate: false, percent: 0, message: "Cancelled.");
-        }
-        catch (Exception ex)
-        {
-            stopwatch.Stop();
-            AppendLog("[error] " + ex.Message);
-            StatusMessage = "Tray preview failed.";
-            SetProgress(isIndeterminate: false, percent: 0, message: "Tray preview failed.");
+            else if (runResult.Status == ExecutionRunStatus.Cancelled)
+            {
+                AppendLog("[cancelled]");
+                StatusMessage = "Tray preview cancelled.";
+                SetProgress(isIndeterminate: false, percent: 0, message: "Cancelled.");
+            }
+            else
+            {
+                var errorMessage = string.IsNullOrWhiteSpace(runResult.ErrorMessage)
+                    ? "Unknown tray preview error."
+                    : runResult.ErrorMessage;
+                AppendLog("[error] " + errorMessage);
+                StatusMessage = "Tray preview failed.";
+                SetProgress(isIndeterminate: false, percent: 0, message: "Tray preview failed.");
+            }
         }
         finally
         {
@@ -1066,13 +959,25 @@ public sealed class MainWindowViewModel : ObservableObject
         SetTrayPreviewPageLoading(true);
         try
         {
-            var result = await _trayPreviewCoordinator.LoadPageAsync(requestedPageIndex);
-            SetTrayPreviewPage(result.Page, result.LoadedPageCount);
-            StatusMessage = $"Tray preview page {result.Page.PageIndex}/{result.Page.TotalPages}.";
-        }
-        catch (Exception ex)
-        {
-            AppendLog("[error] " + ex.Message);
+            var runResult = await _trayPreviewRunner.LoadPageAsync(requestedPageIndex);
+            if (runResult.Status == ExecutionRunStatus.Success)
+            {
+                var result = runResult.PageResult!;
+                SetTrayPreviewPage(result.Page, result.LoadedPageCount);
+                StatusMessage = $"Tray preview page {result.Page.PageIndex}/{result.Page.TotalPages}.";
+                return;
+            }
+
+            if (runResult.Status == ExecutionRunStatus.Cancelled)
+            {
+                StatusMessage = "Tray preview page load cancelled.";
+                return;
+            }
+
+            var errorMessage = string.IsNullOrWhiteSpace(runResult.ErrorMessage)
+                ? "Unknown tray preview page error."
+                : runResult.ErrorMessage;
+            AppendLog("[error] " + errorMessage);
             StatusMessage = "Tray preview page load failed.";
         }
         finally
@@ -1088,12 +993,12 @@ public sealed class MainWindowViewModel : ObservableObject
             return;
         }
 
-        if (!TryBuildTrayPreviewInput(out var input, out _))
+        if (!_planBuilder.TryBuildTrayPreviewInput(CreatePlanBuilderState(), out var input, out _))
         {
             return;
         }
 
-        if (_trayPreviewCoordinator.TryGetCached(input, out var cached))
+        if (_trayPreviewRunner.TryGetCached(input, out var cached))
         {
             SetTrayPreviewDashboard(cached.Dashboard);
             SetTrayPreviewPage(cached.Page, cached.LoadedPageCount);
@@ -1127,94 +1032,23 @@ public sealed class MainWindowViewModel : ObservableObject
         }
     }
 
-    private bool TryBuildGlobalExecutionOptions(
-        bool requireScriptPath,
-        bool includeShared,
-        out GlobalExecutionOptions options,
-        out string error)
+    private MainWindowPlanBuilderState CreatePlanBuilderState()
     {
-        options = null!;
-        error = string.Empty;
-
-        var scriptPath = ScriptPath.Trim();
-        if (requireScriptPath && string.IsNullOrWhiteSpace(scriptPath))
+        return new MainWindowPlanBuilderState
         {
-            error = "Script path is required.";
-            return false;
-        }
-
-        SharedFileOpsInput shared;
-        if (includeShared)
-        {
-            if (!TryBuildSharedFileOpsInput(out shared, out error))
-            {
-                return false;
-            }
-        }
-        else
-        {
-            shared = new SharedFileOpsInput();
-        }
-
-        options = new GlobalExecutionOptions
-        {
-            ScriptPath = scriptPath,
+            ScriptPath = ScriptPath,
             WhatIf = WhatIf,
-            Shared = shared
+            SelectedAction = SelectedAction,
+            SharedFileOps = new SharedFileOpsPlanState
+            {
+                SkipPruneEmptyDirs = SharedFileOps.SkipPruneEmptyDirs,
+                ModFilesOnly = SharedFileOps.ModFilesOnly,
+                VerifyContentOnNameConflict = SharedFileOps.VerifyContentOnNameConflict,
+                ModExtensionsText = SharedFileOps.ModExtensionsText,
+                PrefixHashBytesText = SharedFileOps.PrefixHashBytesText,
+                HashWorkerCountText = SharedFileOps.HashWorkerCountText
+            }
         };
-        return true;
-    }
-
-    private bool TryBuildTrayPreviewInput(out TrayPreviewInput input, out string error)
-    {
-        input = null!;
-        if (!TryBuildGlobalExecutionOptions(requireScriptPath: false, includeShared: false, out var options, out error))
-        {
-            return false;
-        }
-
-        var module = _moduleRegistry.Get(SimsAction.TrayPreview);
-        if (!module.TryBuildPlan(options, out var plan, out error))
-        {
-            return false;
-        }
-
-        if (plan is not TrayPreviewExecutionPlan trayPreviewPlan)
-        {
-            error = "Tray preview module returned unsupported execution plan.";
-            return false;
-        }
-
-        input = trayPreviewPlan.Input;
-        return true;
-    }
-
-    private bool TryBuildSharedFileOpsInput(out SharedFileOpsInput input, out string error)
-    {
-        input = null!;
-        error = string.Empty;
-
-        if (!InputParsing.TryParseOptionalInt(SharedFileOps.PrefixHashBytesText, 1024, 104857600, out var prefixHashBytes, out error))
-        {
-            return false;
-        }
-
-        if (!InputParsing.TryParseOptionalInt(SharedFileOps.HashWorkerCountText, 1, 64, out var hashWorkerCount, out error))
-        {
-            return false;
-        }
-
-        input = new SharedFileOpsInput
-        {
-            SkipPruneEmptyDirs = SharedFileOps.SkipPruneEmptyDirs,
-            ModFilesOnly = SharedFileOps.ModFilesOnly,
-            ModExtensions = InputParsing.ParseDelimitedList(SharedFileOps.ModExtensionsText),
-            VerifyContentOnNameConflict = SharedFileOps.VerifyContentOnNameConflict,
-            PrefixHashBytes = prefixHashBytes,
-            HashWorkerCount = hashWorkerCount
-        };
-
-        return true;
     }
 
     private void HandleProgress(SimsProgressUpdate progress)
@@ -1329,89 +1163,6 @@ public sealed class MainWindowViewModel : ObservableObject
             NotifyCommandStates();
         });
     }
-    private AppSettings CaptureSettings()
-    {
-        var settings = new AppSettings
-        {
-            ScriptPath = ScriptPath,
-            SelectedWorkspace = Workspace,
-            SelectedAction = SelectedAction,
-            WhatIf = WhatIf,
-            SharedFileOps = new AppSettings.SharedFileOpsSettings
-            {
-                SkipPruneEmptyDirs = SharedFileOps.SkipPruneEmptyDirs,
-                ModFilesOnly = SharedFileOps.ModFilesOnly,
-                VerifyContentOnNameConflict = SharedFileOps.VerifyContentOnNameConflict,
-                ModExtensionsText = SharedFileOps.ModExtensionsText,
-                PrefixHashBytesText = SharedFileOps.PrefixHashBytesText,
-                HashWorkerCountText = SharedFileOps.HashWorkerCountText
-            },
-            QuickPresets = new AppSettings.QuickPresetSettings
-            {
-                EnableExternalModules = _quickPresetSettings.EnableExternalModules,
-                LastPresetId = _quickPresetSettings.LastPresetId
-            },
-            UiState = new AppSettings.UiStateSettings
-            {
-                ToolkitLogDrawerOpen = IsToolkitLogDrawerOpen,
-                TrayPreviewLogDrawerOpen = IsTrayPreviewLogDrawerOpen,
-                ToolkitAdvancedOpen = IsToolkitAdvancedOpen,
-                TrayPreviewAdvancedOpen = IsTrayPreviewAdvancedOpen
-            }
-        };
-
-        foreach (var module in _moduleRegistry.All)
-        {
-            module.SaveToSettings(settings);
-        }
-
-        return settings;
-    }
-
-    private void ApplySettings(AppSettings settings)
-    {
-        ScriptPath = settings.ScriptPath;
-        WhatIf = settings.WhatIf;
-
-        SharedFileOps.SkipPruneEmptyDirs = settings.SharedFileOps.SkipPruneEmptyDirs;
-        SharedFileOps.ModFilesOnly = settings.SharedFileOps.ModFilesOnly;
-        SharedFileOps.VerifyContentOnNameConflict = settings.SharedFileOps.VerifyContentOnNameConflict;
-        SharedFileOps.ModExtensionsText = settings.SharedFileOps.ModExtensionsText;
-        SharedFileOps.PrefixHashBytesText = settings.SharedFileOps.PrefixHashBytesText;
-        SharedFileOps.HashWorkerCountText = settings.SharedFileOps.HashWorkerCountText;
-        _quickPresetSettings = new AppSettings.QuickPresetSettings
-        {
-            EnableExternalModules = settings.QuickPresets.EnableExternalModules,
-            LastPresetId = settings.QuickPresets.LastPresetId
-        };
-        IsToolkitLogDrawerOpen = settings.UiState.ToolkitLogDrawerOpen;
-        IsTrayPreviewLogDrawerOpen = settings.UiState.TrayPreviewLogDrawerOpen;
-        IsToolkitAdvancedOpen = settings.UiState.ToolkitAdvancedOpen;
-        IsTrayPreviewAdvancedOpen = settings.UiState.TrayPreviewAdvancedOpen;
-
-        foreach (var module in _moduleRegistry.All)
-        {
-            module.LoadFromSettings(settings);
-        }
-
-        var resolvedAction = settings.SelectedAction == SimsAction.TrayPreview
-            ? SimsAction.Organize
-            : settings.SelectedAction;
-        if (!AvailableToolkitActions.Contains(resolvedAction))
-        {
-            resolvedAction = SimsAction.Organize;
-        }
-
-        SelectedAction = resolvedAction;
-        var resolvedWorkspace = Enum.IsDefined(settings.SelectedWorkspace)
-            ? settings.SelectedWorkspace
-            : AppWorkspace.Toolkit;
-
-        Workspace = settings.SelectedAction == SimsAction.TrayPreview
-            ? AppWorkspace.TrayPreview
-            : resolvedWorkspace;
-    }
-
     private static string ResolveFixedScriptPath()
     {
         var root = FindToolkitRootDirectory();

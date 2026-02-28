@@ -1,7 +1,6 @@
 using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Models;
-using SimsModDesktop.ViewModels.Panels;
 using System.Text.Json.Nodes;
 
 namespace SimsModDesktop.Tests;
@@ -11,14 +10,16 @@ public sealed class ActionModuleRegistryTests
     [Fact]
     public void MergeModule_TryBuildPlan_DeduplicatesSourcePaths()
     {
-        var panel = new MergePanelViewModel();
-        panel.ReplaceSourcePaths(new[]
+        var panel = new StubMergeModuleState
         {
+            TargetPath = @"D:\Mods\Merged"
+        };
+        panel.ReplaceSourcePaths(
+        [
             @"D:\Mods\A",
             @"D:\Mods\A",
             @"D:\Mods\B"
-        });
-        panel.TargetPath = @"D:\Mods\Merged";
+        ]);
 
         var module = new MergeActionModule(panel);
         var ok = module.TryBuildPlan(
@@ -44,7 +45,7 @@ public sealed class ActionModuleRegistryTests
     {
         var registry = new ActionModuleRegistry(new IActionModule[]
         {
-            new OrganizeActionModule(new OrganizePanelViewModel())
+            new OrganizeActionModule(new StubOrganizeModuleState())
         });
 
         Assert.Throws<InvalidOperationException>(() => registry.Get(SimsAction.TrayPreview));
@@ -100,6 +101,7 @@ public sealed class ActionModuleRegistryTests
         public string ModuleKey { get; }
         public string DisplayName => ModuleKey;
         public bool UsesSharedFileOps => false;
+        public IReadOnlyCollection<string> SupportedActionPatchKeys => Array.Empty<string>();
 
         public void LoadFromSettings(AppSettings settings)
         {
@@ -120,6 +122,50 @@ public sealed class ActionModuleRegistryTests
         {
             error = string.Empty;
             return true;
+        }
+    }
+
+    private sealed class StubOrganizeModuleState : IOrganizeModuleState
+    {
+        public string SourceDir { get; set; } = string.Empty;
+        public string ZipNamePattern { get; set; } = "*";
+        public string ModsRoot { get; set; } = string.Empty;
+        public string UnifiedModsFolder { get; set; } = string.Empty;
+        public string TrayRoot { get; set; } = string.Empty;
+        public bool KeepZip { get; set; }
+    }
+
+    private sealed class StubMergeModuleState : IMergeModuleState
+    {
+        private readonly List<string> _sourcePaths = new();
+
+        public string TargetPath { get; set; } = string.Empty;
+
+        public IReadOnlyList<string> CollectSourcePaths()
+        {
+            return _sourcePaths
+                .Select(path => path.Trim())
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        public string SerializeSourcePaths()
+        {
+            return string.Join(Environment.NewLine, CollectSourcePaths());
+        }
+
+        public void ApplySourcePathsText(string? rawValue)
+        {
+            var tokens = (rawValue ?? string.Empty)
+                .Split([',', ';', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            ReplaceSourcePaths(tokens);
+        }
+
+        public void ReplaceSourcePaths(IReadOnlyList<string> sourcePaths)
+        {
+            _sourcePaths.Clear();
+            _sourcePaths.AddRange(sourcePaths);
         }
     }
 }

@@ -1,8 +1,9 @@
+using SimsModDesktop.Application.Modules;
 using SimsModDesktop.ViewModels.Infrastructure;
 
 namespace SimsModDesktop.ViewModels.Panels;
 
-public sealed class TrayPreviewPanelViewModel : ObservableObject
+public sealed class TrayPreviewPanelViewModel : ObservableObject, ITrayPreviewModuleState
 {
     private string _trayRoot = string.Empty;
     private string _trayItemKey = string.Empty;

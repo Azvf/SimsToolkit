@@ -8,7 +8,27 @@ public sealed class SimsCliArgumentBuilder : ISimsCliArgumentBuilder
 
     public SimsCliArgumentBuilder(IEnumerable<IActionCliArgumentMapper> mappers)
     {
-        _mappers = mappers.ToDictionary(mapper => mapper.Action);
+        ArgumentNullException.ThrowIfNull(mappers);
+
+        var allMappers = mappers.ToList();
+        if (allMappers.Count == 0)
+        {
+            throw new InvalidOperationException("No CLI argument mappers were registered.");
+        }
+
+        var duplicateActions = allMappers
+            .GroupBy(mapper => mapper.Action)
+            .Where(group => group.Count() > 1)
+            .Select(group => group.Key.ToString())
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        if (duplicateActions.Length > 0)
+        {
+            throw new InvalidOperationException(
+                "Duplicate CLI mappers were registered: " + string.Join(", ", duplicateActions));
+        }
+
+        _mappers = allMappers.ToDictionary(mapper => mapper.Action);
     }
 
     public SimsProcessCommand Build(ISimsExecutionInput input)

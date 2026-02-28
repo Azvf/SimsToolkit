@@ -35,13 +35,12 @@
 
         <Grid Grid.Row="1">
             <Border Classes="card" IsVisible="{Binding IsToolkitWorkspace}" Padding="12">
-                <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="12">
+                <Grid RowDefinitions="Auto,Auto,*" RowSpacing="12">
                     <Border Classes="card-muted" Padding="10">
-                        <Grid ColumnDefinitions="Auto,190,Auto,*" ColumnSpacing="8">
+                        <Grid ColumnDefinitions="Auto,190,*" ColumnSpacing="8">
                             <TextBlock VerticalAlignment="Center" Text="动作 (Action)" />
                             <ComboBox Grid.Column="1" Width="180" ItemsSource="{Binding AvailableToolkitActions}" SelectedItem="{Binding SelectedAction}" />
-                            <Button Grid.Column="2" Classes="secondary" Content="高级选项" Command="{Binding ToggleToolkitAdvancedCommand}" />
-                            <TextBlock Grid.Column="3" VerticalAlignment="Center" Classes="helper-text" Text="选中动作后编辑参数并执行。" />
+                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Classes="helper-text" Text="选中动作后编辑参数并执行。" />
                         </Grid>
                     </Border>
 
@@ -60,49 +59,42 @@
                             <panels:MergePanelView />
                             <panels:FindDupPanelView />
                             <panels:TrayDependenciesPanelView />
+                            <Border Classes="card-muted"
+                                    Padding="10"
+                                    IsVisible="{Binding IsSharedFileOpsVisible}">
+                                <Grid ColumnDefinitions="210,*"
+                                      RowDefinitions="Auto,Auto,Auto,Auto"
+                                      RowSpacing="8"
+                                      ColumnSpacing="8">
+                                    <TextBlock Grid.ColumnSpan="2"
+                                               Classes="sub-title"
+                                               Text="共享文件处理选项 (Flatten / Merge / FindDuplicates)" />
+
+                                    <CheckBox Grid.Row="1"
+                                              Grid.Column="1"
+                                              Content="跳过空目录清理 (SkipPruneEmptyDirs)"
+                                              IsChecked="{Binding SharedFileOps.SkipPruneEmptyDirs}" />
+                                    <CheckBox Grid.Row="2"
+                                              Grid.Column="1"
+                                              Content="仅处理 Mod 文件 (ModFilesOnly)"
+                                              IsChecked="{Binding SharedFileOps.ModFilesOnly}" />
+                                    <CheckBox Grid.Row="3"
+                                              Grid.Column="1"
+                                              Content="重名校验内容 (VerifyContentOnNameConflict)"
+                                              IsChecked="{Binding SharedFileOps.VerifyContentOnNameConflict}" />
+                                </Grid>
+                            </Border>
+
+                            <Border Classes="card-muted"
+                                    Padding="10"
+                                    IsVisible="{Binding IsSharedFileOpsVisible}">
+                                <Grid ColumnDefinitions="210,*" ColumnSpacing="8">
+                                    <TextBlock VerticalAlignment="Center" Text="扩展名列表 (ModExtensions)" />
+                                    <TextBox Grid.Column="1" Text="{Binding SharedFileOps.ModExtensionsText}" />
+                                </Grid>
+                            </Border>
                         </StackPanel>
                     </ScrollViewer>
-
-                    <Border Grid.Row="3"
-                            Classes="card-muted"
-                            Padding="10"
-                            Margin="0,8,0,0"
-                            IsVisible="{Binding IsToolkitAdvancedOpen}">
-                        <StackPanel Spacing="8">
-                            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                                <TextBlock VerticalAlignment="Center" Classes="sub-title" Text="Quick Presets" />
-                                <TextBox Grid.Column="1" Watermark="搜索预设 (名称/ID/描述)" Text="{Binding QuickPresetSearchText}" />
-                                <Button Grid.Column="2" Classes="secondary" Content="Reload" Command="{Binding ReloadQuickPresetsCommand}" />
-                            </Grid>
-                            <TextBlock Classes="helper-text" Text="{Binding QuickPresetStatusText}" />
-                            <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
-                                <ItemsControl ItemsSource="{Binding QuickPresets}">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate>
-                                            <WrapPanel Orientation="Horizontal" />
-                                        </ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate x:DataType="vm:QuickPresetListItem">
-                                            <Border Classes="card-muted" Margin="0,0,8,8" Padding="8" Width="230">
-                                                <StackPanel Spacing="6">
-                                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                                                        <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />
-                                                        <TextBlock Grid.Column="1" IsVisible="{Binding IsLastApplied}" Classes="success-text helper-text" Text="最近应用" />
-                                                    </Grid>
-                                                    <TextBlock Classes="helper-text" TextWrapping="Wrap" Text="{Binding Description}" />
-                                                    <Button Classes="primary"
-                                                            Content="应用预设"
-                                                            Command="{Binding $parent[Window].DataContext.RunQuickPresetCommand}"
-                                                            CommandParameter="{Binding Definition}" />
-                                                </StackPanel>
-                                            </Border>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </ScrollViewer>
-                        </StackPanel>
-                    </Border>
                 </Grid>
             </Border>
 
@@ -180,12 +172,11 @@
 
         <Border Grid.Row="2" Classes="card" Padding="12" IsVisible="{Binding IsToolkitWorkspace}">
             <Grid RowDefinitions="Auto,Auto,Auto" RowSpacing="8">
-                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*" ColumnSpacing="10">
+                <Grid ColumnDefinitions="Auto,Auto,Auto,*" ColumnSpacing="10">
                     <Button Classes="primary" MinWidth="150" Content="Run" Command="{Binding RunActiveWorkspaceCommand}" />
                     <Button Grid.Column="1" Classes="danger" Content="Cancel" Command="{Binding CancelCommand}" />
                     <CheckBox Grid.Column="2" VerticalAlignment="Center" Content="WhatIf" IsChecked="{Binding WhatIf}" />
-                    <Button Grid.Column="3" Classes="secondary" Content="Open Preset Folder" Command="{Binding OpenQuickPresetFolderCommand}" />
-                    <TextBlock Grid.Column="4" VerticalAlignment="Center" Classes="helper-text" Text="{Binding StatusMessage}" />
+                    <TextBlock Grid.Column="3" VerticalAlignment="Center" Classes="helper-text" Text="{Binding StatusMessage}" />
                 </Grid>
 
                 <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="8">

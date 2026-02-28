@@ -1,10 +1,11 @@
+using SimsModDesktop.Application.Modules;
 using SimsModDesktop.ViewModels.Infrastructure;
 using SimsModDesktop.Application.Validation;
 using System.Collections.ObjectModel;
 
 namespace SimsModDesktop.ViewModels.Panels;
 
-public sealed class MergePanelViewModel : ObservableObject
+public sealed class MergePanelViewModel : ObservableObject, IMergeModuleState
 {
     private string _targetPath = string.Empty;
 

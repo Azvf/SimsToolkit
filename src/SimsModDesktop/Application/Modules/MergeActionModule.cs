@@ -1,15 +1,20 @@
 using System.Text.Json.Nodes;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Models;
-using SimsModDesktop.ViewModels.Panels;
 
 namespace SimsModDesktop.Application.Modules;
 
 public sealed class MergeActionModule : IActionModule
 {
-    private readonly MergePanelViewModel _panel;
+    private static readonly IReadOnlyList<string> ActionPatchKeys =
+    [
+        "sourcePaths",
+        "targetPath"
+    ];
 
-    public MergeActionModule(MergePanelViewModel panel)
+    private readonly IMergeModuleState _panel;
+
+    public MergeActionModule(IMergeModuleState panel)
     {
         _panel = panel;
     }
@@ -18,6 +23,7 @@ public sealed class MergeActionModule : IActionModule
     public string ModuleKey => "merge";
     public string DisplayName => "Merge";
     public bool UsesSharedFileOps => true;
+    public IReadOnlyCollection<string> SupportedActionPatchKeys => ActionPatchKeys;
 
     public void LoadFromSettings(AppSettings settings)
     {

@@ -2,15 +2,32 @@ using System.Text.Json.Nodes;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Validation;
 using SimsModDesktop.Models;
-using SimsModDesktop.ViewModels.Panels;
 
 namespace SimsModDesktop.Application.Modules;
 
 public sealed class TrayDependenciesActionModule : IActionModule
 {
-    private readonly TrayDependenciesPanelViewModel _panel;
+    private static readonly IReadOnlyList<string> ActionPatchKeys =
+    [
+        "trayPath",
+        "modsPath",
+        "trayItemKey",
+        "analysisMode",
+        "s4tiPath",
+        "minMatchCount",
+        "topN",
+        "maxPackageCount",
+        "exportUnusedPackages",
+        "exportMatchedPackages",
+        "outputCsv",
+        "unusedOutputCsv",
+        "exportTargetPath",
+        "exportMinConfidence"
+    ];
 
-    public TrayDependenciesActionModule(TrayDependenciesPanelViewModel panel)
+    private readonly ITrayDependenciesModuleState _panel;
+
+    public TrayDependenciesActionModule(ITrayDependenciesModuleState panel)
     {
         _panel = panel;
     }
@@ -19,6 +36,7 @@ public sealed class TrayDependenciesActionModule : IActionModule
     public string ModuleKey => "trayprobe";
     public string DisplayName => "Tray Dependencies";
     public bool UsesSharedFileOps => false;
+    public IReadOnlyCollection<string> SupportedActionPatchKeys => ActionPatchKeys;
 
     public void LoadFromSettings(AppSettings settings)
     {

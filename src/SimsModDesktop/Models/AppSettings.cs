@@ -14,7 +14,6 @@ public sealed class AppSettings
     public TrayDependenciesSettings TrayDependencies { get; set; } = new();
     public TrayPreviewSettings TrayPreview { get; set; } = new();
     public SharedFileOpsSettings SharedFileOps { get; set; } = new();
-    public QuickPresetSettings QuickPresets { get; set; } = new();
     public UiStateSettings UiState { get; set; } = new();
 
     public sealed class OrganizeSettings
@@ -86,12 +85,6 @@ public sealed class AppSettings
         public string ModExtensionsText { get; set; } = ".package,.ts4script";
         public string PrefixHashBytesText { get; set; } = "102400";
         public string HashWorkerCountText { get; set; } = "8";
-    }
-
-    public sealed class QuickPresetSettings
-    {
-        public bool EnableExternalModules { get; set; }
-        public string LastPresetId { get; set; } = string.Empty;
     }
 
     public sealed class UiStateSettings

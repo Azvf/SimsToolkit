@@ -1,9 +1,8 @@
 ﻿using System.Reflection;
-using System.Text.Json.Nodes;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Modules;
-using SimsModDesktop.Application.Presets;
 using SimsModDesktop.Application.Requests;
+using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Infrastructure.Dialogs;
 using SimsModDesktop.Infrastructure.Settings;
@@ -121,33 +120,29 @@ public sealed class MainWindowViewModelInteractionTests
     }
 
     [Fact]
-    public async Task QuickPresetAutoRun_DangerPath_StillRequiresConfirmation()
+    public async Task BrowseFolder_UnknownTarget_ReportsStatusAndLog()
     {
-        var execution = new FakeExecutionCoordinator();
-        var confirmation = new FakeConfirmationDialogService { NextResult = false };
-        var vm = CreateViewModel(execution, confirmation);
+        var vm = CreateViewModel(new FakeExecutionCoordinator(), new FakeConfirmationDialogService());
         await vm.InitializeAsync();
 
-        using var script = new TempFile("ps1");
-        vm.ScriptPath = script.Path;
+        await InvokePrivateAsync(vm, "BrowseFolderAsync", "UnknownFolderTarget");
 
-        var preset = new QuickPresetDefinition
-        {
-            Id = "finddup-cleanup",
-            Name = "FindDup Cleanup",
-            Action = SimsAction.FindDuplicates,
-            AutoRun = true,
-            ActionPatch = new JsonObject
-            {
-                ["cleanup"] = true,
-                ["rootPath"] = "C:\\Mods"
-            }
-        };
+        Assert.Contains("Unsupported folder browse target", vm.StatusMessage, StringComparison.Ordinal);
+        Assert.Contains("UnknownFolderTarget", vm.StatusMessage, StringComparison.Ordinal);
+        Assert.Contains("[ui] unsupported folder browse target: UnknownFolderTarget", vm.LogText, StringComparison.Ordinal);
+    }
 
-        await InvokePrivateAsync(vm, "RunQuickPresetAsync", preset);
+    [Fact]
+    public async Task BrowseCsv_UnknownTarget_ReportsStatusAndLog()
+    {
+        var vm = CreateViewModel(new FakeExecutionCoordinator(), new FakeConfirmationDialogService());
+        await vm.InitializeAsync();
 
-        Assert.Equal(1, confirmation.CallCount);
-        Assert.Equal(0, execution.ExecuteCount);
+        await InvokePrivateAsync(vm, "BrowseCsvPathAsync", "UnknownCsvTarget");
+
+        Assert.Contains("Unsupported csv browse target", vm.StatusMessage, StringComparison.Ordinal);
+        Assert.Contains("UnknownCsvTarget", vm.StatusMessage, StringComparison.Ordinal);
+        Assert.Contains("[ui] unsupported csv browse target: UnknownCsvTarget", vm.LogText, StringComparison.Ordinal);
     }
 
     private static MainWindowViewModel CreateViewModel(
@@ -174,16 +169,17 @@ public sealed class MainWindowViewModelInteractionTests
             new TrayDependenciesActionModule(trayDependencies),
             new TrayPreviewActionModule(trayPreview)
         });
+        var trayPreviewCoordinator = new FakeTrayPreviewCoordinator();
 
         return new MainWindowViewModel(
-            execution,
-            new FakeTrayPreviewCoordinator(),
+            new ToolkitExecutionRunner(execution),
+            new TrayPreviewRunner(trayPreviewCoordinator),
             new FakeFileDialogService(),
             confirmation,
             settingsStore ?? new FakeSettingsStore(new AppSettings()),
-            new FakeQuickPresetCatalog(),
+            new MainWindowSettingsProjection(),
             moduleRegistry,
-            new QuickPresetApplier(moduleRegistry, sharedFileOps),
+            new MainWindowPlanBuilder(moduleRegistry),
             organize,
             flatten,
             normalize,
@@ -319,15 +315,6 @@ public sealed class MainWindowViewModelInteractionTests
             LastSaved = settings;
             return Task.CompletedTask;
         }
-    }
-
-    private sealed class FakeQuickPresetCatalog : IQuickPresetCatalog
-    {
-        public IReadOnlyList<QuickPresetDefinition> GetAll() => Array.Empty<QuickPresetDefinition>();
-        public IReadOnlyList<string> LastWarnings => Array.Empty<string>();
-        public string UserPresetDirectory => Path.GetTempPath();
-        public string UserPresetPath => Path.Combine(Path.GetTempPath(), "quick-presets.json");
-        public Task ReloadAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
     private sealed class TempFile : IDisposable

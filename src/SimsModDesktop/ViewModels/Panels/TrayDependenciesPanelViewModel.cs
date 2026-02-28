@@ -1,8 +1,9 @@
+using SimsModDesktop.Application.Modules;
 using SimsModDesktop.ViewModels.Infrastructure;
 
 namespace SimsModDesktop.ViewModels.Panels;
 
-public sealed class TrayDependenciesPanelViewModel : ObservableObject
+public sealed class TrayDependenciesPanelViewModel : ObservableObject, ITrayDependenciesModuleState
 {
     private string _trayPath = string.Empty;
     private string _modsPath = string.Empty;
