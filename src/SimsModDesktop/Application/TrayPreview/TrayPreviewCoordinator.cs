@@ -117,6 +117,23 @@ public sealed class TrayPreviewCoordinator : ITrayPreviewCoordinator
         };
     }
 
+    public void Invalidate(string? trayRootPath = null)
+    {
+        _previewService.Invalidate(trayRootPath);
+
+        if (string.IsNullOrWhiteSpace(trayRootPath) ||
+            _activeInput is null ||
+            string.Equals(
+                Path.GetFullPath(_activeInput.TrayPath.Trim())
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                Path.GetFullPath(trayRootPath.Trim())
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            Reset();
+        }
+    }
+
     public void Reset()
     {
         _activeInput = null;

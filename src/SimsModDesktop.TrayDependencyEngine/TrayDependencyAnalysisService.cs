@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using SimsModDesktop.PackageCore;
 
 namespace SimsModDesktop.TrayDependencyEngine;
 
@@ -26,12 +27,15 @@ public sealed class TrayDependencyAnalysisService : ITrayDependencyAnalysisServi
     private readonly TrayBundleLoader _bundleLoader = new();
     private readonly TraySearchExtractor _searchExtractor = new();
     private readonly DirectMatchEngine _directMatchEngine = new();
-    private readonly DependencyExpandEngine _dependencyExpandEngine = new();
+    private readonly DependencyExpandEngine _dependencyExpandEngine;
     private readonly ModFileExporter _fileExporter = new();
 
-    public TrayDependencyAnalysisService(IPackageIndexCache packageIndexCache)
+    public TrayDependencyAnalysisService(
+        IPackageIndexCache packageIndexCache,
+        IDbpfResourceReader? resourceReader = null)
     {
         _packageIndexCache = packageIndexCache;
+        _dependencyExpandEngine = new DependencyExpandEngine(resourceReader ?? new DbpfResourceReader());
     }
 
     public Task<TrayDependencyAnalysisResult> AnalyzeAsync(

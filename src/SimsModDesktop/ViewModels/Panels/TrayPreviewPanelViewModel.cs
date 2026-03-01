@@ -1,19 +1,26 @@
 using SimsModDesktop.Application.Modules;
+using SimsModDesktop.ViewModels.Preview;
 using SimsModDesktop.ViewModels.Infrastructure;
 
 namespace SimsModDesktop.ViewModels.Panels;
 
-public sealed class TrayPreviewPanelViewModel : ObservableObject, ITrayPreviewModuleState
+public sealed class TrayPreviewPanelViewModel : TrayLikePreviewFilterViewModel, ITrayPreviewModuleState
 {
     private string _trayRoot = string.Empty;
-    private string _presetTypeFilter = "All";
-    private string _buildSizeFilter = "All";
-    private string _householdSizeFilter = "All";
-    private string _authorFilter = string.Empty;
-    private string _timeFilter = "All";
-    private string _searchQuery = string.Empty;
-    private string _layoutMode = "Entry";
-    private bool _enableDebugPreview;
+
+    public TrayPreviewPanelViewModel()
+    {
+        ShowPresetTypeFilter = true;
+        ShowBuildSizeFilter = false;
+        ShowHouseholdSizeFilter = true;
+        ShowAuthorFilter = true;
+        ShowTimeFilter = true;
+        ShowLayoutMode = true;
+        ShowDebugPreview = true;
+        SearchWatermark = "Item Name or Author ID";
+        PropertyChanged += OnSelfPropertyChanged;
+        UpdateSizeFilterVisibility();
+    }
 
     public string TrayRoot
     {
@@ -21,51 +28,20 @@ public sealed class TrayPreviewPanelViewModel : ObservableObject, ITrayPreviewMo
         set => SetProperty(ref _trayRoot, value);
     }
 
-    public string PresetTypeFilter
+    private void OnSelfPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        get => _presetTypeFilter;
-        set => SetProperty(ref _presetTypeFilter, value);
+        if (string.Equals(e.PropertyName, nameof(PresetTypeFilter), StringComparison.Ordinal))
+        {
+            UpdateSizeFilterVisibility();
+        }
     }
 
-    public string AuthorFilter
+    private void UpdateSizeFilterVisibility()
     {
-        get => _authorFilter;
-        set => SetProperty(ref _authorFilter, value);
-    }
-
-    public string BuildSizeFilter
-    {
-        get => _buildSizeFilter;
-        set => SetProperty(ref _buildSizeFilter, value);
-    }
-
-    public string HouseholdSizeFilter
-    {
-        get => _householdSizeFilter;
-        set => SetProperty(ref _householdSizeFilter, value);
-    }
-
-    public string TimeFilter
-    {
-        get => _timeFilter;
-        set => SetProperty(ref _timeFilter, value);
-    }
-
-    public string SearchQuery
-    {
-        get => _searchQuery;
-        set => SetProperty(ref _searchQuery, value);
-    }
-
-    public string LayoutMode
-    {
-        get => _layoutMode;
-        set => SetProperty(ref _layoutMode, value);
-    }
-
-    public bool EnableDebugPreview
-    {
-        get => _enableDebugPreview;
-        set => SetProperty(ref _enableDebugPreview, value);
+        ShowBuildSizeFilter =
+            string.Equals(PresetTypeFilter, "Lot", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(PresetTypeFilter, "Room", StringComparison.OrdinalIgnoreCase);
+        ShowHouseholdSizeFilter = string.Equals(PresetTypeFilter, "Household", StringComparison.OrdinalIgnoreCase) ||
+                                  string.Equals(PresetTypeFilter, "All", StringComparison.OrdinalIgnoreCase);
     }
 }

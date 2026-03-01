@@ -13,7 +13,7 @@ namespace SimsModDesktop.ViewModels.Shell;
 public sealed class MainShellViewModel : ObservableObject
 {
     private readonly MainWindowViewModel _workspaceVm;
-    private readonly SaveHouseholdsViewModel _savesVm;
+    private readonly SaveWorkspaceViewModel _savesVm;
     private readonly INavigationService _navigation;
     private readonly IFileDialogService _fileDialogService;
     private readonly ISettingsStore _settingsStore;
@@ -41,7 +41,7 @@ public sealed class MainShellViewModel : ObservableObject
 
     public MainShellViewModel(
         MainWindowViewModel workspaceVm,
-        SaveHouseholdsViewModel savesVm,
+        SaveWorkspaceViewModel savesVm,
         INavigationService navigation,
         IFileDialogService fileDialogService,
         ISettingsStore settingsStore,
@@ -73,7 +73,7 @@ public sealed class MainShellViewModel : ObservableObject
     }
 
     public MainWindowViewModel WorkspaceVm => _workspaceVm;
-    public SaveHouseholdsViewModel SavesVm => _savesVm;
+    public SaveWorkspaceViewModel SavesVm => _savesVm;
 
     public RelayCommand<string> SelectSectionCommand { get; }
     public AsyncRelayCommand LaunchGameCommand { get; }
@@ -106,6 +106,8 @@ public sealed class MainShellViewModel : ObservableObject
             OnPropertyChanged(nameof(IsSavesSectionSelected));
             OnPropertyChanged(nameof(IsSettingsSectionSelected));
             OnPropertyChanged(nameof(IsWorkspaceSectionVisible));
+            _workspaceVm.ModPreviewWorkspace.SetIsActive(_selectedSection == AppSection.Mods);
+            _savesVm.SetIsActive(_selectedSection == AppSection.Saves);
         }
     }
 
@@ -365,13 +367,12 @@ public sealed class MainShellViewModel : ObservableObject
         RequestedTheme = string.IsNullOrWhiteSpace(settings.Theme.RequestedTheme)
             ? "Dark"
             : settings.Theme.RequestedTheme;
+        SavesVm.LoadFromSettings(settings.Saves ?? new AppSettings.SavesSettings());
         GameExecutablePath = settings.GameLaunch.GameExecutablePath;
         ModsPath = settings.GameLaunch.ModsPath;
         TrayPath = settings.GameLaunch.TrayPath;
         SavesPath = settings.GameLaunch.SavesPath;
         Ts4RootPath = settings.GameLaunch.Ts4RootPath;
-        SavesVm.LoadFromSettings(settings.Saves ?? new AppSettings.SavesSettings());
-        SavesVm.SavesPath = SavesPath;
 
         _navigation.SelectSection(settings.Navigation.SelectedSection);
 

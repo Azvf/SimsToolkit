@@ -133,6 +133,10 @@ public sealed class AppSettings
     public sealed class SavesSettings
     {
         public string LastExportRoot { get; set; } = string.Empty;
+        public string SelectedSavePath { get; set; } = string.Empty;
+        public string SearchQuery { get; set; } = string.Empty;
+        public string HouseholdSizeFilter { get; set; } = "All";
+        public string LayoutMode { get; set; } = "Entry";
         public bool GenerateThumbnails { get; set; } = true;
     }
 

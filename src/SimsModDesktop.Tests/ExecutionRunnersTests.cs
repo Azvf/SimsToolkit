@@ -181,6 +181,10 @@ public sealed class ExecutionRunnersTests
             });
         }
 
+        public void Invalidate(string? trayRootPath = null)
+        {
+        }
+
         public void Reset()
         {
         }

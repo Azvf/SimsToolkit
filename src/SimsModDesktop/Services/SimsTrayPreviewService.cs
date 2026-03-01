@@ -118,6 +118,44 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         }, cancellationToken);
     }
 
+    public void Invalidate(string? trayRootPath = null)
+    {
+        if (string.IsNullOrWhiteSpace(trayRootPath))
+        {
+            lock (_cacheGate)
+            {
+                _snapshotCache.Clear();
+            }
+
+            lock (_metadataIndexGate)
+            {
+                _metadataIndexCache.Clear();
+            }
+
+            return;
+        }
+
+        var normalizedTrayRoot = NormalizeTrayRootPath(trayRootPath);
+        var cacheKeyPrefix = normalizedTrayRoot + "|";
+
+        lock (_cacheGate)
+        {
+            var staleKeys = _snapshotCache.Keys
+                .Where(key => key.StartsWith(cacheKeyPrefix, StringComparison.Ordinal))
+                .ToArray();
+
+            foreach (var staleKey in staleKeys)
+            {
+                _snapshotCache.Remove(staleKey);
+            }
+        }
+
+        lock (_metadataIndexGate)
+        {
+            _metadataIndexCache.Remove(normalizedTrayRoot);
+        }
+    }
+
     private CachedSnapshot GetOrBuildSnapshot(
         SimsTrayPreviewRequest request,
         CancellationToken cancellationToken)

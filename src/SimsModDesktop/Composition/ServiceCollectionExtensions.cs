@@ -12,12 +12,14 @@ using SimsModDesktop.Infrastructure.Localization;
 using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Infrastructure.Windowing;
 using SimsModDesktop.Models;
+using SimsModDesktop.PackageCore;
 using SimsModDesktop.Services;
 using SimsModDesktop.SaveData.Services;
 using SimsModDesktop.TrayDependencyEngine;
 using SimsModDesktop.ViewModels.Shell;
 using SimsModDesktop.ViewModels;
 using SimsModDesktop.ViewModels.Panels;
+using SimsModDesktop.ViewModels.Preview;
 using SimsModDesktop.ViewModels.Saves;
 using SimsModDesktop.Views;
 
@@ -43,6 +45,9 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<LocalthumbcacheThumbnailReader>();
         services.AddSingleton<ITrayThumbnailService, TrayThumbnailService>();
         services.AddSingleton<ISimsTrayPreviewService, SimsTrayPreviewService>();
+        services.AddSingleton<IModPreviewCatalogService, ModPreviewCatalogService>();
+        services.AddSingleton<IDbpfPackageCatalog, DbpfPackageCatalog>();
+        services.AddSingleton<IDbpfResourceReader, DbpfResourceReader>();
         services.AddSingleton<IPackageIndexCache, PackageIndexCache>();
         services.AddSingleton<ITrayDependencyExportService, TrayDependencyExportService>();
         services.AddSingleton<ITrayDependencyAnalysisService, TrayDependencyAnalysisService>();
@@ -52,7 +57,10 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<ISaveCatalogService, SaveCatalogService>();
         services.AddSingleton<ISaveHouseholdReader, SaveHouseholdReader>();
         services.AddSingleton<IHouseholdTrayExporter, HouseholdTrayExporter>();
+        services.AddSingleton<ISavePreviewCacheStore, SavePreviewCacheStore>();
+        services.AddSingleton<ISavePreviewCacheBuilder, SavePreviewCacheBuilder>();
         services.AddSingleton<ISaveHouseholdCoordinator, SaveHouseholdCoordinator>();
+        services.AddSingleton<ITrayDependenciesLauncher, TrayDependenciesLauncher>();
         return services;
     }
 
@@ -122,8 +130,10 @@ internal static class ServiceCollectionExtensions
 
     public static IServiceCollection AddSimsDesktopPresentation(this IServiceCollection services)
     {
+        services.AddSingleton<ModPreviewWorkspaceViewModel>();
+        services.AddSingleton<TrayPreviewWorkspaceViewModel>();
         services.AddSingleton<MainWindowViewModel>();
-        services.AddSingleton<SaveHouseholdsViewModel>();
+        services.AddSingleton<SaveWorkspaceViewModel>();
         services.AddSingleton<MainShellViewModel>();
         services.AddTransient<MainWindow>();
         return services;

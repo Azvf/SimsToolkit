@@ -13,6 +13,7 @@ using SimsModDesktop.Services;
 using SimsModDesktop.TrayDependencyEngine;
 using SimsModDesktop.ViewModels;
 using SimsModDesktop.ViewModels.Panels;
+using SimsModDesktop.ViewModels.Preview;
 
 namespace SimsModDesktop.Tests;
 
@@ -739,10 +740,18 @@ public sealed class MainWindowViewModelInteractionTests
             new TrayPreviewActionModule(trayPreview)
         });
         var trayPreviewCoordinator = new FakeTrayPreviewCoordinator();
+        var trayPreviewRunner = new TrayPreviewRunner(trayPreviewCoordinator);
+        var trayPreviewWorkspace = new TrayPreviewWorkspaceViewModel(
+            trayPreview,
+            trayPreviewRunner,
+            trayThumbnailService ?? new FailingTrayThumbnailService(),
+            fileDialogService ?? new FakeFileDialogService(),
+            trayDependencyExportService ?? new FakeTrayDependencyExportService(),
+            trayDependencies);
 
         return new MainWindowViewModel(
             new ToolkitExecutionRunner(execution),
-            new TrayPreviewRunner(trayPreviewCoordinator),
+            trayPreviewRunner,
             trayDependencyExportService ?? new FakeTrayDependencyExportService(),
             trayDependencyAnalysisService ?? new FakeTrayDependencyAnalysisService(),
             fileDialogService ?? new FakeFileDialogService(),
@@ -752,6 +761,7 @@ public sealed class MainWindowViewModelInteractionTests
             new MainWindowSettingsProjection(),
             moduleRegistry,
             new MainWindowPlanBuilder(moduleRegistry),
+            trayPreviewWorkspace,
             organize,
             flatten,
             normalize,
@@ -873,6 +883,10 @@ public sealed class MainWindowViewModelInteractionTests
                 LoadedPageCount = 1,
                 FromCache = false
             });
+        }
+
+        public void Invalidate(string? trayRootPath = null)
+        {
         }
 
         public void Reset()

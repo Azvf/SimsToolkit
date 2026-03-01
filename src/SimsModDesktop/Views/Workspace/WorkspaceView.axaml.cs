@@ -1,4 +1,3 @@
-using System.Collections.Specialized;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -34,32 +33,7 @@ public partial class WorkspaceView : UserControl
             return;
         }
 
-        if (_boundViewModel is not null)
-        {
-            _boundViewModel.PreviewItems.CollectionChanged -= OnPreviewItemsChanged;
-        }
-
         _boundViewModel = viewModel;
-        if (_boundViewModel is null)
-        {
-            return;
-        }
-
-        _boundViewModel.PreviewItems.CollectionChanged += OnPreviewItemsChanged;
-    }
-
-    private void OnPreviewItemsChanged(object? sender, NotifyCollectionChangedEventArgs e)
-    {
-        if (e.Action is not (NotifyCollectionChangedAction.Add or
-                             NotifyCollectionChangedAction.Reset or
-                             NotifyCollectionChangedAction.Replace))
-        {
-            return;
-        }
-
-        Dispatcher.UIThread.Post(
-            () => TrayPreviewScrollViewer?.ScrollToHome(),
-            DispatcherPriority.Background);
     }
 
     private void OnTrayPreviewOpenDetailsPointerPressed(object? sender, PointerPressedEventArgs e)

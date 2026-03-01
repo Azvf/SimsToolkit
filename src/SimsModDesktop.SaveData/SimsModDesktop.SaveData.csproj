@@ -8,4 +8,8 @@
   <ItemGroup>
     <PackageReference Include="protobuf-net" Version="3.2.30" />
   </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SimsModDesktop.PackageCore\SimsModDesktop.PackageCore.csproj" />
+  </ItemGroup>
 </Project>

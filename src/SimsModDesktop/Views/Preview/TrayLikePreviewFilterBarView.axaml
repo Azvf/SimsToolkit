@@ -1,0 +1,87 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:SimsModDesktop.ViewModels.Preview"
+             mc:Ignorable="d"
+             x:Class="SimsModDesktop.Views.Preview.TrayLikePreviewFilterBarView"
+             x:DataType="vm:TrayLikePreviewFilterViewModel">
+    <Grid ColumnDefinitions="Auto,*,Auto,*"
+          RowDefinitions="Auto,Auto,Auto"
+          ColumnSpacing="8"
+          RowSpacing="8">
+        <TextBlock VerticalAlignment="Center"
+                   Text="Preset Type"
+                   IsVisible="{Binding ShowPresetTypeFilter}" />
+        <ComboBox Grid.Column="1"
+                  ItemsSource="{Binding PresetTypeFilterOptions}"
+                  SelectedItem="{Binding PresetTypeFilter}"
+                  IsVisible="{Binding ShowPresetTypeFilter}" />
+
+        <TextBlock Grid.Column="2"
+                   VerticalAlignment="Center"
+                   Text="Author"
+                   IsVisible="{Binding ShowAuthorFilter}" />
+        <TextBox Grid.Column="3"
+                 Watermark="Author"
+                 Text="{Binding AuthorFilter}"
+                 IsVisible="{Binding ShowAuthorFilter}" />
+
+        <TextBlock Grid.Row="1"
+                   VerticalAlignment="Center"
+                   Text="Search" />
+        <TextBox Grid.Row="1"
+                 Grid.Column="1"
+                 Grid.ColumnSpan="3"
+                 Watermark="{Binding SearchWatermark}"
+                 Text="{Binding SearchQuery}" />
+
+        <TextBlock Grid.Row="2"
+                   VerticalAlignment="Center"
+                   Text="Build Size"
+                   IsVisible="{Binding ShowBuildSizeFilter}" />
+        <ComboBox Grid.Row="2"
+                  Grid.Column="1"
+                  ItemsSource="{Binding BuildSizeFilterOptions}"
+                  SelectedItem="{Binding BuildSizeFilter}"
+                  IsVisible="{Binding ShowBuildSizeFilter}" />
+
+        <TextBlock Grid.Row="2"
+                   VerticalAlignment="Center"
+                   Text="Household Size"
+                   IsVisible="{Binding ShowHouseholdSizeFilter}" />
+        <ComboBox Grid.Row="2"
+                  Grid.Column="1"
+                  ItemsSource="{Binding HouseholdSizeFilterOptions}"
+                  SelectedItem="{Binding HouseholdSizeFilter}"
+                  IsVisible="{Binding ShowHouseholdSizeFilter}" />
+
+        <TextBlock Grid.Row="2"
+                   Grid.Column="2"
+                   VerticalAlignment="Center"
+                   Text="Time"
+                   IsVisible="{Binding ShowTimeFilter}" />
+        <ComboBox Grid.Row="2"
+                  Grid.Column="3"
+                  ItemsSource="{Binding TimeFilterOptions}"
+                  SelectedItem="{Binding TimeFilter}"
+                  IsVisible="{Binding ShowTimeFilter}" />
+
+        <CheckBox Grid.Row="2"
+                  Grid.Column="2"
+                  Content="Debug Preview"
+                  IsChecked="{Binding EnableDebugPreview}"
+                  IsVisible="{Binding ShowDebugPreview}" />
+
+        <Grid Grid.Row="2"
+              Grid.Column="3"
+              ColumnDefinitions="Auto,*"
+              ColumnSpacing="8"
+              IsVisible="{Binding ShowLayoutMode}">
+            <TextBlock VerticalAlignment="Center" Text="Layout" />
+            <ComboBox Grid.Column="1"
+                      ItemsSource="{Binding LayoutModeOptions}"
+                      SelectedItem="{Binding LayoutMode}" />
+        </Grid>
+    </Grid>
+</UserControl>

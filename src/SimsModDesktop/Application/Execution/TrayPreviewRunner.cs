@@ -80,6 +80,11 @@ public sealed class TrayPreviewRunner : ITrayPreviewRunner
         return _trayPreviewCoordinator.TryGetCached(input, out result);
     }
 
+    public void Invalidate(string? trayRootPath = null)
+    {
+        _trayPreviewCoordinator.Invalidate(trayRootPath);
+    }
+
     public void Reset()
     {
         _trayPreviewCoordinator.Reset();

@@ -12,5 +12,7 @@ public interface ISimsTrayPreviewService
         SimsTrayPreviewRequest request,
         int pageIndex,
         CancellationToken cancellationToken = default);
+
+    void Invalidate(string? trayRootPath = null);
 }
 

@@ -10,6 +10,8 @@ public sealed class SaveHouseholdCoordinator : ISaveHouseholdCoordinator
     private readonly ISaveCatalogService _saveCatalogService;
     private readonly ISaveHouseholdReader _saveHouseholdReader;
     private readonly IHouseholdTrayExporter _householdTrayExporter;
+    private readonly ISavePreviewCacheStore _savePreviewCacheStore;
+    private readonly ISavePreviewCacheBuilder _savePreviewCacheBuilder;
     private readonly ITrayMetadataService _trayMetadataService;
     private readonly ISimsTrayPreviewService _simsTrayPreviewService;
     private readonly Dictionary<string, SaveHouseholdSnapshot> _snapshotCache =
@@ -19,12 +21,16 @@ public sealed class SaveHouseholdCoordinator : ISaveHouseholdCoordinator
         ISaveCatalogService saveCatalogService,
         ISaveHouseholdReader saveHouseholdReader,
         IHouseholdTrayExporter householdTrayExporter,
+        ISavePreviewCacheStore savePreviewCacheStore,
+        ISavePreviewCacheBuilder savePreviewCacheBuilder,
         ITrayMetadataService trayMetadataService,
         ISimsTrayPreviewService simsTrayPreviewService)
     {
         _saveCatalogService = saveCatalogService;
         _saveHouseholdReader = saveHouseholdReader;
         _householdTrayExporter = householdTrayExporter;
+        _savePreviewCacheStore = savePreviewCacheStore;
+        _savePreviewCacheBuilder = savePreviewCacheBuilder;
         _trayMetadataService = trayMetadataService;
         _simsTrayPreviewService = simsTrayPreviewService;
     }
@@ -50,6 +56,35 @@ public sealed class SaveHouseholdCoordinator : ISaveHouseholdCoordinator
             error = ex.Message;
             return false;
         }
+    }
+
+    public bool TryGetPreviewCacheManifest(string saveFilePath, out SavePreviewCacheManifest manifest)
+    {
+        return _savePreviewCacheStore.TryLoad(saveFilePath, out manifest);
+    }
+
+    public bool IsPreviewCacheCurrent(string saveFilePath, SavePreviewCacheManifest manifest)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        return _savePreviewCacheStore.IsCurrent(saveFilePath, manifest);
+    }
+
+    public string GetPreviewCacheRoot(string saveFilePath)
+    {
+        return _savePreviewCacheStore.GetCacheRootPath(saveFilePath);
+    }
+
+    public Task<SavePreviewCacheBuildResult> BuildPreviewCacheAsync(
+        string saveFilePath,
+        IProgress<SavePreviewCacheBuildProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        return _savePreviewCacheBuilder.BuildAsync(saveFilePath, progress, cancellationToken);
+    }
+
+    public void ClearPreviewCache(string saveFilePath)
+    {
+        _savePreviewCacheStore.Clear(saveFilePath);
     }
 
     public SaveHouseholdExportResult Export(SaveHouseholdExportRequest request)

@@ -1,3 +1,5 @@
+using SimsModDesktop.PackageCore;
+
 namespace SimsModDesktop.TrayDependencyEngine;
 
 public interface ITrayDependencyExportService
@@ -180,6 +182,12 @@ public sealed record PackageIndexSnapshot
 {
     public required string ModsRootPath { get; init; }
     public required IReadOnlyList<IndexedPackageFile> Packages { get; init; }
+    internal IReadOnlyDictionary<TrayResourceKey, ResolvedResourceRef[]> ExactIndex { get; init; } =
+        new Dictionary<TrayResourceKey, ResolvedResourceRef[]>();
+    internal IReadOnlyDictionary<TypeInstanceKey, ResolvedResourceRef[]> TypeInstanceIndex { get; init; } =
+        new Dictionary<TypeInstanceKey, ResolvedResourceRef[]>();
+    internal IReadOnlyDictionary<ulong, ResolvedResourceRef[]> SupportedInstanceIndex { get; init; } =
+        new Dictionary<ulong, ResolvedResourceRef[]>();
 }
 
 public sealed record IndexedPackageFile

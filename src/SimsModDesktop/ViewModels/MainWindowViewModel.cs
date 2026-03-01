@@ -18,6 +18,7 @@ using SimsModDesktop.Services;
 using SimsModDesktop.TrayDependencyEngine;
 using SimsModDesktop.ViewModels.Infrastructure;
 using SimsModDesktop.ViewModels.Panels;
+using SimsModDesktop.ViewModels.Preview;
 
 namespace SimsModDesktop.ViewModels;
 
@@ -44,7 +45,6 @@ public sealed class MainWindowViewModel : ObservableObject
     private CancellationTokenSource? _executionCts;
     private CancellationTokenSource? _validationDebounceCts;
     private CancellationTokenSource? _settingsPersistDebounceCts;
-    private CancellationTokenSource? _trayPreviewAutoLoadDebounceCts;
     private CancellationTokenSource? _trayPreviewThumbnailCts;
     private bool _isTrayPreviewPageLoading;
     private bool _isBusy;
@@ -92,6 +92,8 @@ public sealed class MainWindowViewModel : ObservableObject
         IMainWindowSettingsProjection settingsProjection,
         IActionModuleRegistry moduleRegistry,
         IMainWindowPlanBuilder planBuilder,
+        ModPreviewWorkspaceViewModel modPreviewWorkspace,
+        TrayPreviewWorkspaceViewModel trayPreviewWorkspace,
         OrganizePanelViewModel organize,
         FlattenPanelViewModel flatten,
         NormalizePanelViewModel normalize,
@@ -115,6 +117,8 @@ public sealed class MainWindowViewModel : ObservableObject
         _settingsProjection = settingsProjection;
         _moduleRegistry = moduleRegistry;
         _planBuilder = planBuilder;
+        ModPreviewWorkspace = modPreviewWorkspace;
+        TrayPreviewWorkspace = trayPreviewWorkspace;
 
         Organize = organize;
         Flatten = flatten;
@@ -193,7 +197,9 @@ public sealed class MainWindowViewModel : ObservableObject
     public FindDupPanelViewModel FindDup { get; }
     public TrayDependenciesPanelViewModel TrayDependencies { get; }
     public ModPreviewPanelViewModel ModPreview { get; }
+    public ModPreviewWorkspaceViewModel ModPreviewWorkspace { get; }
     public TrayPreviewPanelViewModel TrayPreview { get; }
+    public TrayPreviewWorkspaceViewModel TrayPreviewWorkspace { get; }
     public SharedFileOpsPanelViewModel SharedFileOps { get; }
     public ObservableCollection<TrayPreviewListItemViewModel> PreviewItems { get; }
     public ObservableCollection<TrayExportTaskItemViewModel> TrayExportTasks { get; }
@@ -314,10 +320,6 @@ public sealed class MainWindowViewModel : ObservableObject
                 CancelTrayPreviewThumbnailLoading();
             }
 
-            if (_isInitialized && value == AppWorkspace.TrayPreview)
-            {
-                _ = TryAutoLoadTrayPreviewAsync();
-            }
         }
     }
 
@@ -735,17 +737,12 @@ public sealed class MainWindowViewModel : ObservableObject
         _isInitialized = true;
         RefreshValidationNow();
 
-        if (Workspace == AppWorkspace.TrayPreview)
-        {
-            _ = TryAutoLoadTrayPreviewAsync();
-        }
     }
 
     public async Task PersistSettingsAsync()
     {
         _validationDebounceCts?.Cancel();
         _settingsPersistDebounceCts?.Cancel();
-        _trayPreviewAutoLoadDebounceCts?.Cancel();
         CancelTrayPreviewThumbnailLoading();
         await SaveCurrentSettingsAsync();
     }
@@ -859,29 +856,7 @@ public sealed class MainWindowViewModel : ObservableObject
 
     private void QueueTrayPreviewAutoLoad()
     {
-        _trayPreviewAutoLoadDebounceCts?.Cancel();
-        _trayPreviewAutoLoadDebounceCts?.Dispose();
-        _trayPreviewAutoLoadDebounceCts = new CancellationTokenSource();
-        var cancellationToken = _trayPreviewAutoLoadDebounceCts.Token;
-
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await Task.Delay(300, cancellationToken);
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-
-            if (cancellationToken.IsCancellationRequested || !IsTrayPreviewWorkspace || !HasValidTrayPreviewPath)
-            {
-                return;
-            }
-
-            ExecuteOnUi(() => _ = TryAutoLoadTrayPreviewAsync());
-        }, cancellationToken);
+        // Tray preview auto-load now lives in TrayPreviewWorkspace.Surface.
     }
 
     private void QueueSettingsPersist()
@@ -1458,6 +1433,25 @@ public sealed class MainWindowViewModel : ObservableObject
             IsBusy = false;
             RefreshValidationNow();
         }
+    }
+
+    public async Task RunTrayDependenciesForTrayItemAsync(string trayPath, string trayItemKey)
+    {
+        if (string.IsNullOrWhiteSpace(trayPath))
+        {
+            throw new ArgumentException("Tray path is required.", nameof(trayPath));
+        }
+
+        if (string.IsNullOrWhiteSpace(trayItemKey))
+        {
+            throw new ArgumentException("Tray item key is required.", nameof(trayItemKey));
+        }
+
+        TrayDependencies.TrayPath = Path.GetFullPath(trayPath.Trim());
+        TrayDependencies.TrayItemKey = trayItemKey.Trim();
+        Workspace = AppWorkspace.Toolkit;
+        SelectedAction = SimsAction.TrayDependencies;
+        await RunTrayDependenciesAsync();
     }
 
     private async Task RunTrayPreviewAsync(TrayPreviewInput? explicitInput = null)

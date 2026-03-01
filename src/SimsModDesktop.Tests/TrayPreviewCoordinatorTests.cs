@@ -121,6 +121,10 @@ public sealed class TrayPreviewCoordinatorTests
                 Items = items
             });
         }
+
+        public void Invalidate(string? trayRootPath = null)
+        {
+        }
     }
 }
 

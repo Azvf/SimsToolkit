@@ -8,4 +8,8 @@
   <ItemGroup>
     <Compile Remove="obj-test-output\**\*.cs" />
   </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SimsModDesktop.PackageCore\SimsModDesktop.PackageCore.csproj" />
+  </ItemGroup>
 </Project>

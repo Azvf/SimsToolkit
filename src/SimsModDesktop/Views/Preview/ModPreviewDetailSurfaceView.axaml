@@ -1,0 +1,161 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:SimsModDesktop.ViewModels.Preview"
+             xmlns:models="clr-namespace:SimsModDesktop.Models"
+             mc:Ignorable="d"
+             x:Class="SimsModDesktop.Views.Preview.ModPreviewDetailSurfaceView"
+             x:DataType="vm:ModPreviewWorkspaceViewModel">
+    <Grid MinHeight="0">
+        <Border Classes="tray-preview-empty-state"
+                IsVisible="{Binding IsDetailPlaceholderVisible}">
+            <StackPanel HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Spacing="8">
+                <TextBlock Classes="tray-preview-empty-title"
+                           Text="Select a mod to inspect details." />
+                <TextBlock Classes="tray-preview-empty-description"
+                           Text="The right pane will show overview, resource placeholders, and conflict notes." />
+            </StackPanel>
+        </Border>
+
+        <ScrollViewer IsVisible="{Binding HasSelectedItem}"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled"
+                      ClipToBounds="True">
+            <StackPanel Spacing="10">
+                <StackPanel Spacing="4">
+                    <Grid ColumnDefinitions="*,Auto,Auto"
+                          ColumnSpacing="8">
+                        <StackPanel Spacing="2">
+                            <TextBlock Classes="section-title"
+                                       Text="{Binding SelectedDetail.DisplayTitle}" />
+                            <TextBlock Classes="helper-text"
+                                       Text="{Binding SelectedDetail.DisplaySubtitle}" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="1"
+                                   Classes="helper-text"
+                                   VerticalAlignment="Top"
+                                   Text="{Binding SelectedDetail.PackageType}" />
+                        <TextBlock Grid.Column="2"
+                                   Classes="helper-text"
+                                   VerticalAlignment="Top"
+                                   Text="{Binding SelectedDetail.Scope}" />
+                    </Grid>
+                    <TextBlock Classes="helper-text"
+                               Text="{Binding SelectedDetail.RelativePath}"
+                               TextTrimming="CharacterEllipsis" />
+                    <TextBlock Classes="helper-text"
+                               Text="{Binding SelectedDetail.FullPath}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal"
+                            Spacing="8">
+                    <Button Classes="secondary"
+                            Content="Open Folder"
+                            Command="{Binding OpenSelectedFolderCommand}" />
+                    <Button Classes="secondary"
+                            Content="Show File"
+                            Command="{Binding OpenSelectedFileCommand}" />
+                </StackPanel>
+
+                <Border Classes="card-muted"
+                        Padding="12">
+                    <StackPanel Spacing="6">
+                        <TextBlock FontWeight="SemiBold"
+                                   Text="Package Overview" />
+                        <ItemsControl ItemsSource="{Binding SelectedDetail.OverviewRows}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="models:ModPreviewDetailRow">
+                                    <Grid ColumnDefinitions="120,*"
+                                          ColumnSpacing="8"
+                                          Margin="0,0,0,6">
+                                        <TextBlock Classes="helper-text"
+                                                   Text="{Binding Label}" />
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding Value}"
+                                                   TextWrapping="Wrap" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <Border Classes="card-muted"
+                        Padding="12">
+                    <StackPanel Spacing="6">
+                        <TextBlock FontWeight="SemiBold"
+                                   Text="Preview / Resources" />
+                        <TextBlock Classes="helper-text"
+                                   Text="{Binding SelectedDetail.PreviewStatusText}"
+                                   TextWrapping="Wrap" />
+                        <ItemsControl ItemsSource="{Binding SelectedDetail.ResourceRows}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="models:ModPreviewDetailRow">
+                                    <Grid ColumnDefinitions="120,*"
+                                          ColumnSpacing="8"
+                                          Margin="0,0,0,6">
+                                        <TextBlock Classes="helper-text"
+                                                   Text="{Binding Label}" />
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding Value}"
+                                                   TextWrapping="Wrap" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <Border Classes="card-muted"
+                        Padding="12">
+                    <StackPanel Spacing="6">
+                        <TextBlock FontWeight="SemiBold"
+                                   Text="Conflict / Override Notes" />
+                        <ItemsControl ItemsSource="{Binding SelectedDetail.ConflictRows}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="models:ModPreviewDetailRow">
+                                    <Grid ColumnDefinitions="120,*"
+                                          ColumnSpacing="8"
+                                          Margin="0,0,0,6">
+                                        <TextBlock Classes="helper-text"
+                                                   Text="{Binding Label}" />
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding Value}"
+                                                   TextWrapping="Wrap" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <Border Classes="card-muted"
+                        Padding="12">
+                    <StackPanel Spacing="6">
+                        <TextBlock FontWeight="SemiBold"
+                                   Text="File Inventory" />
+                        <ItemsControl ItemsSource="{Binding SelectedDetail.FileRows}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="models:ModPreviewDetailRow">
+                                    <Grid ColumnDefinitions="120,*"
+                                          ColumnSpacing="8"
+                                          Margin="0,0,0,6">
+                                        <TextBlock Classes="helper-text"
+                                                   Text="{Binding Label}" />
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding Value}"
+                                                   TextWrapping="Wrap" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</UserControl>

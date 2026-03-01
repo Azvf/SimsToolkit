@@ -15,6 +15,8 @@ public interface ITrayPreviewRunner
 
     bool TryGetCached(TrayPreviewInput input, out TrayPreviewLoadResult result);
 
+    void Invalidate(string? trayRootPath = null);
+
     void Reset();
 }
 

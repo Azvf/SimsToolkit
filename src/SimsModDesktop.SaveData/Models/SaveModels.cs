@@ -82,6 +82,10 @@ public sealed class SaveHouseholdExportRequest
     public string SourceSavePath { get; init; } = string.Empty;
     public ulong HouseholdId { get; init; }
     public string ExportRootPath { get; init; } = string.Empty;
+    public string? OutputDirectoryOverride { get; init; }
+    public ulong? InstanceIdOverride { get; init; }
+    public string? MetadataNameOverride { get; init; }
+    public string? MetadataDescriptionOverride { get; init; }
     public string CreatorName { get; init; } = string.Empty;
     public ulong CreatorId { get; init; }
     public bool GenerateThumbnails { get; init; } = true;

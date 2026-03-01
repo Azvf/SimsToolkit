@@ -1,6 +1,6 @@
 using EA.Sims4.Persistence;
 using ProtoBuf;
-using SimsModDesktop.SaveData.Formats;
+using SimsModDesktop.PackageCore;
 using SimsModDesktop.SaveData.Models;
 
 namespace SimsModDesktop.SaveData.Services;
@@ -8,6 +8,12 @@ namespace SimsModDesktop.SaveData.Services;
 public sealed class SaveHouseholdReader : ISaveHouseholdReader
 {
     private const uint SaveDataResourceType = 0x0000000D;
+    private readonly IDbpfResourceReader _resourceReader;
+
+    public SaveHouseholdReader(IDbpfResourceReader? resourceReader = null)
+    {
+        _resourceReader = resourceReader ?? new DbpfResourceReader();
+    }
 
     public SaveHouseholdSnapshot Load(string saveFilePath)
     {
@@ -17,14 +23,27 @@ public sealed class SaveHouseholdReader : ISaveHouseholdReader
             throw new FileNotFoundException("Save file was not found.", saveFilePath);
         }
 
-        var package = DbpfPackageReader.ReadPackage(saveFilePath);
-        var saveDataEntry = package.Entries.FirstOrDefault(entry => !entry.IsDeleted && entry.Type == SaveDataResourceType);
+        var package = DbpfPackageIndexReader.ReadPackageIndex(saveFilePath);
+        DbpfIndexEntry? saveDataEntry = null;
+        for (var i = 0; i < package.Entries.Length; i++)
+        {
+            var candidate = package.Entries[i];
+            if (candidate.IsDeleted || candidate.Type != SaveDataResourceType)
+            {
+                continue;
+            }
+
+            saveDataEntry = candidate;
+            break;
+        }
+
         if (saveDataEntry is null)
         {
             throw new InvalidDataException("SaveGameData resource (0x0000000D) was not found.");
         }
 
-        if (!DbpfPackageReader.TryReadResourceBytes(saveFilePath, saveDataEntry, out var bytes, out var error))
+        using var session = _resourceReader.OpenSession(saveFilePath);
+        if (!session.TryReadBytes(saveDataEntry.Value, out var bytes, out var error))
         {
             throw new InvalidDataException(error ?? "Failed to read save resource.");
         }
@@ -51,7 +70,7 @@ public sealed class SaveHouseholdReader : ISaveHouseholdReader
         var households = new List<SaveHouseholdItem>(householdIndex.Count);
         foreach (var household in householdIndex.Values.OrderBy(ResolveHouseholdSortKey, StringComparer.OrdinalIgnoreCase))
         {
-            var memberIds = household.sims?.ids ?? Array.Empty<ulong>();
+            var memberIds = GetDistinctMemberIds(household.sims?.ids);
             var members = new List<SaveMemberItem>(memberIds.Length);
             var missingMemberCount = 0;
             foreach (var memberId in memberIds)
@@ -164,6 +183,28 @@ public sealed class SaveHouseholdReader : ISaveHouseholdReader
     private static uint NormalizeSpecies(uint rawSpecies)
     {
         return rawSpecies;
+    }
+
+    private static ulong[] GetDistinctMemberIds(ulong[]? rawMemberIds)
+    {
+        if (rawMemberIds is null || rawMemberIds.Length == 0)
+        {
+            return Array.Empty<ulong>();
+        }
+
+        var seen = new HashSet<ulong>();
+        var unique = new List<ulong>(rawMemberIds.Length);
+        foreach (var memberId in rawMemberIds)
+        {
+            if (memberId == 0 || !seen.Add(memberId))
+            {
+                continue;
+            }
+
+            unique.Add(memberId);
+        }
+
+        return unique.ToArray();
     }
 
     private static bool IsHumanLikeSpecies(uint species)

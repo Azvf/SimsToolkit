@@ -1,0 +1,90 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:models="clr-namespace:SimsModDesktop.Models"
+             mc:Ignorable="d"
+             x:Class="SimsModDesktop.Views.Preview.TrayItemDetailSurfaceView"
+             x:DataType="models:SimsTrayPreviewItem">
+    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Spacing="10">
+            <StackPanel Spacing="4">
+                <TextBlock FontWeight="SemiBold"
+                           Text="{Binding DisplayTitle}"
+                           TextWrapping="Wrap" />
+                <TextBlock Classes="helper-text"
+                           IsVisible="{Binding HasDisplaySubtitle}"
+                           Text="{Binding DisplaySubtitle}"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+
+            <Border Classes="card-muted"
+                    Padding="12"
+                    IsVisible="{Binding HasDisplayPrimaryMeta}">
+                <TextBlock Text="{Binding DisplayPrimaryMeta}"
+                           TextWrapping="Wrap" />
+            </Border>
+
+            <Border Classes="card-muted"
+                    Padding="12"
+                    IsVisible="{Binding HasDisplaySecondaryMeta}">
+                <TextBlock Classes="helper-text"
+                           Text="{Binding DisplaySecondaryMeta}"
+                           TextWrapping="Wrap" />
+            </Border>
+
+            <Border Classes="card-muted"
+                    Padding="12"
+                    IsVisible="{Binding HasDisplayTertiaryMeta}">
+                <TextBlock Classes="helper-text"
+                           Text="{Binding DisplayTertiaryMeta}"
+                           TextWrapping="Wrap" />
+            </Border>
+
+            <Border Classes="card-muted"
+                    Padding="12"
+                    IsVisible="{Binding HasDisplayDescription}">
+                <StackPanel Spacing="6">
+                    <TextBlock Classes="sub-title"
+                               Text="Description" />
+                    <TextBlock Text="{Binding DisplayDescription}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <Border Classes="card-muted"
+                    Padding="12">
+                <StackPanel Spacing="8">
+                    <TextBlock Classes="sub-title"
+                               Text="Household Members" />
+                    <ItemsControl ItemsSource="{Binding ChildItems}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="models:SimsTrayPreviewItem">
+                                <Border Classes="card"
+                                        Width="180"
+                                        Margin="0,0,10,10"
+                                        Padding="10">
+                                    <StackPanel Spacing="4">
+                                        <TextBlock FontWeight="SemiBold"
+                                                   Text="{Binding DisplayTitle}"
+                                                   TextWrapping="Wrap" />
+                                        <TextBlock Classes="helper-text"
+                                                   IsVisible="{Binding HasDisplaySubtitle}"
+                                                   Text="{Binding DisplaySubtitle}"
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

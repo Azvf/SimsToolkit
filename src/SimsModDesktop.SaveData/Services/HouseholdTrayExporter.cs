@@ -13,9 +13,12 @@ public sealed class HouseholdTrayExporter : IHouseholdTrayExporter
     private const uint HouseholdBinaryType = 2;
     private const uint HouseholdPortraitPrimaryType = 0x10;
     private const uint HouseholdPortraitSecondaryType = 0x11;
+    private const int EncodedImageHeaderSize = 24;
     private const int MaxHouseholdMembers = 8;
-    private static readonly byte[] PlaceholderPngBytes = Convert.FromBase64String(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9q24gAAAAASUVORK5CYII=");
+    private static ReadOnlySpan<byte> EncodedImageXorKey => [0x41, 0x25, 0xE6, 0xCD, 0x47, 0xBA, 0xB2, 0x1A];
+    private static readonly byte[] PlaceholderJpegBytes = Convert.FromBase64String(
+        "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAAQABADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDj/uf7O38MY/75xjZ/s42fwbP3B9z/AGdv4Yx/3zjGz/Zxs/g2fuD7n+zt/DGP++cY2f7ONn8Gz9wfc/2dv4Yx/wB84xs/2cbP4Nn7j+jz8CP/2Q==");
+    private static readonly byte[] PlaceholderEncodedImageBytes = BuildEncodedPlaceholderImageBytes();
 
     private readonly ISaveHouseholdReader _saveHouseholdReader;
 
@@ -54,8 +57,16 @@ public sealed class HouseholdTrayExporter : IHouseholdTrayExporter
                 return Failed("The raw household payload was not available for export.");
             }
 
-            var instanceId = GenerateInstanceId();
-            var exportDirectory = CreateUniqueExportDirectory(request.ExportRootPath, household.Name, household.HouseholdId);
+            var instanceId = request.InstanceIdOverride.GetValueOrDefault();
+            if (instanceId == 0)
+            {
+                instanceId = GenerateInstanceId();
+            }
+
+            var hasOutputOverride = !string.IsNullOrWhiteSpace(request.OutputDirectoryOverride);
+            var exportDirectory = hasOutputOverride
+                ? PrepareOutputDirectory(request.OutputDirectoryOverride!)
+                : CreateUniqueExportDirectory(request.ExportRootPath, household.Name, household.HouseholdId);
             var writtenFiles = new List<string>();
             var warnings = new List<string>();
 
@@ -96,7 +107,7 @@ public sealed class HouseholdTrayExporter : IHouseholdTrayExporter
                 var expectedSgiCount = request.GenerateThumbnails ? Math.Min(household.HouseholdSize, MaxHouseholdMembers) : 0;
                 if (!ValidateWrittenFiles(writtenFiles, expectedSgiCount))
                 {
-                    SafeDeleteDirectory(exportDirectory);
+                    CleanupFailedExport(exportDirectory, writtenFiles, hasOutputOverride);
                     return Failed("The exported tray bundle is incomplete.");
                 }
 
@@ -111,7 +122,7 @@ public sealed class HouseholdTrayExporter : IHouseholdTrayExporter
             }
             catch (Exception ex)
             {
-                SafeDeleteDirectory(exportDirectory);
+                CleanupFailedExport(exportDirectory, writtenFiles, hasOutputOverride);
                 return Failed(ex.Message);
             }
         }
@@ -149,7 +160,7 @@ public sealed class HouseholdTrayExporter : IHouseholdTrayExporter
 
     private static void WritePlaceholderImage(string path)
     {
-        File.WriteAllBytes(path, PlaceholderPngBytes);
+        File.WriteAllBytes(path, PlaceholderEncodedImageBytes);
     }
 
     private static TrayMetadata BuildTrayMetadata(
@@ -157,12 +168,17 @@ public sealed class HouseholdTrayExporter : IHouseholdTrayExporter
         SaveHouseholdItem household,
         SaveHouseholdExportRequest request)
     {
+        var effectiveName = string.IsNullOrWhiteSpace(request.MetadataNameOverride)
+            ? household.Name
+            : request.MetadataNameOverride.Trim();
+        var effectiveDescription = request.MetadataDescriptionOverride ?? household.Description;
+
         var payload = new TrayMetadata
         {
             id = instanceId,
             type = ExchangeItemTypes.EXCHANGE_HOUSEHOLD,
-            name = household.Name,
-            description = household.Description,
+            name = effectiveName,
+            description = effectiveDescription,
             creator_id = request.CreatorId,
             creator_name = request.CreatorName,
             item_timestamp = checked((ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds()),
@@ -227,6 +243,23 @@ public sealed class HouseholdTrayExporter : IHouseholdTrayExporter
         return value;
     }
 
+    private static byte[] BuildEncodedPlaceholderImageBytes()
+    {
+        var payload = new byte[PlaceholderJpegBytes.Length];
+        PlaceholderJpegBytes.CopyTo(payload, 0);
+
+        var encoded = new byte[EncodedImageHeaderSize + payload.Length];
+        BinaryPrimitives.WriteUInt32LittleEndian(encoded.AsSpan(0, 4), checked((uint)payload.Length));
+
+        var key = EncodedImageXorKey;
+        for (var i = 0; i < payload.Length; i++)
+        {
+            encoded[EncodedImageHeaderSize + i] = (byte)(payload[i] ^ key[i % key.Length]);
+        }
+
+        return encoded;
+    }
+
     private static string CreateUniqueExportDirectory(string exportRootPath, string householdName, ulong householdId)
     {
         var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
@@ -250,6 +283,13 @@ public sealed class HouseholdTrayExporter : IHouseholdTrayExporter
         }
 
         throw new IOException("Unable to create a unique export directory.");
+    }
+
+    private static string PrepareOutputDirectory(string outputDirectory)
+    {
+        var fullPath = Path.GetFullPath(outputDirectory.Trim());
+        Directory.CreateDirectory(fullPath);
+        return fullPath;
     }
 
     private static string BuildFileName(uint type, ulong instanceId, string extension)
@@ -285,6 +325,34 @@ public sealed class HouseholdTrayExporter : IHouseholdTrayExporter
         catch
         {
         }
+    }
+
+    private static void SafeDeleteFiles(IEnumerable<string> paths)
+    {
+        foreach (var path in paths.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private static void CleanupFailedExport(string exportDirectory, IReadOnlyCollection<string> writtenFiles, bool usedOutputOverride)
+    {
+        if (usedOutputOverride)
+        {
+            SafeDeleteFiles(writtenFiles);
+            return;
+        }
+
+        SafeDeleteDirectory(exportDirectory);
     }
 
     private static SaveHouseholdExportResult Failed(string error)

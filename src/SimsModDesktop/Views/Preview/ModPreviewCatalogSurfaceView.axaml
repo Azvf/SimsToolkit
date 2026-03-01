@@ -1,0 +1,124 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:SimsModDesktop.ViewModels.Preview"
+             mc:Ignorable="d"
+             x:Class="SimsModDesktop.Views.Preview.ModPreviewCatalogSurfaceView"
+             x:Name="CatalogRoot"
+             x:DataType="vm:ModPreviewWorkspaceViewModel">
+    <Grid MinHeight="0">
+        <ListBox IsVisible="{Binding HasItems}"
+                 BorderThickness="0"
+                 Background="Transparent"
+                 SelectedItem="{Binding SelectedItem, Mode=TwoWay}"
+                 ItemsSource="{Binding CatalogItems}"
+                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+            <ListBox.Styles>
+                <Style Selector="ListBoxItem">
+                    <Setter Property="Padding" Value="0" />
+                    <Setter Property="Margin" Value="0,0,0,8" />
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                    <Setter Property="Background" Value="Transparent" />
+                    <Setter Property="BorderThickness" Value="0" />
+                </Style>
+            </ListBox.Styles>
+            <ListBox.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <VirtualizingStackPanel />
+                </ItemsPanelTemplate>
+            </ListBox.ItemsPanel>
+            <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:ModPreviewListItemViewModel">
+                    <Border Classes="card tray-preview-item-card"
+                            Classes.selected="{Binding IsSelected}"
+                            Padding="10">
+                        <Grid ColumnDefinitions="72,*"
+                              ColumnSpacing="10">
+                            <Border Width="72"
+                                    Height="72"
+                                    CornerRadius="10"
+                                    BorderThickness="1"
+                                    BorderBrush="{DynamicResource Brush.Border}"
+                                    Background="{DynamicResource Brush.Surface}">
+                                <StackPanel HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            Spacing="4">
+                                    <TextBlock FontWeight="SemiBold"
+                                               HorizontalAlignment="Center"
+                                               Text="{Binding PreviewLabelText}" />
+                                    <TextBlock Classes="helper-text"
+                                               HorizontalAlignment="Center"
+                                               Text="{Binding Item.Scope}" />
+                                </StackPanel>
+                            </Border>
+
+                            <StackPanel Grid.Column="1"
+                                        Spacing="4">
+                                <Grid ColumnDefinitions="*,Auto"
+                                      ColumnSpacing="8">
+                                    <TextBlock FontWeight="SemiBold"
+                                               Text="{Binding Item.DisplayTitle}"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="1"
+                                               Classes="helper-text"
+                                               Text="{Binding TypeBadgeText}" />
+                                </Grid>
+                                <TextBlock Classes="helper-text"
+                                           Text="{Binding Item.DisplaySubtitle}"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding MetaText}"
+                                           TextTrimming="CharacterEllipsis" />
+                                <Grid ColumnDefinitions="*,Auto"
+                                      ColumnSpacing="8">
+                                    <TextBlock Classes="helper-text"
+                                               Text="{Binding Item.RelativePath}"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="1"
+                                               Classes="helper-text"
+                                               Text="{Binding ScopeBadgeText}" />
+                                </Grid>
+                                <TextBlock Classes="helper-text"
+                                           IsVisible="{Binding Item.HasConflictHint}"
+                                           Text="{Binding ConflictText}"
+                                           TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+
+        <Border Classes="tray-preview-empty-state"
+                IsVisible="{Binding IsLoadingStateVisible}">
+            <StackPanel HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Spacing="8">
+                <TextBlock Classes="tray-preview-empty-title"
+                           Text="Loading mod catalog..." />
+                <ProgressBar Width="220"
+                             Height="8"
+                             IsIndeterminate="True" />
+            </StackPanel>
+        </Border>
+
+        <Border Classes="tray-preview-empty-state"
+                IsVisible="{Binding IsEmptyStateVisible}">
+            <StackPanel HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Spacing="8">
+                <TextBlock Classes="tray-preview-empty-title"
+                           Text="{Binding SummaryText}" />
+                <TextBlock Classes="tray-preview-empty-description"
+                           Text="{Binding StatusText}"
+                           TextAlignment="Center" />
+                <Button Classes="secondary"
+                        MinWidth="150"
+                        IsVisible="{Binding HasValidModsPath}"
+                        Content="Refresh"
+                        Command="{Binding RefreshCommand}" />
+            </StackPanel>
+        </Border>
+    </Grid>
+</UserControl>

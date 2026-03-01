@@ -13,6 +13,7 @@ using SimsModDesktop.Services;
 using SimsModDesktop.TrayDependencyEngine;
 using SimsModDesktop.ViewModels;
 using SimsModDesktop.ViewModels.Panels;
+using SimsModDesktop.ViewModels.Preview;
 using SimsModDesktop.ViewModels.Shell;
 using SimsModDesktop.ViewModels.Saves;
 
@@ -104,11 +105,17 @@ public sealed class MainShellViewModelTests
         var settingsStore = new FakeSettingsStore(new AppSettings());
         var workspaceVm = CreateWorkspaceViewModel(settingsStore);
         var fileDialog = new FakeFileDialogService();
-        var savesVm = new SaveHouseholdsViewModel(new FakeSaveHouseholdCoordinator(), fileDialog);
+        var navigation = new NavigationService();
+        var savesVm = new SaveWorkspaceViewModel(
+            new FakeSaveHouseholdCoordinator(),
+            fileDialog,
+            new TrayDependenciesLauncher(workspaceVm, workspaceVm.TrayDependencies, navigation),
+            new TrayPreviewRunner(new FakeTrayPreviewCoordinator()),
+            new FakeTrayThumbnailService());
         return new MainShellViewModel(
             workspaceVm,
             savesVm,
-            new NavigationService(),
+            navigation,
             fileDialog,
             settingsStore,
             new FakePathDiscoveryService(),
@@ -138,10 +145,18 @@ public sealed class MainShellViewModelTests
             new TrayDependenciesActionModule(trayDependencies),
             new TrayPreviewActionModule(trayPreview)
         });
+        var trayPreviewRunner = new TrayPreviewRunner(new FakeTrayPreviewCoordinator());
+        var trayPreviewWorkspace = new TrayPreviewWorkspaceViewModel(
+            trayPreview,
+            trayPreviewRunner,
+            new FakeTrayThumbnailService(),
+            new FakeFileDialogService(),
+            new FakeTrayDependencyExportService(),
+            trayDependencies);
 
         return new MainWindowViewModel(
             new ToolkitExecutionRunner(new FakeExecutionCoordinator()),
-            new TrayPreviewRunner(new FakeTrayPreviewCoordinator()),
+            trayPreviewRunner,
             new FakeTrayDependencyExportService(),
             new FakeTrayDependencyAnalysisService(),
             new FakeFileDialogService(),
@@ -151,6 +166,7 @@ public sealed class MainShellViewModelTests
             new MainWindowSettingsProjection(),
             moduleRegistry,
             new MainWindowPlanBuilder(moduleRegistry),
+            trayPreviewWorkspace,
             organize,
             flatten,
             normalize,
@@ -220,6 +236,10 @@ public sealed class MainShellViewModelTests
                 LoadedPageCount = 1,
                 FromCache = false
             });
+        }
+
+        public void Invalidate(string? trayRootPath = null)
+        {
         }
 
         public void Reset()
@@ -335,6 +355,37 @@ public sealed class MainShellViewModelTests
             return false;
         }
 
+        public bool TryGetPreviewCacheManifest(string saveFilePath, out SavePreviewCacheManifest manifest)
+        {
+            manifest = null!;
+            return false;
+        }
+
+        public bool IsPreviewCacheCurrent(string saveFilePath, SavePreviewCacheManifest manifest)
+        {
+            return false;
+        }
+
+        public string GetPreviewCacheRoot(string saveFilePath)
+        {
+            return string.Empty;
+        }
+
+        public Task<SavePreviewCacheBuildResult> BuildPreviewCacheAsync(
+            string saveFilePath,
+            IProgress<SavePreviewCacheBuildProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new SavePreviewCacheBuildResult
+            {
+                Succeeded = true
+            });
+        }
+
+        public void ClearPreviewCache(string saveFilePath)
+        {
+        }
+
         public SaveHouseholdExportResult Export(SaveHouseholdExportRequest request)
         {
             return new SaveHouseholdExportResult
@@ -342,6 +393,23 @@ public sealed class MainShellViewModelTests
                 Succeeded = false,
                 Error = "not implemented for tests"
             };
+        }
+    }
+
+    private sealed class FakeTrayThumbnailService : ITrayThumbnailService
+    {
+        public Task<TrayThumbnailResult> GetThumbnailAsync(SimsTrayPreviewItem item, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new TrayThumbnailResult
+            {
+                SourceKind = TrayThumbnailSourceKind.Placeholder,
+                Success = false
+            });
+        }
+
+        public Task CleanupStaleEntriesAsync(string trayRootPath, IReadOnlyCollection<string> liveItemKeys, CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
         }
     }
 

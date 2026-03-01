@@ -32,54 +32,58 @@ public sealed class AppCacheMaintenanceService : IAppCacheMaintenanceService
 
     public Task<AppCacheMaintenanceResult> ClearAsync(CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var removedDirectoryCount = 0;
-        var targets = new[]
+        return Task.Run(() =>
         {
-            Path.Combine(_cacheRootPath, "TrayPreviewThumbnails"),
-            Path.Combine(_cacheRootPath, "TrayMetadataIndex")
-        };
+            cancellationToken.ThrowIfCancellationRequested();
 
-        try
-        {
-            foreach (var path in targets)
+            var removedDirectoryCount = 0;
+            var targets = new[]
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (!Directory.Exists(path))
+                Path.Combine(_cacheRootPath, "TrayPreviewThumbnails"),
+                Path.Combine(_cacheRootPath, "TrayMetadataIndex"),
+                Path.Combine(_cacheRootPath, "SavePreview")
+            };
+
+            try
+            {
+                foreach (var path in targets)
                 {
-                    continue;
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!Directory.Exists(path))
+                    {
+                        continue;
+                    }
+
+                    Directory.Delete(path, recursive: true);
+                    removedDirectoryCount++;
                 }
 
-                Directory.Delete(path, recursive: true);
-                removedDirectoryCount++;
+                if (Directory.Exists(_cacheRootPath) &&
+                    !Directory.EnumerateFileSystemEntries(_cacheRootPath).Any())
+                {
+                    Directory.Delete(_cacheRootPath, recursive: false);
+                }
+
+                var message = removedDirectoryCount > 0
+                    ? $"Cleared {removedDirectoryCount} cache folder(s). Restart the app to drop in-memory caches."
+                    : "No disk cache folders were present. Restart the app to drop in-memory caches.";
+
+                return new AppCacheMaintenanceResult
+                {
+                    Success = true,
+                    RemovedDirectoryCount = removedDirectoryCount,
+                    Message = message
+                };
             }
-
-            if (Directory.Exists(_cacheRootPath) &&
-                !Directory.EnumerateFileSystemEntries(_cacheRootPath).Any())
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                Directory.Delete(_cacheRootPath, recursive: false);
+                return new AppCacheMaintenanceResult
+                {
+                    Success = false,
+                    RemovedDirectoryCount = removedDirectoryCount,
+                    Message = $"Failed to clear cache: {ex.Message}"
+                };
             }
-
-            var message = removedDirectoryCount > 0
-                ? $"Cleared {removedDirectoryCount} cache folder(s). Restart the app to drop in-memory caches."
-                : "No disk cache folders were present. Restart the app to drop in-memory caches.";
-
-            return Task.FromResult(new AppCacheMaintenanceResult
-            {
-                Success = true,
-                RemovedDirectoryCount = removedDirectoryCount,
-                Message = message
-            });
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return Task.FromResult(new AppCacheMaintenanceResult
-            {
-                Success = false,
-                RemovedDirectoryCount = removedDirectoryCount,
-                Message = $"Failed to clear cache: {ex.Message}"
-            });
-        }
+        }, cancellationToken);
     }
 }

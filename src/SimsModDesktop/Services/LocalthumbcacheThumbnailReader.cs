@@ -1,14 +1,21 @@
 using System.Globalization;
+using SimsModDesktop.PackageCore;
 
 namespace SimsModDesktop.Services;
 
 public sealed class LocalthumbcacheThumbnailReader
 {
     private readonly object _cacheGate = new();
+    private readonly IDbpfResourceReader _resourceReader;
 
     private string _cachedPackagePath = string.Empty;
     private DateTime _cachedLastWriteUtc = DateTime.MinValue;
     private byte[]? _cachedPackageBytes;
+
+    public LocalthumbcacheThumbnailReader(IDbpfResourceReader? resourceReader = null)
+    {
+        _resourceReader = resourceReader ?? new DbpfResourceReader();
+    }
 
     internal ExtractedTrayImage? TryExtractBestImage(
         string trayRootPath,
@@ -24,6 +31,12 @@ public sealed class LocalthumbcacheThumbnailReader
         if (string.IsNullOrWhiteSpace(packagePath) || !File.Exists(packagePath))
         {
             return null;
+        }
+
+        var structuredImage = TryExtractBestImageFromEntries(packagePath, cancellationToken);
+        if (structuredImage is not null)
+        {
+            return structuredImage;
         }
 
         byte[] packageBytes;
@@ -56,6 +69,114 @@ public sealed class LocalthumbcacheThumbnailReader
         return candidates
             .OrderByDescending(candidate => candidate.PixelArea)
             .FirstOrDefault();
+    }
+
+    private ExtractedTrayImage? TryExtractBestImageFromEntries(
+        string packagePath,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var package = DbpfPackageIndexReader.ReadPackageIndex(packagePath);
+            if (package.Entries.Length == 0)
+            {
+                return null;
+            }
+
+            ExtractedTrayImage? best = null;
+            using var session = _resourceReader.OpenSession(packagePath);
+            for (var i = 0; i < package.Entries.Length; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var entry = package.Entries[i];
+                if (entry.IsDeleted || !session.TryReadBytes(entry, out var bytes, out _))
+                {
+                    continue;
+                }
+
+                var image = TrayImagePayloadScanner.TryExtractBestImage(bytes);
+                if (image is null)
+                {
+                    continue;
+                }
+
+                if (best is null || image.PixelArea > best.PixelArea)
+                {
+                    best = image;
+                }
+            }
+
+            return best;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
+        catch (InvalidDataException)
+        {
+            return null;
+        }
+    }
+
+    internal IReadOnlyList<ExtractedTrayImage> TryEnumerateEntriesByType(
+        string packagePath,
+        uint type,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(packagePath) || !File.Exists(packagePath))
+        {
+            return Array.Empty<ExtractedTrayImage>();
+        }
+
+        try
+        {
+            var package = DbpfPackageIndexReader.ReadPackageIndex(packagePath);
+            if (!package.TypeBuckets.TryGetValue(type, out var bucket))
+            {
+                return Array.Empty<ExtractedTrayImage>();
+            }
+
+            var images = new List<ExtractedTrayImage>();
+            using var session = _resourceReader.OpenSession(packagePath);
+            foreach (var entryIndexes in bucket.InstanceToEntryIndexes.Values)
+            {
+                for (var i = 0; i < entryIndexes.Length; i++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    var entry = package.Entries[entryIndexes[i]];
+                    if (!session.TryReadBytes(entry, out var bytes, out _))
+                    {
+                        continue;
+                    }
+
+                    var image = TrayImagePayloadScanner.TryExtractBestImage(bytes);
+                    if (image is not null)
+                    {
+                        images.Add(image);
+                    }
+                }
+            }
+
+            return images;
+        }
+        catch (IOException)
+        {
+            return Array.Empty<ExtractedTrayImage>();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Array.Empty<ExtractedTrayImage>();
+        }
+        catch (InvalidDataException)
+        {
+            return Array.Empty<ExtractedTrayImage>();
+        }
     }
 
     private static void TryAddIndexCandidate(
