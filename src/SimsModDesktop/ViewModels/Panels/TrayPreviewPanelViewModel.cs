@@ -12,6 +12,8 @@ public sealed class TrayPreviewPanelViewModel : ObservableObject, ITrayPreviewMo
     private string _authorFilter = string.Empty;
     private string _timeFilter = "All";
     private string _searchQuery = string.Empty;
+    private string _layoutMode = "Entry";
+    private bool _enableDebugPreview;
 
     public string TrayRoot
     {
@@ -53,5 +55,17 @@ public sealed class TrayPreviewPanelViewModel : ObservableObject, ITrayPreviewMo
     {
         get => _searchQuery;
         set => SetProperty(ref _searchQuery, value);
+    }
+
+    public string LayoutMode
+    {
+        get => _layoutMode;
+        set => SetProperty(ref _layoutMode, value);
+    }
+
+    public bool EnableDebugPreview
+    {
+        get => _enableDebugPreview;
+        set => SetProperty(ref _enableDebugPreview, value);
     }
 }

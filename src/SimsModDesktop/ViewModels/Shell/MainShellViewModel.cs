@@ -6,7 +6,6 @@ using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Models;
 using SimsModDesktop.Services;
 using SimsModDesktop.ViewModels.Infrastructure;
-using SimsModDesktop.ViewModels.Inspector;
 
 namespace SimsModDesktop.ViewModels.Shell;
 
@@ -18,12 +17,9 @@ public sealed class MainShellViewModel : ObservableObject
     private readonly ISettingsStore _settingsStore;
     private readonly ITS4PathDiscoveryService _pathDiscovery;
     private readonly IGameLaunchService _gameLaunchService;
-    private readonly InspectorViewModel _inspector;
 
     private AppSection _selectedSection = AppSection.Mods;
     private string _selectedModuleKey = "organize";
-    private bool _enableStructuredResults = true;
-    private bool _enableInspectorPane = true;
     private bool _enableLaunchGame = true;
     private string _requestedTheme = "Dark";
     private string _ts4RootPath = string.Empty;
@@ -46,8 +42,7 @@ public sealed class MainShellViewModel : ObservableObject
         IFileDialogService fileDialogService,
         ISettingsStore settingsStore,
         ITS4PathDiscoveryService pathDiscovery,
-        IGameLaunchService gameLaunchService,
-        InspectorViewModel inspector)
+        IGameLaunchService gameLaunchService)
     {
         _workspaceVm = workspaceVm;
         _navigation = navigation;
@@ -55,7 +50,6 @@ public sealed class MainShellViewModel : ObservableObject
         _settingsStore = settingsStore;
         _pathDiscovery = pathDiscovery;
         _gameLaunchService = gameLaunchService;
-        _inspector = inspector;
 
         SelectSectionCommand = new RelayCommand<string>(SelectSection);
         SelectModuleCommand = new RelayCommand<string>(SelectModule);
@@ -72,7 +66,6 @@ public sealed class MainShellViewModel : ObservableObject
     }
 
     public MainWindowViewModel WorkspaceVm => _workspaceVm;
-    public InspectorViewModel Inspector => _inspector;
 
     public RelayCommand<string> SelectSectionCommand { get; }
     public RelayCommand<string> SelectModuleCommand { get; }
@@ -105,7 +98,6 @@ public sealed class MainShellViewModel : ObservableObject
             OnPropertyChanged(nameof(IsSavesSectionSelected));
             OnPropertyChanged(nameof(IsSettingsSectionSelected));
             OnPropertyChanged(nameof(IsWorkspaceSectionVisible));
-            OnPropertyChanged(nameof(IsInspectorVisible));
         }
     }
 
@@ -126,35 +118,6 @@ public sealed class MainShellViewModel : ObservableObject
             OnPropertyChanged(nameof(IsFindDupModuleSelected));
             OnPropertyChanged(nameof(IsTrayPreviewModuleSelected));
             OnPropertyChanged(nameof(IsTrayDepsModuleSelected));
-        }
-    }
-
-    public bool EnableStructuredResults
-    {
-        get => _enableStructuredResults;
-        set
-        {
-            if (!SetProperty(ref _enableStructuredResults, value))
-            {
-                return;
-            }
-
-            OnPropertyChanged(nameof(IsInspectorVisible));
-        }
-    }
-
-    public bool EnableInspectorPane
-    {
-        get => _enableInspectorPane;
-        set
-        {
-            if (!SetProperty(ref _enableInspectorPane, value))
-            {
-                return;
-            }
-
-            Inspector.IsOpen = value;
-            OnPropertyChanged(nameof(IsInspectorVisible));
         }
     }
 
@@ -324,7 +287,6 @@ public sealed class MainShellViewModel : ObservableObject
 
     public bool CanLaunchGame => EnableLaunchGame && HasGameExecutable;
     public string LaunchButtonText => HasGameExecutable ? "Launch The Sims 4" : "Set Game Path First";
-    public bool IsInspectorVisible => EnableInspectorPane && EnableStructuredResults && IsWorkspaceSectionVisible;
     public bool IsWorkspaceSectionVisible => IsModsSectionVisible || IsTraySectionVisible;
     public bool IsDerivedPathsReadOnly => !string.IsNullOrWhiteSpace(Ts4RootPath);
     public bool IsDarkThemeSelected => string.Equals(RequestedTheme, "Dark", StringComparison.OrdinalIgnoreCase);
@@ -371,7 +333,6 @@ public sealed class MainShellViewModel : ObservableObject
             }
         }
 
-        _inspector.IsOpen = EnableInspectorPane;
         ApplyTheme();
         ApplyNavigationToWorkspace();
         SyncTrayPathsToWorkspace();
@@ -390,8 +351,6 @@ public sealed class MainShellViewModel : ObservableObject
         };
         settings.FeatureFlags = new AppSettings.FeatureFlagsSettings
         {
-            EnableStructuredResults = EnableStructuredResults,
-            EnableInspectorPane = EnableInspectorPane,
             EnableLaunchGame = EnableLaunchGame
         };
         settings.GameLaunch = new AppSettings.GameLaunchSettings
@@ -413,8 +372,6 @@ public sealed class MainShellViewModel : ObservableObject
     private async Task LoadShellSettingsAsync()
     {
         var settings = await _settingsStore.LoadAsync();
-        EnableStructuredResults = settings.FeatureFlags.EnableStructuredResults;
-        EnableInspectorPane = settings.FeatureFlags.EnableInspectorPane;
         EnableLaunchGame = settings.FeatureFlags.EnableLaunchGame;
         RequestedTheme = string.IsNullOrWhiteSpace(settings.Theme.RequestedTheme)
             ? "Dark"

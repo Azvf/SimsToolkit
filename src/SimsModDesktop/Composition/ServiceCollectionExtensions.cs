@@ -12,7 +12,6 @@ using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Infrastructure.Windowing;
 using SimsModDesktop.Models;
 using SimsModDesktop.Services;
-using SimsModDesktop.ViewModels.Inspector;
 using SimsModDesktop.ViewModels.Shell;
 using SimsModDesktop.ViewModels;
 using SimsModDesktop.ViewModels.Panels;
@@ -32,6 +31,12 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<IMainWindowSettingsProjection, MainWindowSettingsProjection>();
 
         services.AddSingleton<ISimsPowerShellRunner, SimsPowerShellRunner>();
+        services.AddSingleton<TrayThumbnailCacheStore>();
+        services.AddSingleton<TrayMetadataIndexStore>();
+        services.AddSingleton<ITrayMetadataService, TrayMetadataService>();
+        services.AddSingleton<TrayEmbeddedImageExtractor>();
+        services.AddSingleton<LocalthumbcacheThumbnailReader>();
+        services.AddSingleton<ITrayThumbnailService, TrayThumbnailService>();
         services.AddSingleton<ISimsTrayPreviewService, SimsTrayPreviewService>();
         services.AddSingleton<INavigationService, NavigationService>();
         services.AddSingleton<ITS4PathDiscoveryService, TS4PathDiscoveryService>();
@@ -108,10 +113,6 @@ internal static class ServiceCollectionExtensions
     public static IServiceCollection AddSimsDesktopPresentation(this IServiceCollection services)
     {
         services.AddSingleton<MainWindowViewModel>();
-        services.AddSingleton<IInspectorPresenter, TrayPreviewInspectorPresenter>();
-        services.AddSingleton<IInspectorPresenter, TrayDependenciesInspectorPresenter>();
-        services.AddSingleton<IInspectorPresenter, FindDupInspectorPresenter>();
-        services.AddSingleton<InspectorViewModel>();
         services.AddSingleton<MainShellViewModel>();
         services.AddTransient<MainWindow>();
         return services;

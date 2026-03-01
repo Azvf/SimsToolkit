@@ -79,6 +79,8 @@ public sealed class AppSettings
         public string AuthorFilter { get; set; } = string.Empty;
         public string TimeFilter { get; set; } = "All";
         public string SearchQuery { get; set; } = string.Empty;
+        public string LayoutMode { get; set; } = "Entry";
+        public bool EnableDebugPreview { get; set; }
     }
 
     public sealed class SharedFileOpsSettings
@@ -106,8 +108,6 @@ public sealed class AppSettings
 
     public sealed class FeatureFlagsSettings
     {
-        public bool EnableStructuredResults { get; set; } = true;
-        public bool EnableInspectorPane { get; set; } = true;
         public bool EnableLaunchGame { get; set; } = true;
     }
 

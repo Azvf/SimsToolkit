@@ -1,4 +1,5 @@
 using System.Reflection;
+using Avalonia.Threading;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Requests;
@@ -8,6 +9,7 @@ using SimsModDesktop.Infrastructure.Dialogs;
 using SimsModDesktop.Infrastructure.Localization;
 using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Models;
+using SimsModDesktop.Services;
 using SimsModDesktop.ViewModels;
 using SimsModDesktop.ViewModels.Panels;
 
@@ -125,6 +127,38 @@ public sealed class MainWindowViewModelInteractionTests
     }
 
     [Fact]
+    public async Task TrayPreviewLayoutMode_PersistsWithoutExplicitWindowClose()
+    {
+        var settingsStore = new FakeSettingsStore(new AppSettings
+        {
+            Navigation = new AppSettings.NavigationSettings
+            {
+                SelectedSection = AppSection.Settings,
+                SelectedModuleKey = "traypreview"
+            },
+            Theme = new AppSettings.ThemeSettings
+            {
+                RequestedTheme = "Light"
+            }
+        });
+        var vm = CreateViewModel(
+            new FakeExecutionCoordinator(),
+            new FakeConfirmationDialogService(),
+            settingsStore: settingsStore);
+
+        await vm.InitializeAsync();
+        vm.TrayPreview.LayoutMode = "Grid";
+
+        await WaitForAsync(() => settingsStore.LastSaved is not null);
+
+        Assert.NotNull(settingsStore.LastSaved);
+        Assert.Equal("Grid", settingsStore.LastSaved!.TrayPreview.LayoutMode);
+        Assert.Equal(AppSection.Settings, settingsStore.LastSaved.Navigation.SelectedSection);
+        Assert.Equal("traypreview", settingsStore.LastSaved.Navigation.SelectedModuleKey);
+        Assert.Equal("Light", settingsStore.LastSaved.Theme.RequestedTheme);
+    }
+
+    [Fact]
     public async Task AvailableLanguages_ContainsDefaultLanguage()
     {
         var vm = CreateViewModel(new FakeExecutionCoordinator(), new FakeConfirmationDialogService());
@@ -202,10 +236,52 @@ public sealed class MainWindowViewModelInteractionTests
         Assert.False(vm.IsTrayPreviewPagerVisible);
     }
 
+    [Fact]
+    public async Task TrayPreviewThumbnailFailure_StopsLoadingAndShowsErrorState()
+    {
+        var thumbnailService = new FailingTrayThumbnailService();
+        var vm = CreateViewModel(
+            new FakeExecutionCoordinator(),
+            new FakeConfirmationDialogService(),
+            trayThumbnailService: thumbnailService);
+
+        await vm.InitializeAsync();
+
+        using var trayRoot = new TempDirectory();
+        InvokePrivateVoid(
+            vm,
+            "SetTrayPreviewPage",
+            new SimsTrayPreviewPage
+            {
+                PageIndex = 1,
+                PageSize = 50,
+                TotalItems = 1,
+                TotalPages = 1,
+                Items =
+                [
+                    new SimsTrayPreviewItem
+                    {
+                        TrayItemKey = "0x0000000000000042",
+                        PresetType = "Household",
+                        TrayRootPath = trayRoot.Path
+                    }
+                ]
+            },
+            1);
+
+        await WaitForAsync(() => vm.PreviewItems.Count == 1 && !vm.PreviewItems[0].IsThumbnailLoading);
+
+        Assert.Equal(1, thumbnailService.CallCount);
+        Assert.False(vm.PreviewItems[0].HasThumbnail);
+        Assert.True(vm.PreviewItems[0].HasThumbnailError);
+        Assert.False(vm.PreviewItems[0].IsThumbnailLoading);
+    }
+
     private static MainWindowViewModel CreateViewModel(
         FakeExecutionCoordinator execution,
         FakeConfirmationDialogService confirmation,
-        FakeSettingsStore? settingsStore = null)
+        FakeSettingsStore? settingsStore = null,
+        ITrayThumbnailService? trayThumbnailService = null)
     {
         var organize = new OrganizePanelViewModel();
         var flatten = new FlattenPanelViewModel();
@@ -245,7 +321,8 @@ public sealed class MainWindowViewModelInteractionTests
             findDup,
             trayDependencies,
             trayPreview,
-            sharedFileOps);
+            sharedFileOps,
+            trayThumbnailService);
     }
 
     private static async Task InvokePrivateAsync(object target, string methodName, params object?[] args)
@@ -257,11 +334,29 @@ public sealed class MainWindowViewModelInteractionTests
         await task!;
     }
 
-    private static void InvokePrivateVoid(object target, string methodName)
+    private static void InvokePrivateVoid(object target, string methodName, params object?[] args)
     {
         var method = target.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(method);
-        method!.Invoke(target, null);
+        method!.Invoke(target, args);
+    }
+
+    private static async Task WaitForAsync(Func<bool> condition, int timeoutMs = 1000)
+    {
+        var startedAt = DateTime.UtcNow;
+        while (!condition())
+        {
+            Dispatcher.UIThread.RunJobs(null);
+            if ((DateTime.UtcNow - startedAt).TotalMilliseconds > timeoutMs)
+            {
+                break;
+            }
+
+            await Task.Delay(10);
+        }
+
+        Dispatcher.UIThread.RunJobs(null);
+        Assert.True(condition());
     }
 
     private sealed class FakeExecutionCoordinator : IExecutionCoordinator
@@ -359,7 +454,7 @@ public sealed class MainWindowViewModelInteractionTests
 
     private sealed class FakeSettingsStore : ISettingsStore
     {
-        private readonly AppSettings _settings;
+        private AppSettings _settings;
 
         public FakeSettingsStore(AppSettings settings)
         {
@@ -376,6 +471,32 @@ public sealed class MainWindowViewModelInteractionTests
         public Task SaveAsync(AppSettings settings, CancellationToken cancellationToken = default)
         {
             LastSaved = settings;
+            _settings = settings;
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FailingTrayThumbnailService : ITrayThumbnailService
+    {
+        public int CallCount { get; private set; }
+
+        public Task<TrayThumbnailResult> GetThumbnailAsync(
+            SimsTrayPreviewItem item,
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            return Task.FromResult(new TrayThumbnailResult
+            {
+                SourceKind = TrayThumbnailSourceKind.Placeholder,
+                Success = false
+            });
+        }
+
+        public Task CleanupStaleEntriesAsync(
+            string trayRootPath,
+            IReadOnlyCollection<string> liveItemKeys,
+            CancellationToken cancellationToken = default)
+        {
             return Task.CompletedTask;
         }
     }

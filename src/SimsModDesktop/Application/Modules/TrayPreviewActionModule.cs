@@ -37,6 +37,8 @@ public sealed class TrayPreviewActionModule : IActionModule
         _panel.AuthorFilter = settings.TrayPreview.AuthorFilter;
         _panel.TimeFilter = NormalizeFilter(settings.TrayPreview.TimeFilter);
         _panel.SearchQuery = settings.TrayPreview.SearchQuery;
+        _panel.LayoutMode = NormalizeLayoutMode(settings.TrayPreview.LayoutMode);
+        _panel.EnableDebugPreview = settings.TrayPreview.EnableDebugPreview;
     }
 
     public void SaveToSettings(AppSettings settings)
@@ -47,6 +49,8 @@ public sealed class TrayPreviewActionModule : IActionModule
         settings.TrayPreview.AuthorFilter = _panel.AuthorFilter;
         settings.TrayPreview.TimeFilter = NormalizeFilter(_panel.TimeFilter);
         settings.TrayPreview.SearchQuery = _panel.SearchQuery;
+        settings.TrayPreview.LayoutMode = NormalizeLayoutMode(_panel.LayoutMode);
+        settings.TrayPreview.EnableDebugPreview = _panel.EnableDebugPreview;
     }
 
     public bool TryBuildPlan(GlobalExecutionOptions options, out ModuleExecutionPlan plan, out string error)
@@ -127,5 +131,12 @@ public sealed class TrayPreviewActionModule : IActionModule
         return string.IsNullOrWhiteSpace(value)
             ? "All"
             : value.Trim();
+    }
+
+    private static string NormalizeLayoutMode(string? value)
+    {
+        return string.Equals(value, "Grid", StringComparison.OrdinalIgnoreCase)
+            ? "Grid"
+            : "Entry";
     }
 }

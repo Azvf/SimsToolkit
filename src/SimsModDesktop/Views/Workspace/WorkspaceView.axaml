@@ -4,11 +4,12 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:models="clr-namespace:SimsModDesktop.Models"
              xmlns:panels="clr-namespace:SimsModDesktop.Views.Panels"
+             xmlns:panelvm="clr-namespace:SimsModDesktop.ViewModels.Panels"
              xmlns:vm="clr-namespace:SimsModDesktop.ViewModels"
              mc:Ignorable="d"
              x:Class="SimsModDesktop.Views.Workspace.WorkspaceView"
              x:DataType="vm:MainWindowViewModel">
-    <Grid RowDefinitions="*,Auto" RowSpacing="12">
+    <Grid RowDefinitions="*,Auto" RowSpacing="12" MinHeight="0">
         <Grid>
             <Border Classes="card" IsVisible="{Binding IsToolkitWorkspace}" Padding="12">
                 <Grid RowDefinitions="Auto,*" RowSpacing="12">
@@ -67,16 +68,15 @@
                 </Grid>
             </Border>
 
-            <Border Classes="card" IsVisible="{Binding IsTrayPreviewWorkspace}" Padding="12">
-                <Grid RowDefinitions="Auto,*" RowSpacing="12">
+            <Border Classes="card" IsVisible="{Binding IsTrayPreviewWorkspace}" Padding="12" MinHeight="0">
+                <Grid RowDefinitions="Auto,*" RowSpacing="12" MinHeight="0">
                     <Border Classes="card-muted" Padding="10">
-                        <Grid ColumnDefinitions="Auto,180,Auto,200,Auto,180"
-                              RowDefinitions="Auto,Auto,Auto"
+                        <Grid ColumnDefinitions="Auto,*,Auto,*,Auto,*"
+                              RowDefinitions="Auto,Auto,Auto,Auto"
                               ColumnSpacing="8"
                               RowSpacing="8">
                             <TextBlock VerticalAlignment="Center" Text="Preset Type" />
                             <ComboBox Grid.Column="1"
-                                      Width="160"
                                       ItemsSource="{Binding TrayPreviewPresetTypeFilterOptions}"
                                       SelectedItem="{Binding TrayPreview.PresetTypeFilter}" />
                             <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="Author" />
@@ -85,7 +85,6 @@
                                      Text="{Binding TrayPreview.AuthorFilter}" />
                             <TextBlock Grid.Column="4" VerticalAlignment="Center" Text="Time" />
                             <ComboBox Grid.Column="5"
-                                      Width="160"
                                       ItemsSource="{Binding TrayPreviewTimeFilterOptions}"
                                       SelectedItem="{Binding TrayPreview.TimeFilter}" />
 
@@ -102,7 +101,6 @@
                                        Text="Build Size" />
                             <ComboBox Grid.Row="2"
                                       Grid.Column="1"
-                                      Width="160"
                                       IsVisible="{Binding IsBuildSizeFilterVisible}"
                                       ItemsSource="{Binding TrayPreviewBuildSizeFilterOptions}"
                                       SelectedItem="{Binding TrayPreview.BuildSizeFilter}" />
@@ -113,45 +111,363 @@
                                        Text="Household Size" />
                             <ComboBox Grid.Row="2"
                                       Grid.Column="1"
-                                      Width="160"
                                       IsVisible="{Binding IsHouseholdSizeFilterVisible}"
                                       ItemsSource="{Binding TrayPreviewHouseholdSizeFilterOptions}"
                                       SelectedItem="{Binding TrayPreview.HouseholdSizeFilter}" />
+
+                            <CheckBox Grid.Row="3"
+                                      Grid.Column="1"
+                                      Grid.ColumnSpan="2"
+                                      Content="Debug Preview"
+                                      IsChecked="{Binding TrayPreview.EnableDebugPreview}" />
+                            <TextBlock Grid.Row="3"
+                                       Grid.Column="4"
+                                       VerticalAlignment="Center"
+                                       Text="Layout" />
+                            <ComboBox Grid.Row="3"
+                                      Grid.Column="5"
+                                      ItemsSource="{Binding TrayPreviewLayoutModeOptions}"
+                                      SelectedItem="{Binding TrayPreview.LayoutMode}" />
                         </Grid>
                     </Border>
 
-                    <Border Grid.Row="1" Classes="card-muted" Padding="10">
-                        <Grid RowDefinitions="Auto,*,Auto" RowSpacing="8">
+                    <Border Grid.Row="1" Classes="card-muted" Padding="10" MinHeight="0">
+                        <Grid RowDefinitions="Auto,*,Auto" RowSpacing="8" MinHeight="0">
                             <TextBlock Classes="helper-text"
                                        IsVisible="{Binding HasTrayPreviewItems}"
                                        Text="{Binding PreviewSummaryText}" />
 
-                            <Grid Grid.Row="1">
-                                <ListBox IsVisible="{Binding HasTrayPreviewItems}" ItemsSource="{Binding PreviewItems}">
-                                    <ListBox.ItemTemplate>
-                                        <DataTemplate x:DataType="models:SimsTrayPreviewItem">
+                            <Grid Grid.Row="1" MinHeight="0" ClipToBounds="True">
+                                <ScrollViewer x:Name="TrayPreviewScrollViewer"
+                                              MinHeight="0"
+                                              IsVisible="{Binding HasTrayPreviewItems}"
+                                              VerticalScrollBarVisibility="Auto"
+                                              HorizontalScrollBarVisibility="Disabled"
+                                              ClipToBounds="True">
+                                    <StackPanel>
+                                    <ItemsControl ItemsSource="{Binding PreviewItems}"
+                                                  IsVisible="{Binding IsTrayPreviewEntryMode}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <StackPanel />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="panelvm:TrayPreviewListItemViewModel">
                                             <Border Classes="card" Margin="0,0,0,8" Padding="8">
-                                                <StackPanel Spacing="4">
-                                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                                                        <TextBlock FontWeight="SemiBold" Text="{Binding ItemName}" />
-                                                        <TextBlock Grid.Column="1" Classes="helper-text" Text="{Binding PresetType}" />
-                                                    </Grid>
-                                                    <TextBlock Classes="helper-text" Text="{Binding TrayItemKey}" />
-                                                    <Grid ColumnDefinitions="Auto,Auto,Auto,*" ColumnSpacing="8">
-                                                        <TextBlock Text="Files:" />
-                                                        <TextBlock Grid.Column="1" Text="{Binding FileCount}" />
-                                                        <TextBlock Grid.Column="2" Text="Size MB:" />
-                                                        <TextBlock Grid.Column="3" Text="{Binding TotalMB}" />
-                                                    </Grid>
-                                                    <TextBlock Classes="helper-text" Text="{Binding LatestWriteTimeLocal}" />
-                                                    <TextBlock Classes="helper-text" Text="{Binding Extensions}" />
-                                                    <TextBlock Classes="helper-text" Text="{Binding ResourceTypes}" />
-                                                    <TextBlock TextWrapping="Wrap" Text="{Binding FileListPreview}" />
-                                                </StackPanel>
+                                                <Grid ColumnDefinitions="192,*" ColumnSpacing="12">
+                                                    <Border Cursor="Hand"
+                                                            Background="Transparent"
+                                                            PointerPressed="OnTrayPreviewOpenDetailsPointerPressed">
+                                                        <Border Width="192"
+                                                                Height="144"
+                                                                VerticalAlignment="Top"
+                                                                CornerRadius="10"
+                                                                ClipToBounds="True"
+                                                                BorderThickness="1"
+                                                                BorderBrush="{DynamicResource Brush.Border}"
+                                                                Background="{DynamicResource Brush.Surface}">
+                                                            <Grid>
+                                                                <Image IsVisible="{Binding HasThumbnail}"
+                                                                       Stretch="Uniform"
+                                                                       Source="{Binding Thumbnail}" />
+                                                                <Border Width="92"
+                                                                        Height="8"
+                                                                        IsVisible="{Binding IsThumbnailLoading}"
+                                                                        Background="{DynamicResource Brush.Panel}"
+                                                                        BorderBrush="{DynamicResource Brush.Border}"
+                                                                        BorderThickness="1"
+                                                                        CornerRadius="999"
+                                                                        HorizontalAlignment="Center"
+                                                                        VerticalAlignment="Center">
+                                                                    <Border Width="28"
+                                                                            Height="8"
+                                                                            Background="{DynamicResource Brush.Primary}"
+                                                                            CornerRadius="999"
+                                                                            HorizontalAlignment="Left" />
+                                                                </Border>
+                                                                <TextBlock IsVisible="{Binding IsThumbnailPlaceholderVisible}"
+                                                                           Text="No Preview"
+                                                                           Classes="helper-text"
+                                                                           HorizontalAlignment="Center"
+                                                                           VerticalAlignment="Center" />
+                                                            </Grid>
+                                                        </Border>
+                                                    </Border>
+
+                                                    <StackPanel Grid.Column="1"
+                                                                VerticalAlignment="Top"
+                                                                Spacing="4">
+                                                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                                            <Border Cursor="Hand"
+                                                                    Background="Transparent"
+                                                                    PointerPressed="OnTrayPreviewOpenDetailsPointerPressed">
+                                                                <TextBlock FontWeight="SemiBold"
+                                                                           Text="{Binding Item.DisplayTitle}"
+                                                                           TextTrimming="CharacterEllipsis" />
+                                                            </Border>
+                                                            <TextBlock Grid.Column="1" Classes="helper-text" Text="{Binding Item.PresetType}" />
+                                                        </Grid>
+                                                        <TextBlock Classes="helper-text"
+                                                                   IsVisible="{Binding Item.HasDisplaySubtitle}"
+                                                                   Text="{Binding Item.DisplaySubtitle}"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock IsVisible="{Binding Item.HasDisplayPrimaryMeta}"
+                                                                   Text="{Binding Item.DisplayPrimaryMeta}"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Classes="helper-text"
+                                                                   IsVisible="{Binding Item.HasDisplaySecondaryMeta}"
+                                                                   Text="{Binding Item.DisplaySecondaryMeta}"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Classes="helper-text"
+                                                                   IsVisible="{Binding Item.HasDisplayTertiaryMeta}"
+                                                                   Text="{Binding Item.DisplayTertiaryMeta}"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Classes="helper-text"
+                                                                   IsVisible="{Binding Item.HasDisplayDescription}"
+                                                                   Text="{Binding Item.DisplayDescription}"
+                                                                   TextTrimming="CharacterEllipsis"
+                                                                   MaxLines="2"
+                                                                   TextWrapping="Wrap" />
+
+                                                        <Border Classes="card-muted"
+                                                                IsVisible="{Binding ShowDebugPreview}"
+                                                                Padding="8"
+                                                                Margin="0,4,0,0">
+                                                            <StackPanel Spacing="3">
+                                                                <TextBlock Text="{Binding Item.DebugMetadata.TrayItemKey}"
+                                                                           TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock Classes="helper-text"
+                                                                           Text="{Binding Item.DebugMetadata.TrayInstanceId}"
+                                                                           TextTrimming="CharacterEllipsis" />
+                                                                <Grid ColumnDefinitions="Auto,Auto,Auto,*"
+                                                                      ColumnSpacing="8">
+                                                                    <TextBlock Text="Files:" />
+                                                                    <TextBlock Grid.Column="1"
+                                                                               Text="{Binding Item.DebugMetadata.FileCount}" />
+                                                                    <TextBlock Grid.Column="2"
+                                                                               Text="Size MB:" />
+                                                                    <TextBlock Grid.Column="3"
+                                                                               Text="{Binding Item.DebugMetadata.TotalMB}" />
+                                                                </Grid>
+                                                                <TextBlock Classes="helper-text"
+                                                                           Text="{Binding Item.DebugMetadata.LatestWriteTimeLocal}" />
+                                                                <TextBlock Classes="helper-text"
+                                                                           Text="{Binding Item.DebugMetadata.Extensions}"
+                                                                           TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock Classes="helper-text"
+                                                                           Text="{Binding Item.DebugMetadata.ResourceTypes}"
+                                                                           TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock Classes="helper-text"
+                                                                           Text="{Binding Item.DebugMetadata.FileListPreview}"
+                                                                           TextWrapping="Wrap" />
+                                                            </StackPanel>
+                                                        </Border>
+
+                                                         <Button Classes="secondary"
+                                                                 MinWidth="140"
+                                                                 HorizontalAlignment="Left"
+                                                                 Focusable="False"
+                                                                 IsVisible="{Binding CanToggleChildren}"
+                                                                 Content="{Binding ToggleChildrenText}"
+                                                                 Command="{Binding ToggleChildrenCommand}" />
+
+                                                        <StackPanel IsVisible="{Binding IsExpanded}"
+                                                                    Spacing="8"
+                                                                    Margin="0,4,0,0">
+                                                            <TextBlock Classes="helper-text"
+                                                                       Text="Individual Members" />
+                                                            <ItemsControl ItemsSource="{Binding ChildItems}">
+                                                                <ItemsControl.ItemsPanel>
+                                                                    <ItemsPanelTemplate>
+                                                                        <WrapPanel Orientation="Horizontal" />
+                                                                    </ItemsPanelTemplate>
+                                                                </ItemsControl.ItemsPanel>
+                                                                <ItemsControl.ItemTemplate>
+                                                                    <DataTemplate x:DataType="panelvm:TrayPreviewListItemViewModel">
+                                                                        <Border Classes="card-muted"
+                                                                                Width="112"
+                                                                                Margin="0,0,8,8"
+                                                                                Padding="8">
+                                                                            <StackPanel Spacing="6">
+                                                                                <Border Cursor="Hand"
+                                                                                        Background="Transparent"
+                                                                                        PointerPressed="OnTrayPreviewOpenDetailsPointerPressed">
+                                                                                    <Border Width="96"
+                                                                                            Height="72"
+                                                                                            CornerRadius="8"
+                                                                                            ClipToBounds="True"
+                                                                                            BorderThickness="1"
+                                                                                            BorderBrush="{DynamicResource Brush.Border}"
+                                                                                            Background="{DynamicResource Brush.Surface}">
+                                                                                        <Grid>
+                                                                                            <Image IsVisible="{Binding HasThumbnail}"
+                                                                                                    Stretch="Uniform"
+                                                                                                    Source="{Binding Thumbnail}" />
+                                                                                            <Border Width="64"
+                                                                                                    Height="8"
+                                                                                                    IsVisible="{Binding IsThumbnailLoading}"
+                                                                                                    Background="{DynamicResource Brush.Panel}"
+                                                                                                    BorderBrush="{DynamicResource Brush.Border}"
+                                                                                                    BorderThickness="1"
+                                                                                                    CornerRadius="999"
+                                                                                                    HorizontalAlignment="Center"
+                                                                                                    VerticalAlignment="Center">
+                                                                                                <Border Width="20"
+                                                                                                        Height="8"
+                                                                                                        Background="{DynamicResource Brush.Primary}"
+                                                                                                        CornerRadius="999"
+                                                                                                        HorizontalAlignment="Left" />
+                                                                                            </Border>
+                                                                                            <TextBlock IsVisible="{Binding IsThumbnailPlaceholderVisible}"
+                                                                                                       Text="No Preview"
+                                                                                                       Classes="helper-text"
+                                                                                                       HorizontalAlignment="Center"
+                                                                                                       VerticalAlignment="Center" />
+                                                                                        </Grid>
+                                                                                    </Border>
+                                                                                </Border>
+                                                                                <Border Cursor="Hand"
+                                                                                        Background="Transparent"
+                                                                                        PointerPressed="OnTrayPreviewOpenDetailsPointerPressed">
+                                                                                    <TextBlock Text="{Binding Item.DisplayTitle}"
+                                                                                               TextTrimming="CharacterEllipsis"
+                                                                                               FontWeight="SemiBold" />
+                                                                                </Border>
+                                                                                <TextBlock Classes="helper-text"
+                                                                                           IsVisible="{Binding Item.HasDisplaySubtitle}"
+                                                                                           Text="{Binding Item.DisplaySubtitle}"
+                                                                                           TextTrimming="CharacterEllipsis" />
+                                                                                <TextBlock Classes="helper-text"
+                                                                                           IsVisible="{Binding Item.HasDisplayDescription}"
+                                                                                           Text="{Binding Item.DisplayDescription}"
+                                                                                           TextTrimming="CharacterEllipsis" />
+                                                                                <TextBlock Classes="helper-text"
+                                                                                           IsVisible="{Binding ShowDebugPreview}"
+                                                                                           Text="{Binding Item.DebugMetadata.TrayItemKey}"
+                                                                                           TextTrimming="CharacterEllipsis" />
+                                                                            </StackPanel>
+                                                                        </Border>
+                                                                    </DataTemplate>
+                                                                </ItemsControl.ItemTemplate>
+                                                            </ItemsControl>
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                </Grid>
                                             </Border>
                                         </DataTemplate>
-                                    </ListBox.ItemTemplate>
-                                </ListBox>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+
+                                    <ItemsControl ItemsSource="{Binding PreviewItems}"
+                                                  IsVisible="{Binding IsTrayPreviewGridMode}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel Orientation="Horizontal" />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="panelvm:TrayPreviewListItemViewModel">
+                                                <Border Classes="card"
+                                                        Width="236"
+                                                        Margin="0,0,8,8"
+                                                        Padding="8">
+                                                    <StackPanel Spacing="6">
+                                                        <Border Cursor="Hand"
+                                                                Background="Transparent"
+                                                                PointerPressed="OnTrayPreviewOpenDetailsPointerPressed">
+                                                            <Border Width="220"
+                                                                    Height="124"
+                                                                    CornerRadius="10"
+                                                                    ClipToBounds="True"
+                                                                    BorderThickness="1"
+                                                                    BorderBrush="{DynamicResource Brush.Border}"
+                                                                    Background="{DynamicResource Brush.Surface}">
+                                                                <Grid>
+                                                                    <Image IsVisible="{Binding HasThumbnail}"
+                                                                           Stretch="Uniform"
+                                                                           Source="{Binding Thumbnail}" />
+                                                                    <Border Width="82"
+                                                                            Height="8"
+                                                                            IsVisible="{Binding IsThumbnailLoading}"
+                                                                            Background="{DynamicResource Brush.Panel}"
+                                                                            BorderBrush="{DynamicResource Brush.Border}"
+                                                                            BorderThickness="1"
+                                                                            CornerRadius="999"
+                                                                            HorizontalAlignment="Center"
+                                                                            VerticalAlignment="Center">
+                                                                        <Border Width="26"
+                                                                                Height="8"
+                                                                                Background="{DynamicResource Brush.Primary}"
+                                                                                CornerRadius="999"
+                                                                                HorizontalAlignment="Left" />
+                                                                    </Border>
+                                                                    <TextBlock IsVisible="{Binding IsThumbnailPlaceholderVisible}"
+                                                                               Text="No Preview"
+                                                                               Classes="helper-text"
+                                                                               HorizontalAlignment="Center"
+                                                                               VerticalAlignment="Center" />
+                                                                </Grid>
+                                                            </Border>
+                                                        </Border>
+
+                                                        <Grid ColumnDefinitions="*,Auto"
+                                                              ColumnSpacing="6">
+                                                            <Border Cursor="Hand"
+                                                                    Background="Transparent"
+                                                                    PointerPressed="OnTrayPreviewOpenDetailsPointerPressed">
+                                                                <TextBlock FontWeight="SemiBold"
+                                                                           Text="{Binding Item.DisplayTitle}"
+                                                                           TextTrimming="CharacterEllipsis" />
+                                                            </Border>
+                                                            <TextBlock Grid.Column="1"
+                                                                       Classes="helper-text"
+                                                                       Text="{Binding Item.PresetType}" />
+                                                        </Grid>
+
+                                                        <TextBlock Classes="helper-text"
+                                                                   IsVisible="{Binding Item.HasDisplaySubtitle}"
+                                                                   Text="{Binding Item.DisplaySubtitle}"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock IsVisible="{Binding Item.HasDisplayPrimaryMeta}"
+                                                                   Text="{Binding Item.DisplayPrimaryMeta}"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Classes="helper-text"
+                                                                   IsVisible="{Binding Item.HasDisplaySecondaryMeta}"
+                                                                   Text="{Binding Item.DisplaySecondaryMeta}"
+                                                                   TextTrimming="CharacterEllipsis"
+                                                                   MaxLines="1" />
+                                                        <TextBlock Classes="helper-text"
+                                                                   IsVisible="{Binding CanToggleChildren}"
+                                                                   Text="{Binding ToggleChildrenText}"
+                                                                   TextTrimming="CharacterEllipsis" />
+
+                                                        <Border Classes="card-muted"
+                                                                IsVisible="{Binding ShowDebugPreview}"
+                                                                Padding="6"
+                                                                Margin="0,2,0,0">
+                                                            <StackPanel Spacing="2">
+                                                                <TextBlock Classes="helper-text"
+                                                                           Text="{Binding Item.DebugMetadata.TrayItemKey}"
+                                                                           TextTrimming="CharacterEllipsis" />
+                                                                <Grid ColumnDefinitions="Auto,*"
+                                                                      ColumnSpacing="4">
+                                                                    <TextBlock Classes="helper-text"
+                                                                               Text="Files:" />
+                                                                    <TextBlock Grid.Column="1"
+                                                                               Classes="helper-text"
+                                                                               Text="{Binding Item.DebugMetadata.FileCount}"
+                                                                               TextTrimming="CharacterEllipsis" />
+                                                                </Grid>
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    </StackPanel>
+                                </ScrollViewer>
 
                                 <Border Classes="tray-preview-empty-state" IsVisible="{Binding IsTrayPreviewLoadingStateVisible}">
                                     <StackPanel HorizontalAlignment="Center"
@@ -201,6 +517,211 @@
                 </Grid>
             </Border>
         </Grid>
+
+        <Border x:Name="TrayPreviewDetailOverlay"
+                IsVisible="{Binding IsTrayPreviewDetailVisible}"
+                Grid.Row="0"
+                Focusable="True"
+                Background="#B00A1220"
+                CornerRadius="16"
+                Padding="18">
+            <Border Classes="card"
+                    Padding="16"
+                    MinHeight="0">
+                <Grid RowDefinitions="Auto,*"
+                      RowSpacing="12"
+                      MinHeight="0">
+                    <Grid ColumnDefinitions="Auto,*,Auto"
+                          ColumnSpacing="12">
+                        <Button Classes="secondary"
+                                Content="Back"
+                                IsVisible="{Binding CanGoBackTrayPreviewDetail}"
+                                Command="{Binding GoBackTrayPreviewDetailCommand}" />
+                        <StackPanel Grid.Column="1"
+                                    Spacing="2">
+                            <StackPanel Orientation="Horizontal"
+                                        Spacing="8">
+                                <TextBlock Classes="helper-text"
+                                           Text="{Binding TrayPreviewDetailItem.Item.PresetType}" />
+                                <TextBlock Classes="helper-text"
+                                           Text="{Binding TrayPreviewDetailItem.Item.DisplayPrimaryMeta}"
+                                           IsVisible="{Binding TrayPreviewDetailItem.Item.HasDisplayPrimaryMeta}" />
+                            </StackPanel>
+                            <TextBlock Classes="section-title"
+                                       Text="{Binding TrayPreviewDetailItem.Item.DisplayTitle}" />
+                            <TextBlock Classes="helper-text"
+                                       IsVisible="{Binding TrayPreviewDetailItem.Item.HasDisplaySubtitle}"
+                                       Text="{Binding TrayPreviewDetailItem.Item.DisplaySubtitle}" />
+                        </StackPanel>
+                        <Button Grid.Column="2"
+                                Classes="secondary"
+                                Content="Close"
+                                Command="{Binding CloseTrayPreviewDetailCommand}" />
+                    </Grid>
+
+                    <ScrollViewer Grid.Row="1"
+                                  MinHeight="0"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel Spacing="14">
+                            <Grid ColumnDefinitions="320,*"
+                                  ColumnSpacing="16">
+                                <Border Width="320"
+                                        Height="240"
+                                        VerticalAlignment="Top"
+                                        CornerRadius="12"
+                                        ClipToBounds="True"
+                                        BorderThickness="1"
+                                        BorderBrush="{DynamicResource Brush.Border}"
+                                        Background="{DynamicResource Brush.Surface}">
+                                    <Grid>
+                                        <Image IsVisible="{Binding TrayPreviewDetailItem.HasThumbnail}"
+                                               Stretch="Uniform"
+                                               Source="{Binding TrayPreviewDetailItem.Thumbnail}" />
+                                        <Border Width="110"
+                                                Height="8"
+                                                IsVisible="{Binding TrayPreviewDetailItem.IsThumbnailLoading}"
+                                                Background="{DynamicResource Brush.Panel}"
+                                                BorderBrush="{DynamicResource Brush.Border}"
+                                                BorderThickness="1"
+                                                CornerRadius="999"
+                                                HorizontalAlignment="Center"
+                                                VerticalAlignment="Center">
+                                            <Border Width="34"
+                                                    Height="8"
+                                                    Background="{DynamicResource Brush.Primary}"
+                                                    CornerRadius="999"
+                                                    HorizontalAlignment="Left" />
+                                        </Border>
+                                        <TextBlock IsVisible="{Binding TrayPreviewDetailItem.IsThumbnailPlaceholderVisible}"
+                                                   Text="No Preview"
+                                                   Classes="helper-text"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center" />
+                                    </Grid>
+                                </Border>
+
+                                <StackPanel Grid.Column="1"
+                                            Spacing="8">
+                                    <TextBlock FontWeight="SemiBold"
+                                               IsVisible="{Binding TrayPreviewDetailItem.Item.HasDisplaySecondaryMeta}"
+                                               Text="{Binding TrayPreviewDetailItem.Item.DisplaySecondaryMeta}"
+                                               TextWrapping="Wrap" />
+                                    <TextBlock Classes="helper-text"
+                                               IsVisible="{Binding TrayPreviewDetailItem.Item.HasDisplayTertiaryMeta}"
+                                               Text="{Binding TrayPreviewDetailItem.Item.DisplayTertiaryMeta}" />
+                                    <Border Classes="card-muted"
+                                            Padding="12">
+                                        <StackPanel Spacing="6">
+                                            <TextBlock Classes="sub-title"
+                                                       Text="Background" />
+                                            <TextBlock IsVisible="{Binding TrayPreviewDetailItem.Item.HasDisplayDescription}"
+                                                       Text="{Binding TrayPreviewDetailItem.Item.DisplayDescription}"
+                                                       TextWrapping="Wrap" />
+                                            <TextBlock Classes="helper-text"
+                                                       IsVisible="{Binding IsTrayPreviewDetailDescriptionEmpty}"
+                                                       Text="No in-game description was found for this tray item." />
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </Grid>
+
+                            <Border Classes="card-muted"
+                                    Padding="12">
+                                <StackPanel Spacing="6">
+                                    <TextBlock Classes="sub-title"
+                                               Text="Overview" />
+                                    <TextBlock IsVisible="{Binding TrayPreviewDetailItem.Item.HasDisplayPrimaryMeta}"
+                                               Text="{Binding TrayPreviewDetailItem.Item.DisplayPrimaryMeta}" />
+                                    <TextBlock Classes="helper-text"
+                                               IsVisible="{Binding TrayPreviewDetailItem.Item.HasDisplaySecondaryMeta}"
+                                               Text="{Binding TrayPreviewDetailItem.Item.DisplaySecondaryMeta}"
+                                               TextWrapping="Wrap" />
+                                    <TextBlock Classes="helper-text"
+                                               IsVisible="{Binding TrayPreviewDetailItem.Item.HasDisplayTertiaryMeta}"
+                                               Text="{Binding TrayPreviewDetailItem.Item.DisplayTertiaryMeta}"
+                                               TextWrapping="Wrap" />
+                                    <TextBlock Classes="helper-text"
+                                               IsVisible="{Binding IsTrayPreviewDetailOverviewEmpty}"
+                                               Text="This tray item does not expose extra gameplay metadata." />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Classes="card-muted"
+                                    Padding="12"
+                                    IsVisible="{Binding TrayPreviewDetailItem.CanToggleChildren}">
+                                <StackPanel Spacing="10">
+                                    <TextBlock Classes="sub-title"
+                                               Text="Household Members" />
+                                    <ItemsControl ItemsSource="{Binding TrayPreviewDetailItem.ChildItems}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel Orientation="Horizontal" />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="panelvm:TrayPreviewListItemViewModel">
+                                                <Border Classes="card"
+                                                        Width="180"
+                                                        Margin="0,0,10,10"
+                                                        Padding="10">
+                                                    <StackPanel Spacing="8">
+                                                        <Border Cursor="Hand"
+                                                                Background="Transparent"
+                                                                PointerPressed="OnTrayPreviewOpenDetailsPointerPressed">
+                                                            <Border Width="160"
+                                                                    Height="120"
+                                                                    CornerRadius="10"
+                                                                    ClipToBounds="True"
+                                                                    BorderThickness="1"
+                                                                    BorderBrush="{DynamicResource Brush.Border}"
+                                                                    Background="{DynamicResource Brush.Surface}">
+                                                                <Grid>
+                                                                    <Image IsVisible="{Binding HasThumbnail}"
+                                                                           Stretch="Uniform"
+                                                                           Source="{Binding Thumbnail}" />
+                                                                    <TextBlock IsVisible="{Binding IsThumbnailPlaceholderVisible}"
+                                                                               Text="No Preview"
+                                                                               Classes="helper-text"
+                                                                               HorizontalAlignment="Center"
+                                                                               VerticalAlignment="Center" />
+                                                                </Grid>
+                                                            </Border>
+                                                        </Border>
+                                                        <Border Cursor="Hand"
+                                                                Background="Transparent"
+                                                                PointerPressed="OnTrayPreviewOpenDetailsPointerPressed">
+                                                            <TextBlock FontWeight="SemiBold"
+                                                                       Text="{Binding Item.DisplayTitle}"
+                                                                       TextWrapping="Wrap" />
+                                                        </Border>
+                                                        <TextBlock Classes="helper-text"
+                                                                   IsVisible="{Binding Item.HasDisplaySubtitle}"
+                                                                   Text="{Binding Item.DisplaySubtitle}"
+                                                                   TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Classes="card-muted"
+                                    Padding="12"
+                                    IsVisible="{Binding CanGoBackTrayPreviewDetail}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Classes="sub-title"
+                                               Text="Navigation" />
+                                    <TextBlock Classes="helper-text"
+                                               Text="You are viewing a nested member detail. Use Back to return to the previous household or sim page." />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+        </Border>
 
         <Border Grid.Row="1" Classes="card" Padding="12" IsVisible="{Binding IsToolkitWorkspace}">
             <Grid RowDefinitions="Auto,Auto" RowSpacing="8">

@@ -249,6 +249,8 @@ public sealed class ActionModuleRegistryTests
         public string AuthorFilter { get; set; } = string.Empty;
         public string TimeFilter { get; set; } = "All";
         public string SearchQuery { get; set; } = string.Empty;
+        public string LayoutMode { get; set; } = "Entry";
+        public bool EnableDebugPreview { get; set; }
     }
 
     private sealed class TrayDependenciesPanelState : ITrayDependenciesModuleState

@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Diagnostics;
+using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Modules;
@@ -12,6 +13,7 @@ using SimsModDesktop.Infrastructure.Dialogs;
 using SimsModDesktop.Infrastructure.Localization;
 using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Models;
+using SimsModDesktop.Services;
 using SimsModDesktop.ViewModels.Infrastructure;
 using SimsModDesktop.ViewModels.Panels;
 
@@ -23,6 +25,7 @@ public sealed class MainWindowViewModel : ObservableObject
 
     private readonly IToolkitExecutionRunner _toolkitExecutionRunner;
     private readonly ITrayPreviewRunner _trayPreviewRunner;
+    private readonly ITrayThumbnailService _trayThumbnailService;
     private readonly IFileDialogService _fileDialogService;
     private readonly IConfirmationDialogService _confirmationDialogService;
     private readonly ILocalizationService _localization;
@@ -30,11 +33,14 @@ public sealed class MainWindowViewModel : ObservableObject
     private readonly IMainWindowSettingsProjection _settingsProjection;
     private readonly IActionModuleRegistry _moduleRegistry;
     private readonly IMainWindowPlanBuilder _planBuilder;
+    private readonly Stack<TrayPreviewListItemViewModel> _trayPreviewDetailHistory = new();
 
     private readonly StringWriter _logWriter = new();
     private CancellationTokenSource? _executionCts;
     private CancellationTokenSource? _validationDebounceCts;
+    private CancellationTokenSource? _settingsPersistDebounceCts;
     private CancellationTokenSource? _trayPreviewAutoLoadDebounceCts;
+    private CancellationTokenSource? _trayPreviewThumbnailCts;
     private bool _isTrayPreviewPageLoading;
     private bool _isBusy;
     private AppWorkspace _workspace = AppWorkspace.Toolkit;
@@ -57,6 +63,7 @@ public sealed class MainWindowViewModel : ObservableObject
     private string _previewPageText = "Page 0/0";
     private string _previewLazyLoadText = "Lazy cache 0/0 pages";
     private string _previewJumpPageText = string.Empty;
+    private TrayPreviewListItemViewModel? _trayPreviewDetailItem;
     private bool _hasTrayPreviewLoadedOnce;
     private string _validationSummaryText = string.Empty;
     private bool _hasValidationErrors;
@@ -64,6 +71,7 @@ public sealed class MainWindowViewModel : ObservableObject
     private bool _isTrayPreviewLogDrawerOpen;
     private bool _isToolkitAdvancedOpen;
     private bool _isInitialized;
+    private int _trayPreviewThumbnailBatchId;
 
     public MainWindowViewModel(
         IToolkitExecutionRunner toolkitExecutionRunner,
@@ -82,10 +90,12 @@ public sealed class MainWindowViewModel : ObservableObject
         FindDupPanelViewModel findDup,
         TrayDependenciesPanelViewModel trayDependencies,
         TrayPreviewPanelViewModel trayPreview,
-        SharedFileOpsPanelViewModel sharedFileOps)
+        SharedFileOpsPanelViewModel sharedFileOps,
+        ITrayThumbnailService? trayThumbnailService = null)
     {
         _toolkitExecutionRunner = toolkitExecutionRunner;
         _trayPreviewRunner = trayPreviewRunner;
+        _trayThumbnailService = trayThumbnailService ?? NullTrayThumbnailService.Instance;
         _fileDialogService = fileDialogService;
         _confirmationDialogService = confirmationDialogService;
         _localization = localization;
@@ -103,7 +113,7 @@ public sealed class MainWindowViewModel : ObservableObject
         TrayDependencies = trayDependencies;
         TrayPreview = trayPreview;
         SharedFileOps = sharedFileOps;
-        PreviewItems = new ObservableCollection<SimsTrayPreviewItem>();
+        PreviewItems = new ObservableCollection<TrayPreviewListItemViewModel>();
         PreviewItems.CollectionChanged += OnPreviewItemsChanged;
 
         var registeredToolkitActions = _moduleRegistry.All
@@ -137,6 +147,8 @@ public sealed class MainWindowViewModel : ObservableObject
         PreviewPrevPageCommand = new AsyncRelayCommand(LoadPreviousTrayPreviewPageAsync, () => CanGoPrevPage);
         PreviewNextPageCommand = new AsyncRelayCommand(LoadNextTrayPreviewPageAsync, () => CanGoNextPage);
         PreviewJumpPageCommand = new AsyncRelayCommand(JumpToTrayPreviewPageAsync, () => CanJumpToPage);
+        GoBackTrayPreviewDetailCommand = new RelayCommand(GoBackTrayPreviewDetails, () => CanGoBackTrayPreviewDetail);
+        CloseTrayPreviewDetailCommand = new RelayCommand(CloseTrayPreviewDetails, () => IsTrayPreviewDetailVisible);
         ToggleToolkitAdvancedCommand = new RelayCommand(() => IsToolkitAdvancedOpen = !IsToolkitAdvancedOpen, () => IsToolkitWorkspace);
         ClearLogCommand = new RelayCommand(ClearLog, () => !string.IsNullOrWhiteSpace(LogText));
 
@@ -159,7 +171,7 @@ public sealed class MainWindowViewModel : ObservableObject
     public TrayDependenciesPanelViewModel TrayDependencies { get; }
     public TrayPreviewPanelViewModel TrayPreview { get; }
     public SharedFileOpsPanelViewModel SharedFileOps { get; }
-    public ObservableCollection<SimsTrayPreviewItem> PreviewItems { get; }
+    public ObservableCollection<TrayPreviewListItemViewModel> PreviewItems { get; }
 
     public IReadOnlyList<SimsAction> AvailableToolkitActions { get; }
     public IReadOnlyList<LanguageOption> AvailableLanguages => _localization.AvailableLanguages;
@@ -184,6 +196,7 @@ public sealed class MainWindowViewModel : ObservableObject
     public IReadOnlyList<string> TrayPreviewBuildSizeFilterOptions => ["All", "15 x 20", "20 x 20", "30 x 20", "30 x 30", "40 x 30", "40 x 40", "50 x 40", "50 x 50", "64 x 64"];
     public IReadOnlyList<string> TrayPreviewHouseholdSizeFilterOptions => ["All", "1", "2", "3", "4", "5", "6", "7", "8"];
     public IReadOnlyList<string> TrayPreviewTimeFilterOptions => ["All", "Last24h", "Last7d", "Last30d", "Last90d"];
+    public IReadOnlyList<string> TrayPreviewLayoutModeOptions => ["Entry", "Grid"];
 
     public AsyncRelayCommand<string> BrowseFolderCommand { get; }
     public AsyncRelayCommand<string> BrowseCsvPathCommand { get; }
@@ -199,6 +212,8 @@ public sealed class MainWindowViewModel : ObservableObject
     public AsyncRelayCommand PreviewPrevPageCommand { get; }
     public AsyncRelayCommand PreviewNextPageCommand { get; }
     public AsyncRelayCommand PreviewJumpPageCommand { get; }
+    public RelayCommand GoBackTrayPreviewDetailCommand { get; }
+    public RelayCommand CloseTrayPreviewDetailCommand { get; }
     public RelayCommand ToggleToolkitAdvancedCommand { get; }
     public RelayCommand ClearLogCommand { get; }
 
@@ -255,6 +270,12 @@ public sealed class MainWindowViewModel : ObservableObject
             StatusMessage = L("status.ready");
             NotifyCommandStates();
             QueueValidationRefresh();
+
+            if (value != AppWorkspace.TrayPreview)
+            {
+                CloseTrayPreviewDetails();
+                CancelTrayPreviewThumbnailLoading();
+            }
 
             if (_isInitialized && value == AppWorkspace.TrayPreview)
             {
@@ -508,6 +529,34 @@ public sealed class MainWindowViewModel : ObservableObject
     public bool IsTrayPreviewLoadingStateVisible => IsBusy && !HasTrayPreviewItems;
     public bool IsTrayPreviewEmptyStateVisible => !IsBusy && !HasTrayPreviewItems;
     public bool IsTrayPreviewPagerVisible => HasTrayPreviewItems;
+    public bool IsTrayPreviewEntryMode => !string.Equals(TrayPreview.LayoutMode, "Grid", StringComparison.OrdinalIgnoreCase);
+    public bool IsTrayPreviewGridMode => string.Equals(TrayPreview.LayoutMode, "Grid", StringComparison.OrdinalIgnoreCase);
+    public TrayPreviewListItemViewModel? TrayPreviewDetailItem
+    {
+        get => _trayPreviewDetailItem;
+        private set
+        {
+            if (!SetProperty(ref _trayPreviewDetailItem, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(IsTrayPreviewDetailVisible));
+            OnPropertyChanged(nameof(IsTrayPreviewDetailDescriptionEmpty));
+            OnPropertyChanged(nameof(IsTrayPreviewDetailOverviewEmpty));
+            OnPropertyChanged(nameof(CanGoBackTrayPreviewDetail));
+            GoBackTrayPreviewDetailCommand.NotifyCanExecuteChanged();
+            CloseTrayPreviewDetailCommand.NotifyCanExecuteChanged();
+        }
+    }
+    public bool IsTrayPreviewDetailVisible => TrayPreviewDetailItem is not null;
+    public bool IsTrayPreviewDetailDescriptionEmpty => TrayPreviewDetailItem is null || !TrayPreviewDetailItem.Item.HasDisplayDescription;
+    public bool IsTrayPreviewDetailOverviewEmpty =>
+        TrayPreviewDetailItem is null ||
+        (!TrayPreviewDetailItem.Item.HasDisplayPrimaryMeta &&
+         !TrayPreviewDetailItem.Item.HasDisplaySecondaryMeta &&
+         !TrayPreviewDetailItem.Item.HasDisplayTertiaryMeta);
+    public bool CanGoBackTrayPreviewDetail => _trayPreviewDetailHistory.Count > 0;
     public bool IsTrayPreviewEmptyStatusOk => HasValidTrayPreviewPath && !_hasTrayPreviewLoadedOnce;
     public bool IsTrayPreviewEmptyStatusWarning => HasValidTrayPreviewPath && _hasTrayPreviewLoadedOnce;
     public bool IsTrayPreviewEmptyStatusMissing => !HasValidTrayPreviewPath;
@@ -620,33 +669,10 @@ public sealed class MainWindowViewModel : ObservableObject
     public async Task PersistSettingsAsync()
     {
         _validationDebounceCts?.Cancel();
+        _settingsPersistDebounceCts?.Cancel();
         _trayPreviewAutoLoadDebounceCts?.Cancel();
-        var settings = _settingsProjection.Capture(
-            new MainWindowSettingsSnapshot
-            {
-                UiLanguageCode = SelectedLanguageCode,
-                ScriptPath = ScriptPath,
-                Workspace = Workspace,
-                SelectedAction = SelectedAction,
-                WhatIf = WhatIf,
-                SharedFileOps = new AppSettings.SharedFileOpsSettings
-                {
-                    SkipPruneEmptyDirs = SharedFileOps.SkipPruneEmptyDirs,
-                    ModFilesOnly = SharedFileOps.ModFilesOnly,
-                    VerifyContentOnNameConflict = SharedFileOps.VerifyContentOnNameConflict,
-                    ModExtensionsText = SharedFileOps.ModExtensionsText,
-                    PrefixHashBytesText = SharedFileOps.PrefixHashBytesText,
-                    HashWorkerCountText = SharedFileOps.HashWorkerCountText
-                },
-                UiState = new AppSettings.UiStateSettings
-                {
-                    ToolkitLogDrawerOpen = IsToolkitLogDrawerOpen,
-                    TrayPreviewLogDrawerOpen = IsTrayPreviewLogDrawerOpen,
-                    ToolkitAdvancedOpen = IsToolkitAdvancedOpen
-                }
-            },
-            _moduleRegistry);
-        await _settingsStore.SaveAsync(settings);
+        CancelTrayPreviewThumbnailLoading();
+        await SaveCurrentSettingsAsync();
     }
 
     private void HookValidationTracking()
@@ -696,6 +722,29 @@ public sealed class MainWindowViewModel : ObservableObject
             }
 
             NotifyTrayPreviewFilterVisibilityChanged();
+        }
+
+        if (ReferenceEquals(sender, TrayPreview) &&
+            string.Equals(e.PropertyName, nameof(TrayPreviewPanelViewModel.EnableDebugPreview), StringComparison.Ordinal))
+        {
+            ApplyTrayPreviewDebugVisibility();
+
+            if (_isInitialized)
+            {
+                QueueSettingsPersist();
+            }
+        }
+
+        if (ReferenceEquals(sender, TrayPreview) &&
+            string.Equals(e.PropertyName, nameof(TrayPreviewPanelViewModel.LayoutMode), StringComparison.Ordinal))
+        {
+            OnPropertyChanged(nameof(IsTrayPreviewEntryMode));
+            OnPropertyChanged(nameof(IsTrayPreviewGridMode));
+
+            if (_isInitialized)
+            {
+                QueueSettingsPersist();
+            }
         }
 
         if (!ReferenceEquals(sender, TrayPreview) || !IsTrayPreviewAutoReloadProperty(e.PropertyName))
@@ -751,6 +800,61 @@ public sealed class MainWindowViewModel : ObservableObject
 
             ExecuteOnUi(() => _ = TryAutoLoadTrayPreviewAsync());
         }, cancellationToken);
+    }
+
+    private void QueueSettingsPersist()
+    {
+        _settingsPersistDebounceCts?.Cancel();
+        _settingsPersistDebounceCts?.Dispose();
+        _settingsPersistDebounceCts = new CancellationTokenSource();
+        var cancellationToken = _settingsPersistDebounceCts.Token;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(250, cancellationToken);
+                await SaveCurrentSettingsAsync(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }, cancellationToken);
+    }
+
+    private async Task SaveCurrentSettingsAsync(CancellationToken cancellationToken = default)
+    {
+        var settings = await _settingsStore.LoadAsync(cancellationToken);
+
+        settings.UiLanguageCode = string.IsNullOrWhiteSpace(SelectedLanguageCode)
+            ? DefaultLanguageCode
+            : SelectedLanguageCode.Trim();
+        settings.ScriptPath = ScriptPath;
+        settings.SelectedWorkspace = Workspace;
+        settings.SelectedAction = SelectedAction;
+        settings.WhatIf = WhatIf;
+        settings.SharedFileOps = new AppSettings.SharedFileOpsSettings
+        {
+            SkipPruneEmptyDirs = SharedFileOps.SkipPruneEmptyDirs,
+            ModFilesOnly = SharedFileOps.ModFilesOnly,
+            VerifyContentOnNameConflict = SharedFileOps.VerifyContentOnNameConflict,
+            ModExtensionsText = SharedFileOps.ModExtensionsText,
+            PrefixHashBytesText = SharedFileOps.PrefixHashBytesText,
+            HashWorkerCountText = SharedFileOps.HashWorkerCountText
+        };
+        settings.UiState = new AppSettings.UiStateSettings
+        {
+            ToolkitLogDrawerOpen = IsToolkitLogDrawerOpen,
+            TrayPreviewLogDrawerOpen = IsTrayPreviewLogDrawerOpen,
+            ToolkitAdvancedOpen = IsToolkitAdvancedOpen
+        };
+
+        foreach (var module in _moduleRegistry.All)
+        {
+            module.SaveToSettings(settings);
+        }
+
+        await _settingsStore.SaveAsync(settings, cancellationToken);
     }
 
     private void OnMergeSourcePathsChanged(object? sender, NotifyCollectionChangedEventArgs e)
@@ -1246,6 +1350,7 @@ public sealed class MainWindowViewModel : ObservableObject
             return;
         }
 
+        CancelTrayPreviewThumbnailLoading();
         SetTrayPreviewPageLoading(true);
         try
         {
@@ -1399,7 +1504,9 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         ExecuteOnUi(() =>
         {
-            PreviewItems.Clear();
+            CloseTrayPreviewDetails();
+            CancelTrayPreviewThumbnailLoading();
+            ClearPreviewItems();
             PreviewSummaryText = L("preview.noneLoaded");
             PreviewTotalItems = "0";
             PreviewTotalFiles = "0";
@@ -1438,11 +1545,15 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         ExecuteOnUi(() =>
         {
-            PreviewItems.Clear();
+            CloseTrayPreviewDetails();
+            CancelTrayPreviewThumbnailLoading();
+            ClearPreviewItems();
             foreach (var item in page.Items)
             {
-                PreviewItems.Add(item);
+                PreviewItems.Add(new TrayPreviewListItemViewModel(item, OnTrayPreviewItemExpanded, OpenTrayPreviewDetails));
             }
+
+            ApplyTrayPreviewDebugVisibility();
 
             _hasTrayPreviewLoadedOnce = true;
             _trayPreviewCurrentPage = page.PageIndex;
@@ -1457,6 +1568,279 @@ public sealed class MainWindowViewModel : ObservableObject
             NotifyTrayPreviewViewStateChanged();
             NotifyCommandStates();
         });
+
+        StartTrayPreviewThumbnailLoading(page.PageIndex);
+    }
+
+    private void ClearPreviewItems()
+    {
+        CloseTrayPreviewDetails();
+        foreach (var item in PreviewItems)
+        {
+            item.Dispose();
+        }
+
+        PreviewItems.Clear();
+    }
+
+    private void CancelTrayPreviewThumbnailLoading()
+    {
+        Interlocked.Increment(ref _trayPreviewThumbnailBatchId);
+        var cts = _trayPreviewThumbnailCts;
+        _trayPreviewThumbnailCts = null;
+
+        if (cts is null)
+        {
+            return;
+        }
+
+        try
+        {
+            cts.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private void ApplyTrayPreviewDebugVisibility()
+    {
+        ExecuteOnUi(() =>
+        {
+            foreach (var item in PreviewItems)
+            {
+                item.SetDebugPreviewEnabled(TrayPreview.EnableDebugPreview);
+            }
+        });
+    }
+
+    private void StartTrayPreviewThumbnailLoading(int pageIndex)
+    {
+        if (PreviewItems.Count == 0)
+        {
+            return;
+        }
+
+        var batchId = Interlocked.Increment(ref _trayPreviewThumbnailBatchId);
+        var cts = new CancellationTokenSource();
+        _trayPreviewThumbnailCts = cts;
+        var primaryItems = PreviewItems.ToList();
+        foreach (var item in primaryItems)
+        {
+            item.SetThumbnailLoading();
+        }
+
+        _ = LoadTrayPreviewThumbnailsAsync(primaryItems, pageIndex, batchId, cts, stageLabel: "top-level");
+    }
+
+    private async Task LoadTrayPreviewThumbnailsAsync(
+        IReadOnlyList<TrayPreviewListItemViewModel> items,
+        int pageIndex,
+        int batchId,
+        CancellationTokenSource cts,
+        string stageLabel)
+    {
+        var cacheHits = 0;
+        var generated = 0;
+        var failures = 0;
+        var maxParallelism = Math.Min(4, Math.Max(2, Environment.ProcessorCount / 2));
+        using var gate = new SemaphoreSlim(maxParallelism, maxParallelism);
+
+        try
+        {
+            await LoadTrayPreviewThumbnailBatchAsync(items, gate, batchId, cts).ConfigureAwait(false);
+
+            if (!cts.IsCancellationRequested && IsActiveThumbnailBatch(batchId, cts))
+            {
+                AppendLog(
+                    $"[preview-thumbs] page={pageIndex} stage={stageLabel} count={items.Count} cache={cacheHits} generated={generated} failed={failures}");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(_trayPreviewThumbnailCts, cts))
+            {
+                _trayPreviewThumbnailCts = null;
+            }
+
+            cts.Dispose();
+        }
+
+        async Task LoadTrayPreviewThumbnailBatchAsync(
+            IReadOnlyList<TrayPreviewListItemViewModel> items,
+            SemaphoreSlim localGate,
+            int localBatchId,
+            CancellationTokenSource localCts)
+        {
+            if (items.Count == 0)
+            {
+                return;
+            }
+
+            var tasks = items.Select(item =>
+                Task.Run(async () =>
+                {
+                    await localGate.WaitAsync(localCts.Token).ConfigureAwait(false);
+                    try
+                    {
+                        var result = await _trayThumbnailService.GetThumbnailAsync(item.Item, localCts.Token).ConfigureAwait(false);
+                        if (result.Success && TryLoadBitmap(result.CacheFilePath, out var bitmap))
+                        {
+                            if (result.FromCache)
+                            {
+                                Interlocked.Increment(ref cacheHits);
+                            }
+                            else
+                            {
+                                Interlocked.Increment(ref generated);
+                            }
+
+                            await ExecuteOnUiAsync(() =>
+                            {
+                                if (IsActiveThumbnailBatch(localBatchId, localCts))
+                                {
+                                    item.SetThumbnail(bitmap);
+                                }
+                                else
+                                {
+                                    bitmap.Dispose();
+                                }
+                            }).ConfigureAwait(false);
+                            return;
+                        }
+
+                        Interlocked.Increment(ref failures);
+                        await ExecuteOnUiAsync(() =>
+                        {
+                            if (IsActiveThumbnailBatch(localBatchId, localCts))
+                            {
+                                item.SetThumbnailUnavailable(isError: true);
+                            }
+                        }).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                    }
+                    catch
+                    {
+                        Interlocked.Increment(ref failures);
+                        await ExecuteOnUiAsync(() =>
+                        {
+                            if (IsActiveThumbnailBatch(localBatchId, localCts))
+                            {
+                                item.SetThumbnailUnavailable(isError: true);
+                            }
+                        }).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        localGate.Release();
+                    }
+                }, localCts.Token));
+
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+        }
+    }
+
+    private void OnTrayPreviewItemExpanded(TrayPreviewListItemViewModel expandedItem)
+    {
+        ArgumentNullException.ThrowIfNull(expandedItem);
+
+        LoadTrayPreviewChildThumbnails(expandedItem);
+    }
+
+    private void OpenTrayPreviewDetails(TrayPreviewListItemViewModel selectedItem)
+    {
+        ArgumentNullException.ThrowIfNull(selectedItem);
+
+        if (TrayPreviewDetailItem is null)
+        {
+            _trayPreviewDetailHistory.Clear();
+        }
+        else if (!ReferenceEquals(TrayPreviewDetailItem, selectedItem))
+        {
+            _trayPreviewDetailHistory.Push(TrayPreviewDetailItem);
+        }
+
+        TrayPreviewDetailItem = selectedItem;
+        LoadTrayPreviewChildThumbnails(selectedItem);
+    }
+
+    private void GoBackTrayPreviewDetails()
+    {
+        if (_trayPreviewDetailHistory.Count == 0)
+        {
+            return;
+        }
+
+        var previousItem = _trayPreviewDetailHistory.Pop();
+        TrayPreviewDetailItem = previousItem;
+        LoadTrayPreviewChildThumbnails(previousItem);
+    }
+
+    private void CloseTrayPreviewDetails()
+    {
+        _trayPreviewDetailHistory.Clear();
+        TrayPreviewDetailItem = null;
+    }
+
+    private void LoadTrayPreviewChildThumbnails(TrayPreviewListItemViewModel parentItem)
+    {
+        ArgumentNullException.ThrowIfNull(parentItem);
+
+        var batchId = _trayPreviewThumbnailBatchId;
+        var itemsToLoad = parentItem.ChildItems
+            .SelectMany(item => item.EnumerateSelfAndDescendants())
+            .Where(item => !item.HasThumbnail && !item.HasThumbnailError && !item.IsThumbnailLoading)
+            .ToList();
+        if (itemsToLoad.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var item in itemsToLoad)
+        {
+            item.SetThumbnailLoading();
+        }
+
+        var cts = new CancellationTokenSource();
+        _ = LoadTrayPreviewThumbnailsAsync(
+            itemsToLoad,
+            _trayPreviewCurrentPage,
+            batchId,
+            cts,
+            stageLabel: "expanded");
+    }
+
+    private bool IsActiveThumbnailBatch(int batchId, CancellationTokenSource cts)
+    {
+        return batchId == _trayPreviewThumbnailBatchId &&
+               !cts.IsCancellationRequested &&
+               (_trayPreviewThumbnailCts is null || ReferenceEquals(_trayPreviewThumbnailCts, cts));
+    }
+
+    private static bool TryLoadBitmap(string cacheFilePath, out Bitmap bitmap)
+    {
+        bitmap = null!;
+
+        if (string.IsNullOrWhiteSpace(cacheFilePath) || !File.Exists(cacheFilePath))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var stream = File.OpenRead(cacheFilePath);
+            bitmap = new Bitmap(stream);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private void SetTrayPreviewPageLoading(bool loading)
@@ -1587,6 +1971,17 @@ public sealed class MainWindowViewModel : ObservableObject
         }
 
         Dispatcher.UIThread.Post(action);
+    }
+
+    private static async Task ExecuteOnUiAsync(Action action)
+    {
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            action();
+            return;
+        }
+
+        await Dispatcher.UIThread.InvokeAsync(action);
     }
 }
 

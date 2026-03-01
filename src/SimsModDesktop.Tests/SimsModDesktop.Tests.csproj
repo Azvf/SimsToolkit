@@ -21,5 +21,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SimsModDesktop\SimsModDesktop.csproj" />
+    <PackageReference Include="SkiaSharp" Version="2.88.9" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="obj-test-output\**\*.cs" />
   </ItemGroup>
 </Project>

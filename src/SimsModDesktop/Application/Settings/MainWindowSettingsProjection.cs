@@ -119,8 +119,6 @@ public sealed class MainWindowSettingsProjection : IMainWindowSettingsProjection
         var source = value ?? new AppSettings.FeatureFlagsSettings();
         return new AppSettings.FeatureFlagsSettings
         {
-            EnableStructuredResults = source.EnableStructuredResults,
-            EnableInspectorPane = source.EnableInspectorPane,
             EnableLaunchGame = source.EnableLaunchGame
         };
     }

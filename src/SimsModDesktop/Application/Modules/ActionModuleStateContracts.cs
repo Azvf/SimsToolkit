@@ -65,4 +65,6 @@ public interface ITrayPreviewModuleState
     string AuthorFilter { get; set; }
     string TimeFilter { get; set; }
     string SearchQuery { get; set; }
+    string LayoutMode { get; set; }
+    bool EnableDebugPreview { get; set; }
 }

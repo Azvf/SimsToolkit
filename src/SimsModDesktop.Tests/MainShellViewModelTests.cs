@@ -9,7 +9,6 @@ using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Models;
 using SimsModDesktop.Services;
 using SimsModDesktop.ViewModels;
-using SimsModDesktop.ViewModels.Inspector;
 using SimsModDesktop.ViewModels.Panels;
 using SimsModDesktop.ViewModels.Shell;
 
@@ -72,8 +71,7 @@ public sealed class MainShellViewModelTests
             new FakeFileDialogService(),
             settingsStore,
             new FakePathDiscoveryService(),
-            new FakeGameLaunchService(),
-            new InspectorViewModel(Array.Empty<IInspectorPresenter>()));
+            new FakeGameLaunchService());
     }
 
     private static MainWindowViewModel CreateWorkspaceViewModel(ISettingsStore settingsStore)

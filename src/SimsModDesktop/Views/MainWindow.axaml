@@ -10,8 +10,8 @@
         Title="Sims Mod Desktop"
         Width="1480"
         Height="920"
-        MinWidth="1180"
-        MinHeight="760"
+        MinWidth="720"
+        MinHeight="460"
         d:DesignWidth="1480"
         d:DesignHeight="920">
     <shellViews:MainShellView />
