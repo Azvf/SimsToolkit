@@ -9,11 +9,13 @@ using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Settings;
+using SimsModDesktop.Application.Validation;
 using SimsModDesktop.Infrastructure.Dialogs;
 using SimsModDesktop.Infrastructure.Localization;
 using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Models;
 using SimsModDesktop.Services;
+using SimsModDesktop.TrayDependencyEngine;
 using SimsModDesktop.ViewModels.Infrastructure;
 using SimsModDesktop.ViewModels.Panels;
 
@@ -26,6 +28,8 @@ public sealed class MainWindowViewModel : ObservableObject
     private readonly IToolkitExecutionRunner _toolkitExecutionRunner;
     private readonly ITrayPreviewRunner _trayPreviewRunner;
     private readonly ITrayThumbnailService _trayThumbnailService;
+    private readonly ITrayDependencyExportService _trayDependencyExportService;
+    private readonly ITrayDependencyAnalysisService _trayDependencyAnalysisService;
     private readonly IFileDialogService _fileDialogService;
     private readonly IConfirmationDialogService _confirmationDialogService;
     private readonly ILocalizationService _localization;
@@ -34,6 +38,7 @@ public sealed class MainWindowViewModel : ObservableObject
     private readonly IActionModuleRegistry _moduleRegistry;
     private readonly IMainWindowPlanBuilder _planBuilder;
     private readonly Stack<TrayPreviewListItemViewModel> _trayPreviewDetailHistory = new();
+    private readonly HashSet<string> _selectedTrayPreviewKeys = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly StringWriter _logWriter = new();
     private CancellationTokenSource? _executionCts;
@@ -71,11 +76,15 @@ public sealed class MainWindowViewModel : ObservableObject
     private bool _isTrayPreviewLogDrawerOpen;
     private bool _isToolkitAdvancedOpen;
     private bool _isInitialized;
+    private bool _isTrayExportQueueExpanded = true;
     private int _trayPreviewThumbnailBatchId;
+    private string? _trayPreviewSelectionAnchorKey;
 
     public MainWindowViewModel(
         IToolkitExecutionRunner toolkitExecutionRunner,
         ITrayPreviewRunner trayPreviewRunner,
+        ITrayDependencyExportService trayDependencyExportService,
+        ITrayDependencyAnalysisService trayDependencyAnalysisService,
         IFileDialogService fileDialogService,
         IConfirmationDialogService confirmationDialogService,
         ILocalizationService localization,
@@ -89,12 +98,15 @@ public sealed class MainWindowViewModel : ObservableObject
         MergePanelViewModel merge,
         FindDupPanelViewModel findDup,
         TrayDependenciesPanelViewModel trayDependencies,
+        ModPreviewPanelViewModel modPreview,
         TrayPreviewPanelViewModel trayPreview,
         SharedFileOpsPanelViewModel sharedFileOps,
         ITrayThumbnailService? trayThumbnailService = null)
     {
         _toolkitExecutionRunner = toolkitExecutionRunner;
         _trayPreviewRunner = trayPreviewRunner;
+        _trayDependencyExportService = trayDependencyExportService;
+        _trayDependencyAnalysisService = trayDependencyAnalysisService;
         _trayThumbnailService = trayThumbnailService ?? NullTrayThumbnailService.Instance;
         _fileDialogService = fileDialogService;
         _confirmationDialogService = confirmationDialogService;
@@ -111,10 +123,13 @@ public sealed class MainWindowViewModel : ObservableObject
         Merge.SourcePaths.CollectionChanged += OnMergeSourcePathsChanged;
         FindDup = findDup;
         TrayDependencies = trayDependencies;
+        ModPreview = modPreview;
         TrayPreview = trayPreview;
         SharedFileOps = sharedFileOps;
         PreviewItems = new ObservableCollection<TrayPreviewListItemViewModel>();
         PreviewItems.CollectionChanged += OnPreviewItemsChanged;
+        TrayExportTasks = new ObservableCollection<TrayExportTaskItemViewModel>();
+        TrayExportTasks.CollectionChanged += OnTrayExportTasksChanged;
 
         var registeredToolkitActions = _moduleRegistry.All
             .Select(module => module.Action)
@@ -142,7 +157,15 @@ public sealed class MainWindowViewModel : ObservableObject
         RunTrayPreviewCommand = new AsyncRelayCommand(
             () => RunTrayPreviewAsync(),
             () => !IsBusy && IsTrayPreviewWorkspace && HasValidTrayPreviewPath);
-        RunActiveWorkspaceCommand = new AsyncRelayCommand(RunActiveWorkspaceAsync, () => !IsBusy);
+        OpenSelectedTrayPreviewPathsCommand = new RelayCommand(OpenSelectedTrayPreviewPaths, () => HasSelectedTrayPreviewItems);
+        SelectAllTrayPreviewPageCommand = new RelayCommand(SelectAllTrayPreviewPage, () => HasTrayPreviewItems);
+        ClearTrayPreviewSelectionCommand = new RelayCommand(ClearTrayPreviewSelection, () => HasSelectedTrayPreviewItems);
+        ExportSelectedTrayPreviewFilesCommand = new AsyncRelayCommand(ExportSelectedTrayPreviewFilesAsync, () => HasSelectedTrayPreviewItems);
+        ClearCompletedTrayExportTasksCommand = new RelayCommand(ClearCompletedTrayExportTasks, () => HasCompletedTrayExportTasks);
+        ToggleTrayExportQueueCommand = new RelayCommand(ToggleTrayExportQueue, () => HasTrayExportTasks);
+        OpenTrayExportTaskPathCommand = new RelayCommand<TrayExportTaskItemViewModel>(OpenTrayExportTaskPath, task => task?.HasExportRoot == true);
+        ToggleTrayExportTaskDetailsCommand = new RelayCommand<TrayExportTaskItemViewModel>(ToggleTrayExportTaskDetails, task => task?.HasDetails == true);
+        RunActiveWorkspaceCommand = new AsyncRelayCommand(RunActiveWorkspaceAsync, () => !IsBusy && !IsModPreviewWorkspace);
         CancelCommand = new RelayCommand(CancelExecution, () => IsBusy);
         PreviewPrevPageCommand = new AsyncRelayCommand(LoadPreviousTrayPreviewPageAsync, () => CanGoPrevPage);
         PreviewNextPageCommand = new AsyncRelayCommand(LoadNextTrayPreviewPageAsync, () => CanGoNextPage);
@@ -169,9 +192,11 @@ public sealed class MainWindowViewModel : ObservableObject
     public MergePanelViewModel Merge { get; }
     public FindDupPanelViewModel FindDup { get; }
     public TrayDependenciesPanelViewModel TrayDependencies { get; }
+    public ModPreviewPanelViewModel ModPreview { get; }
     public TrayPreviewPanelViewModel TrayPreview { get; }
     public SharedFileOpsPanelViewModel SharedFileOps { get; }
     public ObservableCollection<TrayPreviewListItemViewModel> PreviewItems { get; }
+    public ObservableCollection<TrayExportTaskItemViewModel> TrayExportTasks { get; }
 
     public IReadOnlyList<SimsAction> AvailableToolkitActions { get; }
     public IReadOnlyList<LanguageOption> AvailableLanguages => _localization.AvailableLanguages;
@@ -197,6 +222,9 @@ public sealed class MainWindowViewModel : ObservableObject
     public IReadOnlyList<string> TrayPreviewHouseholdSizeFilterOptions => ["All", "1", "2", "3", "4", "5", "6", "7", "8"];
     public IReadOnlyList<string> TrayPreviewTimeFilterOptions => ["All", "Last24h", "Last7d", "Last30d", "Last90d"];
     public IReadOnlyList<string> TrayPreviewLayoutModeOptions => ["Entry", "Grid"];
+    public IReadOnlyList<string> ModPreviewPackageTypeFilterOptions => ["All", ".package", ".ts4script", "Override", "Script Mod"];
+    public IReadOnlyList<string> ModPreviewScopeFilterOptions => ["All", "Build/Buy", "CAS", "Gameplay"];
+    public IReadOnlyList<string> ModPreviewSortOptions => ["Last Updated", "Name", "Size"];
 
     public AsyncRelayCommand<string> BrowseFolderCommand { get; }
     public AsyncRelayCommand<string> BrowseCsvPathCommand { get; }
@@ -207,6 +235,14 @@ public sealed class MainWindowViewModel : ObservableObject
     public RelayCommand<MergeSourcePathEntryViewModel> RemoveMergeSourcePathCommand { get; }
     public AsyncRelayCommand RunCommand { get; }
     public AsyncRelayCommand RunTrayPreviewCommand { get; }
+    public RelayCommand OpenSelectedTrayPreviewPathsCommand { get; }
+    public RelayCommand SelectAllTrayPreviewPageCommand { get; }
+    public RelayCommand ClearTrayPreviewSelectionCommand { get; }
+    public AsyncRelayCommand ExportSelectedTrayPreviewFilesCommand { get; }
+    public RelayCommand ClearCompletedTrayExportTasksCommand { get; }
+    public RelayCommand ToggleTrayExportQueueCommand { get; }
+    public RelayCommand<TrayExportTaskItemViewModel> OpenTrayExportTaskPathCommand { get; }
+    public RelayCommand<TrayExportTaskItemViewModel> ToggleTrayExportTaskDetailsCommand { get; }
     public AsyncRelayCommand RunActiveWorkspaceCommand { get; }
     public RelayCommand CancelCommand { get; }
     public AsyncRelayCommand PreviewPrevPageCommand { get; }
@@ -265,6 +301,7 @@ public sealed class MainWindowViewModel : ObservableObject
             }
 
             OnPropertyChanged(nameof(IsToolkitWorkspace));
+            OnPropertyChanged(nameof(IsModPreviewWorkspace));
             OnPropertyChanged(nameof(IsTrayPreviewWorkspace));
             OnPropertyChanged(nameof(IsSharedFileOpsVisible));
             StatusMessage = L("status.ready");
@@ -395,7 +432,15 @@ public sealed class MainWindowViewModel : ObservableObject
     public string PreviewTotalItems
     {
         get => _previewTotalItems;
-        private set => SetProperty(ref _previewTotalItems, value);
+        private set
+        {
+            if (!SetProperty(ref _previewTotalItems, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(TrayPreviewSelectionSummaryText));
+        }
     }
 
     public string PreviewTotalFiles
@@ -504,10 +549,19 @@ public sealed class MainWindowViewModel : ObservableObject
     public bool IsFindDupVisible => SelectedAction == SimsAction.FindDuplicates;
     public bool IsTrayDependenciesVisible => SelectedAction == SimsAction.TrayDependencies;
     public bool IsToolkitWorkspace => Workspace == AppWorkspace.Toolkit;
+    public bool IsModPreviewWorkspace => Workspace == AppWorkspace.ModPreview;
     public bool IsTrayPreviewWorkspace => Workspace == AppWorkspace.TrayPreview;
     public bool IsSharedFileOpsVisible =>
         IsToolkitWorkspace &&
         _moduleRegistry.All.Any(module => module.Action == SelectedAction && module.UsesSharedFileOps);
+
+    public bool HasValidModPreviewPath =>
+        !string.IsNullOrWhiteSpace(ModPreview.ModsRoot) &&
+        Directory.Exists(ModPreview.ModsRoot);
+
+    public string ModPreviewPathHintText => HasValidModPreviewPath
+        ? "Mods Path comes from Settings."
+        : "Set a valid Mods Path in Settings before building preview.";
 
     public bool HasValidTrayPreviewPath =>
         !string.IsNullOrWhiteSpace(TrayPreview.TrayRoot) &&
@@ -526,6 +580,21 @@ public sealed class MainWindowViewModel : ObservableObject
     public bool IsHouseholdSizeFilterVisible =>
         string.Equals(TrayPreview.PresetTypeFilter, "Household", StringComparison.OrdinalIgnoreCase);
     public bool HasTrayPreviewItems => PreviewItems.Count > 0;
+    public bool HasSelectedTrayPreviewItems => _selectedTrayPreviewKeys.Count > 0;
+    public int SelectedTrayPreviewCount => _selectedTrayPreviewKeys.Count;
+    public string TrayPreviewSelectionSummaryText => $"{SelectedTrayPreviewCount} selected / {PreviewItems.Count} on page / {PreviewTotalItems} total";
+    public bool HasTrayExportTasks => TrayExportTasks.Count > 0;
+    public bool HasCompletedTrayExportTasks => TrayExportTasks.Any(item => item.IsCompleted);
+    public bool HasRunningTrayExportTasks => TrayExportTasks.Any(item => item.IsRunning);
+    public bool IsTrayExportQueueDockVisible => IsTrayPreviewWorkspace && HasTrayExportTasks;
+    public bool IsTrayExportQueueVisible => IsTrayExportQueueDockVisible && _isTrayExportQueueExpanded;
+    public string TrayExportQueueSummaryText =>
+        HasTrayExportTasks
+            ? $"{TrayExportTasks.Count(item => item.IsRunning)} running / {TrayExportTasks.Count(item => item.IsCompleted)} finished"
+            : "No export tasks";
+    public string TrayExportQueueToggleText => IsTrayExportQueueVisible
+        ? "Hide Tasks"
+        : $"Show Tasks ({TrayExportTasks.Count})";
     public bool IsTrayPreviewLoadingStateVisible => IsBusy && !HasTrayPreviewItems;
     public bool IsTrayPreviewEmptyStateVisible => !IsBusy && !HasTrayPreviewItems;
     public bool IsTrayPreviewPagerVisible => HasTrayPreviewItems;
@@ -638,6 +707,12 @@ public sealed class MainWindowViewModel : ObservableObject
         SharedFileOps.ModExtensionsText = resolved.SharedFileOps.ModExtensionsText;
         SharedFileOps.PrefixHashBytesText = resolved.SharedFileOps.PrefixHashBytesText;
         SharedFileOps.HashWorkerCountText = resolved.SharedFileOps.HashWorkerCountText;
+        ModPreview.ModsRoot = resolved.ModPreview.ModsRoot;
+        ModPreview.PackageTypeFilter = resolved.ModPreview.PackageTypeFilter;
+        ModPreview.ScopeFilter = resolved.ModPreview.ScopeFilter;
+        ModPreview.SortBy = resolved.ModPreview.SortBy;
+        ModPreview.SearchQuery = resolved.ModPreview.SearchQuery;
+        ModPreview.ShowOverridesOnly = resolved.ModPreview.ShowOverridesOnly;
         IsToolkitLogDrawerOpen = resolved.UiState.ToolkitLogDrawerOpen;
         IsTrayPreviewLogDrawerOpen = resolved.UiState.TrayPreviewLogDrawerOpen;
         IsToolkitAdvancedOpen = resolved.UiState.ToolkitAdvancedOpen;
@@ -682,6 +757,7 @@ public sealed class MainWindowViewModel : ObservableObject
         SubscribeForValidation(Normalize);
         SubscribeForValidation(FindDup);
         SubscribeForValidation(TrayDependencies);
+        SubscribeForValidation(ModPreview);
         SubscribeForValidation(TrayPreview);
         SubscribeForValidation(SharedFileOps);
         SubscribeForValidation(Merge);
@@ -745,6 +821,12 @@ public sealed class MainWindowViewModel : ObservableObject
             {
                 QueueSettingsPersist();
             }
+        }
+
+        if (ReferenceEquals(sender, ModPreview))
+        {
+            OnPropertyChanged(nameof(HasValidModPreviewPath));
+            OnPropertyChanged(nameof(ModPreviewPathHintText));
         }
 
         if (!ReferenceEquals(sender, TrayPreview) || !IsTrayPreviewAutoReloadProperty(e.PropertyName))
@@ -848,6 +930,15 @@ public sealed class MainWindowViewModel : ObservableObject
             TrayPreviewLogDrawerOpen = IsTrayPreviewLogDrawerOpen,
             ToolkitAdvancedOpen = IsToolkitAdvancedOpen
         };
+        settings.ModPreview = new AppSettings.ModPreviewSettings
+        {
+            ModsRoot = ModPreview.ModsRoot,
+            PackageTypeFilter = ModPreview.PackageTypeFilter,
+            ScopeFilter = ModPreview.ScopeFilter,
+            SortBy = ModPreview.SortBy,
+            SearchQuery = ModPreview.SearchQuery,
+            ShowOverridesOnly = ModPreview.ShowOverridesOnly
+        };
 
         foreach (var module in _moduleRegistry.All)
         {
@@ -928,7 +1019,16 @@ public sealed class MainWindowViewModel : ObservableObject
             if (IsToolkitWorkspace)
             {
                 var module = _moduleRegistry.Get(SelectedAction);
-                if (!_planBuilder.TryBuildToolkitCliPlan(CreatePlanBuilderState(), out _, out _, out var error))
+                if (SelectedAction == SimsAction.TrayDependencies)
+                {
+                    if (!_planBuilder.TryBuildTrayDependenciesPlan(CreatePlanBuilderState(), out _, out var trayDependencyError))
+                    {
+                        HasValidationErrors = true;
+                        ValidationSummaryText = LF("validation.failed", trayDependencyError);
+                        return;
+                    }
+                }
+                else if (!_planBuilder.TryBuildToolkitCliPlan(CreatePlanBuilderState(), out _, out _, out var error))
                 {
                     HasValidationErrors = true;
                     ValidationSummaryText = LF("validation.failed", error);
@@ -937,6 +1037,15 @@ public sealed class MainWindowViewModel : ObservableObject
 
                 HasValidationErrors = false;
                 ValidationSummaryText = LF("validation.okToolkit", module.DisplayName);
+                return;
+            }
+
+            if (IsModPreviewWorkspace)
+            {
+                HasValidationErrors = false;
+                ValidationSummaryText = HasValidModPreviewPath
+                    ? "Mod preview scaffold is ready."
+                    : "Set a valid Mods Path in Settings to prepare the mod preview scaffold.";
                 return;
             }
 
@@ -963,6 +1072,14 @@ public sealed class MainWindowViewModel : ObservableObject
         RemoveMergeSourcePathCommand.NotifyCanExecuteChanged();
         RunCommand.NotifyCanExecuteChanged();
         RunTrayPreviewCommand.NotifyCanExecuteChanged();
+        OpenSelectedTrayPreviewPathsCommand.NotifyCanExecuteChanged();
+        SelectAllTrayPreviewPageCommand.NotifyCanExecuteChanged();
+        ClearTrayPreviewSelectionCommand.NotifyCanExecuteChanged();
+        ExportSelectedTrayPreviewFilesCommand.NotifyCanExecuteChanged();
+        ClearCompletedTrayExportTasksCommand.NotifyCanExecuteChanged();
+        ToggleTrayExportQueueCommand.NotifyCanExecuteChanged();
+        OpenTrayExportTaskPathCommand.NotifyCanExecuteChanged();
+        ToggleTrayExportTaskDetailsCommand.NotifyCanExecuteChanged();
         RunActiveWorkspaceCommand.NotifyCanExecuteChanged();
         CancelCommand.NotifyCanExecuteChanged();
         PreviewPrevPageCommand.NotifyCanExecuteChanged();
@@ -970,6 +1087,8 @@ public sealed class MainWindowViewModel : ObservableObject
         PreviewJumpPageCommand.NotifyCanExecuteChanged();
         ToggleToolkitAdvancedCommand.NotifyCanExecuteChanged();
         ClearLogCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(HasValidModPreviewPath));
+        OnPropertyChanged(nameof(ModPreviewPathHintText));
         OnPropertyChanged(nameof(HasValidTrayPreviewPath));
         OnPropertyChanged(nameof(TrayPreviewPathHintText));
         OnPropertyChanged(nameof(CanGoPrevPage));
@@ -986,7 +1105,10 @@ public sealed class MainWindowViewModel : ObservableObject
             return;
         }
 
-        await RunTrayPreviewAsync();
+        if (IsTrayPreviewWorkspace)
+        {
+            await RunTrayPreviewAsync();
+        }
     }
 
     private async Task BrowseFolderAsync(string? target)
@@ -1019,9 +1141,6 @@ public sealed class MainWindowViewModel : ObservableObject
                 break;
             case "FindDupRootPath":
                 await BrowseSingleFolderAsync("Select FindDup RootPath", path => FindDup.RootPath = path);
-                break;
-            case "ProbeS4tiPath":
-                await BrowseSingleFolderAsync("Select S4TI Install Folder", path => TrayDependencies.S4tiPath = path);
                 break;
             case "ProbeExportTargetPath":
                 await BrowseSingleFolderAsync("Select ExportTargetPath", path => TrayDependencies.ExportTargetPath = path);
@@ -1146,6 +1265,12 @@ public sealed class MainWindowViewModel : ObservableObject
             return;
         }
 
+        if (SelectedAction == SimsAction.TrayDependencies)
+        {
+            await RunTrayDependenciesAsync();
+            return;
+        }
+
         if (!_planBuilder.TryBuildToolkitCliPlan(CreatePlanBuilderState(), out _, out var cliPlan, out var error))
         {
             StatusMessage = error;
@@ -1214,6 +1339,117 @@ public sealed class MainWindowViewModel : ObservableObject
                 SetProgress(isIndeterminate: false, percent: 0, message: L("progress.executionFailed"));
                 await ShowErrorPopupAsync(L("status.executionFailed"));
             }
+        }
+        finally
+        {
+            _executionCts.Dispose();
+            _executionCts = null;
+            IsBusy = false;
+            RefreshValidationNow();
+        }
+    }
+
+    private async Task RunTrayDependenciesAsync()
+    {
+        if (_executionCts is not null)
+        {
+            StatusMessage = L("status.executionAlreadyRunning");
+            return;
+        }
+
+        if (!_planBuilder.TryBuildTrayDependenciesPlan(CreatePlanBuilderState(), out var plan, out var error))
+        {
+            StatusMessage = error;
+            AppendLog("[validation] " + error);
+            await ShowErrorPopupAsync(L("status.validationFailed"));
+            return;
+        }
+
+        _executionCts = new CancellationTokenSource();
+        var startedAt = DateTimeOffset.Now;
+        var stopwatch = Stopwatch.StartNew();
+
+        ClearLog();
+        IsBusy = true;
+        SetProgress(isIndeterminate: true, percent: 0, message: "Preparing tray dependency analysis...");
+        AppendLog("[start] " + startedAt.ToString("yyyy-MM-dd HH:mm:ss"));
+        AppendLog("[action] traydependencies");
+        StatusMessage = L("status.running");
+
+        try
+        {
+            var result = await _trayDependencyAnalysisService.AnalyzeAsync(
+                plan.Request,
+                new Progress<TrayDependencyAnalysisProgress>(HandleTrayDependencyAnalysisProgress),
+                _executionCts.Token);
+            stopwatch.Stop();
+
+            AppendLog($"[traydependencies] matched={result.MatchedPackageCount}");
+            AppendLog($"[traydependencies] unused={result.UnusedPackageCount}");
+
+            if (!string.IsNullOrWhiteSpace(result.OutputCsvPath))
+            {
+                AppendLog("CSV: " + result.OutputCsvPath);
+            }
+
+            if (!string.IsNullOrWhiteSpace(result.UnusedOutputCsvPath))
+            {
+                AppendLog("UNUSED CSV: " + result.UnusedOutputCsvPath);
+            }
+
+            if (!string.IsNullOrWhiteSpace(result.MatchedExportPath))
+            {
+                AppendLog("[export] matched=" + result.MatchedExportPath);
+            }
+
+            if (!string.IsNullOrWhiteSpace(result.UnusedExportPath))
+            {
+                AppendLog("[export] unused=" + result.UnusedExportPath);
+            }
+
+            foreach (var row in result.MatchedPackages.Take(10))
+            {
+                AppendLog(
+                    $"[match] {Path.GetFileName(row.PackagePath)} confidence={row.Confidence} count={row.MatchInstanceCount} rate={row.MatchRatePct:0.##}%");
+            }
+
+            foreach (var issue in result.Issues)
+            {
+                var prefix = issue.Severity == TrayDependencyIssueSeverity.Error ? "[error]" : "[warn]";
+                AppendLog(prefix + " " + issue.Message);
+            }
+
+            if (result.Success)
+            {
+                var hasWarnings = result.Issues.Any(issue => issue.Severity == TrayDependencyIssueSeverity.Warning);
+                StatusMessage = hasWarnings
+                    ? $"Tray dependencies completed with warnings ({stopwatch.Elapsed:mm\\:ss})"
+                    : $"Tray dependencies completed ({stopwatch.Elapsed:mm\\:ss})";
+                SetProgress(
+                    isIndeterminate: false,
+                    percent: 100,
+                    message: hasWarnings ? "Tray dependency analysis completed with warnings." : "Tray dependency analysis completed.");
+                return;
+            }
+
+            StatusMessage = "Tray dependency analysis failed.";
+            SetProgress(isIndeterminate: false, percent: 0, message: "Tray dependency analysis failed.");
+            await ShowErrorPopupAsync("Tray dependency analysis failed.");
+        }
+        catch (OperationCanceledException)
+        {
+            stopwatch.Stop();
+            AppendLog("[cancelled]");
+            StatusMessage = L("status.executionCancelled");
+            SetProgress(isIndeterminate: false, percent: 0, message: L("progress.cancelled"));
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            AppendLog("[error] " + ex.Message);
+            StatusMessage = "Tray dependency analysis failed.";
+            SetProgress(isIndeterminate: false, percent: 0, message: "Tray dependency analysis failed.");
+            await ShowErrorPopupAsync("Tray dependency analysis failed.");
         }
         finally
         {
@@ -1320,6 +1556,17 @@ public sealed class MainWindowViewModel : ObservableObject
             IsBusy = false;
             RefreshValidationNow();
         }
+    }
+
+    private void HandleTrayDependencyAnalysisProgress(TrayDependencyAnalysisProgress progress)
+    {
+        var message = string.IsNullOrWhiteSpace(progress.Detail)
+            ? progress.Stage.ToString()
+            : progress.Detail;
+        SetProgress(
+            isIndeterminate: progress.Percent <= 0,
+            percent: Math.Clamp(progress.Percent, 0, 100),
+            message: message);
     }
 
     private async Task LoadPreviousTrayPreviewPageAsync()
@@ -1506,6 +1753,7 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             CloseTrayPreviewDetails();
             CancelTrayPreviewThumbnailLoading();
+            ClearTrayPreviewSelection();
             ClearPreviewItems();
             PreviewSummaryText = L("preview.noneLoaded");
             PreviewTotalItems = "0";
@@ -1550,7 +1798,9 @@ public sealed class MainWindowViewModel : ObservableObject
             ClearPreviewItems();
             foreach (var item in page.Items)
             {
-                PreviewItems.Add(new TrayPreviewListItemViewModel(item, OnTrayPreviewItemExpanded, OpenTrayPreviewDetails));
+                var viewModel = new TrayPreviewListItemViewModel(item, OnTrayPreviewItemExpanded, OpenTrayPreviewDetails);
+                viewModel.SetSelected(IsTrayPreviewItemSelected(item));
+                PreviewItems.Add(viewModel);
             }
 
             ApplyTrayPreviewDebugVisibility();
@@ -1558,6 +1808,7 @@ public sealed class MainWindowViewModel : ObservableObject
             _hasTrayPreviewLoadedOnce = true;
             _trayPreviewCurrentPage = page.PageIndex;
             _trayPreviewTotalPages = Math.Max(page.TotalPages, 1);
+            PreviewTotalItems = page.TotalItems.ToString("N0");
             var firstItemIndex = page.Items.Count == 0 ? 0 : ((page.PageIndex - 1) * page.PageSize) + 1;
             var lastItemIndex = page.Items.Count == 0 ? 0 : firstItemIndex + page.Items.Count - 1;
             var safeTotalPages = Math.Max(page.TotalPages, 1);
@@ -1752,6 +2003,30 @@ public sealed class MainWindowViewModel : ObservableObject
         LoadTrayPreviewChildThumbnails(expandedItem);
     }
 
+    public void ApplyTrayPreviewSelection(
+        TrayPreviewListItemViewModel selectedItem,
+        bool controlPressed,
+        bool shiftPressed)
+    {
+        ArgumentNullException.ThrowIfNull(selectedItem);
+
+        if (!PreviewItems.Contains(selectedItem))
+        {
+            return;
+        }
+
+        if (shiftPressed)
+        {
+            ApplyTrayPreviewRangeSelection(selectedItem, preserveExisting: controlPressed);
+            _trayPreviewSelectionAnchorKey = BuildTrayPreviewSelectionKey(selectedItem.Item);
+            return;
+        }
+
+        var targetSelected = !selectedItem.IsSelected;
+        SetTrayPreviewItemSelected(selectedItem, targetSelected);
+        _trayPreviewSelectionAnchorKey = BuildTrayPreviewSelectionKey(selectedItem.Item);
+    }
+
     private void OpenTrayPreviewDetails(TrayPreviewListItemViewModel selectedItem)
     {
         ArgumentNullException.ThrowIfNull(selectedItem);
@@ -1820,6 +2095,703 @@ public sealed class MainWindowViewModel : ObservableObject
         return batchId == _trayPreviewThumbnailBatchId &&
                !cts.IsCancellationRequested &&
                (_trayPreviewThumbnailCts is null || ReferenceEquals(_trayPreviewThumbnailCts, cts));
+    }
+
+    private void OpenSelectedTrayPreviewPaths()
+    {
+        var sourcePaths = GetSelectedTrayPreviewSourceFilePaths();
+        if (sourcePaths.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            if (sourcePaths.Count == 1)
+            {
+                LaunchExplorer(sourcePaths[0], selectFile: true);
+                StatusMessage = "Opened selected tray file location.";
+                AppendLog($"[tray-selection] opened path={sourcePaths[0]}");
+                return;
+            }
+
+            var directories = sourcePaths
+                .Select(path => Path.GetDirectoryName(path))
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (directories.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var directory in directories)
+            {
+                LaunchExplorer(directory!, selectFile: false);
+            }
+
+            StatusMessage = directories.Count == 1
+                ? "Opened selected tray directory."
+                : $"Opened {directories.Count} directories for selected tray files.";
+            AppendLog($"[tray-selection] opened-directories count={directories.Count}");
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = "Failed to open selected tray path.";
+            AppendLog("[tray-selection] open failed: " + ex.Message);
+        }
+    }
+
+    private async Task ExportSelectedTrayPreviewFilesAsync()
+    {
+        var selectedItems = GetSelectedTrayPreviewItems();
+        if (selectedItems.Count == 0)
+        {
+            return;
+        }
+
+        var pickedFolders = await _fileDialogService.PickFolderPathsAsync("Select export folder", allowMultiple: false);
+        var exportRoot = pickedFolders.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(exportRoot))
+        {
+            return;
+        }
+
+        if (!TryBuildTrayDependencyExportRequests(selectedItems, exportRoot, out var dependencyRequests, out var error))
+        {
+            var setupTask = EnqueueTrayExportTask("Export setup");
+            setupTask.SetExportRoot(exportRoot);
+            setupTask.MarkFailed(error);
+            StatusMessage = error;
+            AppendLog("[tray-selection] export blocked: " + error);
+            return;
+        }
+
+        var queueEntries = dependencyRequests
+            .Select(request => (
+                request.Item,
+                request.ItemExportRoot,
+                request.Request,
+                Task: EnqueueTrayExportTask(request.Item.Item.DisplayTitle)))
+            .ToArray();
+        var copiedTrayFileCount = 0;
+        var copiedModFileCount = 0;
+        var warningCount = 0;
+        var createdItemRoots = new List<string>(dependencyRequests.Count);
+
+        foreach (var queueEntry in queueEntries)
+        {
+            var exportTask = queueEntry.Task;
+            exportTask.SetExportRoot(queueEntry.ItemExportRoot);
+            exportTask.MarkTrayRunning();
+
+            createdItemRoots.Add(queueEntry.ItemExportRoot);
+
+            var movedToModsStage = false;
+            TrayDependencyExportResult result;
+            try
+            {
+                result = await _trayDependencyExportService.ExportAsync(
+                    queueEntry.Request,
+                    new Progress<TrayDependencyExportProgress>(progress =>
+                    {
+                        if (!movedToModsStage && progress.Stage != TrayDependencyExportStage.Preparing)
+                        {
+                            exportTask.MarkTrayCompleted(0, skippedCount: 0);
+                            exportTask.MarkModsRunning();
+                            movedToModsStage = true;
+                        }
+
+                        exportTask.UpdateModsProgress(
+                            progress.Percent,
+                            string.IsNullOrWhiteSpace(progress.Detail)
+                                ? $"Exporting referenced mods... {progress.Percent}%"
+                                : progress.Detail);
+                    }),
+                    CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                exportTask.MarkFailed("Mods export failed: " + ex.Message);
+                exportTask.AppendDetailLine(ex.ToString());
+                MarkTrayExportBatchFailed(queueEntries.Select(entry => entry.Task).ToArray(), exportTask, "Rolled back after batch failure.");
+                await Task.Run(() => RollbackTraySelectionExports(createdItemRoots));
+                StatusMessage = "Export failed: " + ex.Message;
+                AppendLog($"[tray-selection][internal] export failed for trayKey={queueEntry.Request.TrayItemKey}: {ex.Message}");
+                return;
+            }
+
+            exportTask.MarkTrayCompleted(result.CopiedTrayFileCount, skippedCount: 0);
+            if (!movedToModsStage)
+            {
+                exportTask.MarkModsRunning();
+            }
+
+            foreach (var issue in result.Issues)
+            {
+                exportTask.AppendDetailLine(issue.Message);
+                AppendLog($"[tray-selection][internal] {issue.Severity}: {issue.Message}");
+            }
+
+            if (!result.Success)
+            {
+                var failure = result.Issues.FirstOrDefault(issue => issue.Severity == TrayDependencyIssueSeverity.Error)?.Message
+                              ?? "Unknown error.";
+                exportTask.MarkFailed("Mods export failed: " + failure);
+                MarkTrayExportBatchFailed(queueEntries.Select(entry => entry.Task).ToArray(), exportTask, "Rolled back after batch failure.");
+                await Task.Run(() => RollbackTraySelectionExports(createdItemRoots));
+                StatusMessage = "Export failed: " + failure;
+                AppendLog($"[tray-selection][internal] export failed for trayKey={queueEntry.Request.TrayItemKey}: {failure}");
+                return;
+            }
+
+            copiedTrayFileCount += result.CopiedTrayFileCount;
+            copiedModFileCount += result.CopiedModFileCount;
+            if (result.HasMissingReferenceWarnings)
+            {
+                warningCount++;
+                exportTask.MarkCompleted("Completed (missing references ignored).", failed: false);
+                continue;
+            }
+
+            exportTask.MarkCompleted("Completed.", failed: false);
+        }
+
+        StatusMessage = warningCount == 0
+            ? $"Exported {copiedTrayFileCount} tray files and {copiedModFileCount} referenced mod files."
+            : $"Exported {copiedTrayFileCount} tray files and {copiedModFileCount} referenced mod files ({warningCount} warning item(s) ignored).";
+
+        AppendLog($"[tray-selection] export tray={copiedTrayFileCount} mods={copiedModFileCount} items={dependencyRequests.Count} warnings={warningCount} target={exportRoot}");
+    }
+
+    private void SelectAllTrayPreviewPage()
+    {
+        if (PreviewItems.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var item in PreviewItems)
+        {
+            SetTrayPreviewItemSelected(item, true);
+        }
+
+        _trayPreviewSelectionAnchorKey = BuildTrayPreviewSelectionKey(PreviewItems[^1].Item);
+    }
+
+    private IReadOnlyList<TrayPreviewListItemViewModel> GetSelectedTrayPreviewItems()
+    {
+        return PreviewItems
+            .Where(item => item.IsSelected)
+            .ToArray();
+    }
+
+    private IReadOnlyList<string> GetSelectedTrayPreviewSourceFilePaths(IReadOnlyCollection<TrayPreviewListItemViewModel>? selectedItems = null)
+    {
+        var source = selectedItems ?? GetSelectedTrayPreviewItems();
+        return source
+            .SelectMany(item => item.Item.SourceFilePaths)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private TrayExportTaskItemViewModel EnqueueTrayExportTask(string? title)
+    {
+        var task = new TrayExportTaskItemViewModel(
+            string.IsNullOrWhiteSpace(title)
+                ? "Tray Export"
+                : title.Trim());
+        TrayExportTasks.Add(task);
+        return task;
+    }
+
+    private static void MarkTrayExportBatchFailed(
+        IReadOnlyList<TrayExportTaskItemViewModel> queueEntries,
+        TrayExportTaskItemViewModel failedTask,
+        string rollbackStatus)
+    {
+        foreach (var queueTask in queueEntries)
+        {
+            if (ReferenceEquals(queueTask, failedTask))
+            {
+                continue;
+            }
+
+            if (queueTask.IsCompleted && !queueTask.IsFailed)
+            {
+                queueTask.MarkFailed(rollbackStatus);
+                continue;
+            }
+
+            if (queueTask.IsRunning)
+            {
+                queueTask.MarkFailed("Cancelled after batch failure.");
+            }
+        }
+    }
+
+    private static void AppendTrayExportTaskDetails(
+        TrayExportTaskItemViewModel task,
+        IEnumerable<string> outputLines)
+    {
+        foreach (var line in outputLines)
+        {
+            task.AppendDetailLine(line);
+        }
+    }
+
+    private static bool TryExportTraySelectionFiles(
+        IReadOnlyList<string> sourceFilePaths,
+        string exportRoot,
+        out int exportedCount,
+        out string error)
+    {
+        exportedCount = 0;
+        error = string.Empty;
+
+        var distinctSourcePaths = sourceFilePaths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (distinctSourcePaths.Length == 0)
+        {
+            error = "Selected tray item has no source files to export.";
+            return false;
+        }
+
+        foreach (var sourcePath in distinctSourcePaths)
+        {
+            if (!File.Exists(sourcePath))
+            {
+                error = $"Tray source file is missing: {Path.GetFileName(sourcePath)}";
+                return false;
+            }
+
+            try
+            {
+                var destinationPath = BuildUniqueExportPath(exportRoot, sourcePath);
+                File.Copy(sourcePath, destinationPath, overwrite: false);
+                exportedCount++;
+            }
+            catch (Exception ex)
+            {
+                error = $"Failed to export tray file {Path.GetFileName(sourcePath)}: {ex.Message}";
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool TryCompleteTrayDependencyExport(
+        ToolkitRunResult runResult,
+        IReadOnlyList<string> outputLines,
+        out bool ignoredMissingOnly,
+        out string error)
+    {
+        ignoredMissingOnly = false;
+        error = string.Empty;
+
+        if (runResult.Status == ExecutionRunStatus.Cancelled)
+        {
+            error = "Referenced mod export was cancelled.";
+            return false;
+        }
+
+        if (runResult.Status == ExecutionRunStatus.Failed)
+        {
+            if (IsIgnorableMissingModFileFailure(runResult.ErrorMessage, outputLines))
+            {
+                ignoredMissingOnly = true;
+                return true;
+            }
+
+            error = string.IsNullOrWhiteSpace(runResult.ErrorMessage)
+                ? "Referenced mod export failed."
+                : runResult.ErrorMessage.Trim();
+            return false;
+        }
+
+        var exitCode = runResult.ExecutionResult?.ExitCode ?? 0;
+        if (exitCode == 0)
+        {
+            return true;
+        }
+
+        if (IsIgnorableMissingModFileFailure(runResult.ErrorMessage, outputLines))
+        {
+            ignoredMissingOnly = true;
+            return true;
+        }
+
+        var detail = outputLines
+            .LastOrDefault(line => !string.IsNullOrWhiteSpace(line))
+            ?.Trim();
+        error = string.IsNullOrWhiteSpace(detail)
+            ? $"Referenced mod export failed with exit code {exitCode}."
+            : $"Referenced mod export failed with exit code {exitCode}: {detail}";
+        return false;
+    }
+
+    private static bool IsIgnorableMissingModFileFailure(string errorMessage, IReadOnlyList<string> outputLines)
+    {
+        if (ContainsNonIgnorableModExportFailure(errorMessage))
+        {
+            return false;
+        }
+
+        if (ContainsIgnorableMissingModFileMessage(errorMessage))
+        {
+            return true;
+        }
+
+        var hasIgnorableMissingFileMessage = false;
+        foreach (var line in outputLines)
+        {
+            if (ContainsNonIgnorableModExportFailure(line))
+            {
+                return false;
+            }
+
+            if (ContainsIgnorableMissingModFileMessage(line))
+            {
+                hasIgnorableMissingFileMessage = true;
+            }
+        }
+
+        return hasIgnorableMissingFileMessage;
+    }
+
+    private static bool ContainsIgnorableMissingModFileMessage(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return false;
+        }
+
+        var normalized = message.Trim().ToLowerInvariant();
+        var missingHint =
+            normalized.Contains("missing", StringComparison.Ordinal) ||
+            normalized.Contains("not found", StringComparison.Ordinal) ||
+            normalized.Contains("could not find", StringComparison.Ordinal) ||
+            normalized.Contains("cannot find", StringComparison.Ordinal);
+        if (!missingHint)
+        {
+            return false;
+        }
+
+        if (normalized.Contains("script path", StringComparison.Ordinal) ||
+            normalized.Contains("mods path", StringComparison.Ordinal) ||
+            normalized.Contains("s4ti path", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return normalized.Contains(".package", StringComparison.Ordinal) ||
+               normalized.Contains("package file", StringComparison.Ordinal) ||
+               normalized.Contains("package files", StringComparison.Ordinal) ||
+               normalized.Contains("matched package", StringComparison.Ordinal) ||
+               normalized.Contains("mod file", StringComparison.Ordinal) ||
+               normalized.Contains("mod files", StringComparison.Ordinal);
+    }
+
+    private static bool ContainsNonIgnorableModExportFailure(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return false;
+        }
+
+        var normalized = message.Trim().ToLowerInvariant();
+        return normalized.Contains("access denied", StringComparison.Ordinal) ||
+               normalized.Contains("permission", StringComparison.Ordinal) ||
+               normalized.Contains("failed", StringComparison.Ordinal) ||
+               normalized.Contains("exception", StringComparison.Ordinal) ||
+               normalized.Contains("script path", StringComparison.Ordinal) ||
+               normalized.Contains("mods path", StringComparison.Ordinal) ||
+               normalized.Contains("s4ti path", StringComparison.Ordinal);
+    }
+
+    private static void RollbackTraySelectionExports(IEnumerable<string> exportRoots)
+    {
+        foreach (var exportRoot in exportRoots
+                     .Where(path => !string.IsNullOrWhiteSpace(path))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                if (Directory.Exists(exportRoot))
+                {
+                    Directory.Delete(exportRoot, recursive: true);
+                }
+            }
+            catch
+            {
+                // Best-effort rollback only.
+            }
+        }
+    }
+
+    private bool TryBuildTrayDependencyExportRequests(
+        IReadOnlyList<TrayPreviewListItemViewModel> selectedItems,
+        string exportRoot,
+        out List<(TrayPreviewListItemViewModel Item, string ItemExportRoot, TrayDependencyExportRequest Request)> requests,
+        out string error)
+    {
+        requests = new List<(TrayPreviewListItemViewModel Item, string ItemExportRoot, TrayDependencyExportRequest Request)>();
+        error = string.Empty;
+
+        var modsPath = TrayDependencies.ModsPath?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(modsPath) || !Directory.Exists(modsPath))
+        {
+            error = "Mods Path is missing. Set a valid Mods Path before exporting referenced mods.";
+            return false;
+        }
+
+        var usedDirectoryNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var selectedItem in selectedItems)
+        {
+            var trayKey = selectedItem.Item.TrayItemKey?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(trayKey))
+            {
+                error = "A selected tray item is missing TrayItemKey, cannot export referenced mods.";
+                requests.Clear();
+                return false;
+            }
+
+            var trayPath = selectedItem.Item.TrayRootPath?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(trayPath) || !Directory.Exists(trayPath))
+            {
+                error = $"Tray path is missing for selected tray item {trayKey}.";
+                requests.Clear();
+                return false;
+            }
+
+            if (selectedItem.Item.SourceFilePaths.Count == 0)
+            {
+                error = $"Selected tray item {trayKey} has no source files to export.";
+                requests.Clear();
+                return false;
+            }
+
+            var exportDirectoryName = BuildTraySelectionExportDirectoryName(selectedItem.Item, usedDirectoryNames);
+            var itemExportRoot = Path.Combine(exportRoot, exportDirectoryName);
+            var trayExportRoot = Path.Combine(itemExportRoot, "Tray");
+            var modsExportRoot = Path.Combine(itemExportRoot, "Mods");
+
+            requests.Add((selectedItem, itemExportRoot, new TrayDependencyExportRequest
+            {
+                ItemTitle = selectedItem.Item.DisplayTitle,
+                TrayItemKey = trayKey,
+                TrayRootPath = trayPath,
+                TraySourceFiles = selectedItem.Item.SourceFilePaths.ToArray(),
+                ModsRootPath = modsPath,
+                TrayExportRoot = trayExportRoot,
+                ModsExportRoot = modsExportRoot
+            }));
+        }
+
+        return true;
+    }
+
+    private void ApplyTrayPreviewRangeSelection(TrayPreviewListItemViewModel selectedItem, bool preserveExisting)
+    {
+        var targetIndex = PreviewItems.IndexOf(selectedItem);
+        if (targetIndex < 0)
+        {
+            return;
+        }
+
+        var anchorIndex = -1;
+        if (!string.IsNullOrWhiteSpace(_trayPreviewSelectionAnchorKey))
+        {
+            anchorIndex = PreviewItems
+                .Select((item, index) => new { item, index })
+                .Where(entry => string.Equals(
+                    BuildTrayPreviewSelectionKey(entry.item.Item),
+                    _trayPreviewSelectionAnchorKey,
+                    StringComparison.OrdinalIgnoreCase))
+                .Select(entry => entry.index)
+                .DefaultIfEmpty(-1)
+                .First();
+        }
+
+        if (anchorIndex < 0)
+        {
+            if (!preserveExisting)
+            {
+                ClearTrayPreviewSelection();
+            }
+
+            SetTrayPreviewItemSelected(selectedItem, true);
+            return;
+        }
+
+        if (!preserveExisting)
+        {
+            ClearTrayPreviewSelection();
+        }
+
+        var startIndex = Math.Min(anchorIndex, targetIndex);
+        var endIndex = Math.Max(anchorIndex, targetIndex);
+        for (var index = startIndex; index <= endIndex; index++)
+        {
+            SetTrayPreviewItemSelected(PreviewItems[index], true);
+        }
+    }
+
+    private void ClearTrayPreviewSelection()
+    {
+        foreach (var item in PreviewItems.Where(item => item.IsSelected))
+        {
+            item.SetSelected(false);
+        }
+
+        if (_selectedTrayPreviewKeys.Count == 0 && string.IsNullOrWhiteSpace(_trayPreviewSelectionAnchorKey))
+        {
+            return;
+        }
+
+        _selectedTrayPreviewKeys.Clear();
+        _trayPreviewSelectionAnchorKey = null;
+        OnPropertyChanged(nameof(HasSelectedTrayPreviewItems));
+        OnPropertyChanged(nameof(SelectedTrayPreviewCount));
+        OnPropertyChanged(nameof(TrayPreviewSelectionSummaryText));
+        NotifyCommandStates();
+    }
+
+    private void SetTrayPreviewItemSelected(TrayPreviewListItemViewModel item, bool selected)
+    {
+        var key = BuildTrayPreviewSelectionKey(item.Item);
+        var changed = selected
+            ? _selectedTrayPreviewKeys.Add(key)
+            : _selectedTrayPreviewKeys.Remove(key);
+
+        item.SetSelected(selected);
+
+        if (changed)
+        {
+            OnPropertyChanged(nameof(HasSelectedTrayPreviewItems));
+            OnPropertyChanged(nameof(SelectedTrayPreviewCount));
+            OnPropertyChanged(nameof(TrayPreviewSelectionSummaryText));
+            NotifyCommandStates();
+        }
+    }
+
+    private bool IsTrayPreviewItemSelected(SimsTrayPreviewItem item)
+    {
+        return _selectedTrayPreviewKeys.Contains(BuildTrayPreviewSelectionKey(item));
+    }
+
+    private static string BuildTrayPreviewSelectionKey(SimsTrayPreviewItem item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        return $"{item.TrayRootPath}|{item.TrayItemKey}";
+    }
+
+    private static void LaunchExplorer(string path, bool selectFile)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        var arguments = selectFile
+            ? $"/select,\"{path}\""
+            : $"\"{path}\"";
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = "explorer.exe",
+            Arguments = arguments,
+            UseShellExecute = true
+        });
+    }
+
+    private static string BuildUniqueExportPath(string exportRoot, string sourcePath)
+    {
+        var fileName = Path.GetFileName(sourcePath);
+        var baseName = Path.GetFileNameWithoutExtension(fileName);
+        var extension = Path.GetExtension(fileName);
+        var destinationPath = Path.Combine(exportRoot, fileName);
+        if (!File.Exists(destinationPath))
+        {
+            return destinationPath;
+        }
+
+        for (var suffix = 2; ; suffix++)
+        {
+            destinationPath = Path.Combine(exportRoot, $"{baseName} ({suffix}){extension}");
+            if (!File.Exists(destinationPath))
+            {
+                return destinationPath;
+            }
+        }
+    }
+
+    private static string BuildTraySelectionExportDirectoryName(SimsTrayPreviewItem item, ISet<string> usedDirectoryNames)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        ArgumentNullException.ThrowIfNull(usedDirectoryNames);
+
+        var rawLabel = !string.IsNullOrWhiteSpace(item.DisplayTitle)
+            ? item.DisplayTitle
+            : !string.IsNullOrWhiteSpace(item.ItemName)
+                ? item.ItemName
+                : item.PresetType;
+        var safeLabel = SanitizePathSegment(rawLabel);
+        var safeKey = SanitizePathSegment(item.TrayItemKey);
+        var baseName = string.IsNullOrWhiteSpace(safeLabel)
+            ? safeKey
+            : $"{safeLabel}_{safeKey}";
+        if (string.IsNullOrWhiteSpace(baseName))
+        {
+            baseName = "TrayItem";
+        }
+
+        var candidate = baseName;
+        var suffix = 2;
+        while (!usedDirectoryNames.Add(candidate))
+        {
+            candidate = $"{baseName}_{suffix}";
+            suffix++;
+        }
+
+        return candidate;
+    }
+
+    private static string SanitizePathSegment(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var invalidChars = Path.GetInvalidFileNameChars();
+        var builder = new System.Text.StringBuilder(value.Length);
+        foreach (var character in value.Trim())
+        {
+            if (invalidChars.Contains(character))
+            {
+                builder.Append('_');
+            }
+            else if (char.IsWhiteSpace(character))
+            {
+                builder.Append(' ');
+            }
+            else
+            {
+                builder.Append(character);
+            }
+        }
+
+        return builder
+            .ToString()
+            .Trim()
+            .TrimEnd('.');
     }
 
     private static bool TryLoadBitmap(string cacheFilePath, out Bitmap bitmap)
@@ -1937,6 +2909,37 @@ public sealed class MainWindowViewModel : ObservableObject
         NotifyTrayPreviewViewStateChanged();
     }
 
+    private void OnTrayExportTasksChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (e.NewItems is { Count: > 0 })
+        {
+            SetTrayExportQueueExpanded(true);
+        }
+
+        if (e.OldItems is not null)
+        {
+            foreach (var item in e.OldItems.OfType<TrayExportTaskItemViewModel>())
+            {
+                item.PropertyChanged -= OnTrayExportTaskPropertyChanged;
+            }
+        }
+
+        if (e.NewItems is not null)
+        {
+            foreach (var item in e.NewItems.OfType<TrayExportTaskItemViewModel>())
+            {
+                item.PropertyChanged += OnTrayExportTaskPropertyChanged;
+            }
+        }
+
+        NotifyTrayExportQueueChanged();
+    }
+
+    private void OnTrayExportTaskPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        NotifyTrayExportQueueChanged();
+    }
+
     private void NotifyTrayPreviewFilterVisibilityChanged()
     {
         OnPropertyChanged(nameof(IsBuildSizeFilterVisible));
@@ -1946,6 +2949,10 @@ public sealed class MainWindowViewModel : ObservableObject
     private void NotifyTrayPreviewViewStateChanged()
     {
         OnPropertyChanged(nameof(HasTrayPreviewItems));
+        OnPropertyChanged(nameof(TrayPreviewSelectionSummaryText));
+        OnPropertyChanged(nameof(IsTrayExportQueueDockVisible));
+        OnPropertyChanged(nameof(IsTrayExportQueueVisible));
+        OnPropertyChanged(nameof(TrayExportQueueToggleText));
         OnPropertyChanged(nameof(IsTrayPreviewLoadingStateVisible));
         OnPropertyChanged(nameof(IsTrayPreviewEmptyStateVisible));
         OnPropertyChanged(nameof(IsTrayPreviewPagerVisible));
@@ -1956,6 +2963,77 @@ public sealed class MainWindowViewModel : ObservableObject
         OnPropertyChanged(nameof(TrayPreviewEmptyTitleText));
         OnPropertyChanged(nameof(TrayPreviewEmptyDescriptionText));
         OnPropertyChanged(nameof(TrayPreviewEmptyStatusText));
+    }
+
+    private void NotifyTrayExportQueueChanged()
+    {
+        OnPropertyChanged(nameof(HasTrayExportTasks));
+        OnPropertyChanged(nameof(HasCompletedTrayExportTasks));
+        OnPropertyChanged(nameof(HasRunningTrayExportTasks));
+        OnPropertyChanged(nameof(IsTrayExportQueueDockVisible));
+        OnPropertyChanged(nameof(IsTrayExportQueueVisible));
+        OnPropertyChanged(nameof(TrayExportQueueSummaryText));
+        OnPropertyChanged(nameof(TrayExportQueueToggleText));
+        ClearCompletedTrayExportTasksCommand.NotifyCanExecuteChanged();
+        ToggleTrayExportQueueCommand.NotifyCanExecuteChanged();
+        OpenTrayExportTaskPathCommand.NotifyCanExecuteChanged();
+        ToggleTrayExportTaskDetailsCommand.NotifyCanExecuteChanged();
+    }
+
+    private void ClearCompletedTrayExportTasks()
+    {
+        for (var index = TrayExportTasks.Count - 1; index >= 0; index--)
+        {
+            if (TrayExportTasks[index].IsCompleted)
+            {
+                TrayExportTasks.RemoveAt(index);
+            }
+        }
+    }
+
+    private void ToggleTrayExportQueue()
+    {
+        if (!HasTrayExportTasks)
+        {
+            return;
+        }
+
+        SetTrayExportQueueExpanded(!_isTrayExportQueueExpanded);
+    }
+
+    private void OpenTrayExportTaskPath(TrayExportTaskItemViewModel? task)
+    {
+        if (task is null || !task.HasExportRoot)
+        {
+            return;
+        }
+
+        try
+        {
+            LaunchExplorer(task.ExportRootPath, selectFile: false);
+        }
+        catch (Exception ex)
+        {
+            task.AppendDetailLine("Failed to open export folder: " + ex.Message);
+            StatusMessage = "Failed to open export folder.";
+        }
+    }
+
+    private void ToggleTrayExportTaskDetails(TrayExportTaskItemViewModel? task)
+    {
+        task?.ToggleDetails();
+    }
+
+    private void SetTrayExportQueueExpanded(bool expanded)
+    {
+        if (_isTrayExportQueueExpanded == expanded)
+        {
+            return;
+        }
+
+        _isTrayExportQueueExpanded = expanded;
+        OnPropertyChanged(nameof(IsTrayExportQueueVisible));
+        OnPropertyChanged(nameof(TrayExportQueueToggleText));
     }
 
     private string L(string key) => _localization[key];

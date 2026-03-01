@@ -3,6 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:shell="clr-namespace:SimsModDesktop.ViewModels.Shell"
+             xmlns:saves="clr-namespace:SimsModDesktop.Views.Saves"
              xmlns:workspace="clr-namespace:SimsModDesktop.Views.Workspace"
              mc:Ignorable="d"
              x:Class="SimsModDesktop.Views.Shell.MainShellView"
@@ -114,6 +115,13 @@
                 <ScrollViewer Grid.Row="2" MinHeight="0" VerticalScrollBarVisibility="Auto">
                     <StackPanel Spacing="6">
                         <Button Classes="sidebar-link-minimal"
+                                Classes.sidebar-active="{Binding IsToolkitSectionSelected}"
+                                VerticalContentAlignment="Center"
+                                HorizontalContentAlignment="Left"
+                                Command="{Binding SelectSectionCommand}"
+                                CommandParameter="Toolkit"
+                                Content="Toolkit" />
+                        <Button Classes="sidebar-link-minimal"
                                 Classes.sidebar-active="{Binding IsModsSectionSelected}"
                                 VerticalContentAlignment="Center"
                                 HorizontalContentAlignment="Left"
@@ -158,10 +166,7 @@
         <Grid Grid.Column="1" MinHeight="0">
             <Grid MinHeight="0">
                 <Border Classes="card" Padding="12" IsVisible="{Binding IsSavesVisible}">
-                    <StackPanel Spacing="8">
-                        <TextBlock Classes="section-title" Text="Saves Placeholder" />
-                        <TextBlock TextWrapping="Wrap" Text="Saves workflow is reserved in this phase. Use Settings paths to verify save root health." />
-                    </StackPanel>
+                    <saves:SavesView DataContext="{Binding SavesVm}" />
                 </Border>
 
                 <Border Classes="card" Padding="12" IsVisible="{Binding IsSettingsVisible}">
@@ -235,6 +240,25 @@
                                                 Command="{Binding SetLightThemeCommand}" />
                                     </StackPanel>
                                 </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Classes="settings-section" Padding="12">
+                            <StackPanel Spacing="10">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Classes="settings-section-title" Text="Cache" />
+                                    <TextBlock Classes="settings-section-description"
+                                               Text="Clear on-disk thumbnail and metadata caches. Restart the app to fully drop in-memory caches." />
+                                </StackPanel>
+
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <Button Classes="secondary"
+                                            Content="Clear Cache"
+                                            Command="{Binding ClearCacheCommand}" />
+                                    <TextBlock VerticalAlignment="Center"
+                                               Classes="helper-text"
+                                               Text="{Binding CacheMaintenanceStatus}" />
+                                </StackPanel>
                             </StackPanel>
                         </Border>
                     </StackPanel>

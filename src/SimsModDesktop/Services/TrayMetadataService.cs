@@ -1,33 +1,13 @@
-using System.Diagnostics;
+using System.Buffers.Binary;
+using System.Globalization;
 using System.Text;
-using System.Text.Json;
 using SimsModDesktop.Models;
 
 namespace SimsModDesktop.Services;
 
 public sealed class TrayMetadataService : ITrayMetadataService
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
-    private static readonly string[] ToolPathEnvironmentVariables =
-    {
-        "SIMS_TOOLKIT_S4TI_PATH",
-        "S4TI_PATH"
-    };
-
-    private static readonly string[] DefaultToolPathCandidates =
-    {
-        @"D:\Sims Mods\Tools\S4TI_250831",
-        @"D:\Sims Mods\Tools"
-    };
-
     private readonly object _gate = new();
-
-    private bool _toolPathResolved;
-    private string _cachedToolPath = string.Empty;
     private readonly Dictionary<string, CacheEntry> _cache = new(StringComparer.OrdinalIgnoreCase);
 
     public Task<IReadOnlyDictionary<string, TrayMetadataResult>> GetMetadataAsync(
@@ -36,7 +16,7 @@ public sealed class TrayMetadataService : ITrayMetadataService
     {
         ArgumentNullException.ThrowIfNull(trayItemPaths);
 
-        if (!OperatingSystem.IsWindows() || trayItemPaths.Count == 0)
+        if (trayItemPaths.Count == 0)
         {
             return Task.FromResult<IReadOnlyDictionary<string, TrayMetadataResult>>(
                 new Dictionary<string, TrayMetadataResult>(StringComparer.OrdinalIgnoreCase));
@@ -87,14 +67,26 @@ public sealed class TrayMetadataService : ITrayMetadataService
             return results;
         }
 
-        var toolPath = ResolveS4TiToolPath();
-        var powerShellExecutable = ResolveWindowsPowerShellExecutable();
-        if (string.IsNullOrWhiteSpace(toolPath) || string.IsNullOrWhiteSpace(powerShellExecutable))
+        var loaded = new Dictionary<string, TrayMetadataResult>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in misses)
         {
-            return results;
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                var metadata = InternalTrayMetadataReader.Read(path);
+                loaded[path] = metadata;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                // Skip invalid tray items. Exact parsing only: malformed files produce no metadata.
+            }
         }
 
-        var loaded = ExecuteBatch(toolPath, powerShellExecutable, misses, cancellationToken);
         if (loaded.Count == 0)
         {
             return results;
@@ -118,497 +110,1072 @@ public sealed class TrayMetadataService : ITrayMetadataService
         return results;
     }
 
-    private static IReadOnlyDictionary<string, TrayMetadataResult> ExecuteBatch(
-        string toolPath,
-        string powerShellExecutable,
-        IReadOnlyCollection<string> trayItemPaths,
-        CancellationToken cancellationToken)
+    private sealed class CacheEntry
     {
-        var results = new Dictionary<string, TrayMetadataResult>(StringComparer.OrdinalIgnoreCase);
+        public long Length { get; init; }
 
-        string tempDirectory = string.Empty;
-        string inputPath = string.Empty;
-        string outputPath = string.Empty;
+        public DateTime LastWriteTimeUtc { get; init; }
 
-        try
-        {
-            tempDirectory = Path.Combine(
-                Path.GetTempPath(),
-                "SimsModDesktop",
-                "TrayMetadata",
-                Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(tempDirectory);
-
-            inputPath = Path.Combine(tempDirectory, "input.json");
-            outputPath = Path.Combine(tempDirectory, "output.json");
-            File.WriteAllText(inputPath, JsonSerializer.Serialize(trayItemPaths, JsonOptions), Encoding.UTF8);
-
-            var encodedCommand = Convert.ToBase64String(
-                Encoding.Unicode.GetBytes(BuildExtractionScript(toolPath, inputPath, outputPath)));
-
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = powerShellExecutable,
-                WorkingDirectory = toolPath,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            startInfo.ArgumentList.Add("-NoProfile");
-            startInfo.ArgumentList.Add("-NonInteractive");
-            startInfo.ArgumentList.Add("-ExecutionPolicy");
-            startInfo.ArgumentList.Add("Bypass");
-            startInfo.ArgumentList.Add("-Sta");
-            startInfo.ArgumentList.Add("-EncodedCommand");
-            startInfo.ArgumentList.Add(encodedCommand);
-
-            using var process = new Process
-            {
-                StartInfo = startInfo
-            };
-
-            cancellationToken.ThrowIfCancellationRequested();
-
-            if (!process.Start())
-            {
-                return results;
-            }
-
-            using var cancellationRegistration = cancellationToken.Register(() => TryKillProcess(process));
-            process.WaitForExit();
-            cancellationToken.ThrowIfCancellationRequested();
-
-            if (process.ExitCode != 0 || !File.Exists(outputPath))
-            {
-                return results;
-            }
-
-            var json = File.ReadAllText(outputPath, Encoding.UTF8);
-            if (string.IsNullOrWhiteSpace(json))
-            {
-                return results;
-            }
-
-            using var document = JsonDocument.Parse(json);
-            switch (document.RootElement.ValueKind)
-            {
-                case JsonValueKind.Array:
-                    foreach (var element in document.RootElement.EnumerateArray())
-                    {
-                        if (TryParseResult(element, out var result))
-                        {
-                            results[result.TrayItemPath] = result;
-                        }
-                    }
-
-                    break;
-                case JsonValueKind.Object:
-                    if (TryParseResult(document.RootElement, out var singleResult))
-                    {
-                        results[singleResult.TrayItemPath] = singleResult;
-                    }
-
-                    break;
-            }
-
-            return results;
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch
-        {
-            return new Dictionary<string, TrayMetadataResult>(StringComparer.OrdinalIgnoreCase);
-        }
-        finally
-        {
-            TryDeleteFile(inputPath);
-            TryDeleteFile(outputPath);
-            TryDeleteDirectory(tempDirectory);
-        }
+        public required TrayMetadataResult Value { get; init; }
     }
+}
 
-    private static bool TryParseResult(JsonElement element, out TrayMetadataResult result)
+internal static class InternalTrayMetadataReader
+{
+    private const int TrayItemHeaderSize = 8;
+    private static readonly Encoding Utf8Strict = new UTF8Encoding(false, true);
+
+    public static TrayMetadataResult Read(string trayItemPath)
     {
-        result = null!;
+        using var stream = new FileStream(
+            trayItemPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
 
-        var trayItemPath = ReadString(element, "trayItemPath");
-        if (string.IsNullOrWhiteSpace(trayItemPath))
-        {
-            return false;
-        }
+        var header = ReadHeader(stream);
+        var payload = ReadPayload(stream, header.DataSize);
+        var metadata = TrayMetadataPayloadParser.Parse(payload);
+        var effectiveType = ResolveEffectiveType(metadata, header.HeaderType);
+        var specific = metadata.SpecificData;
+        var household = specific?.Household;
+        var blueprint = specific?.Blueprint;
+        var room = specific?.Room;
+        var part = specific?.Part;
+        var members = household is null
+            ? Array.Empty<TrayMemberDisplayMetadata>()
+            : BuildMembers(household.Sims);
+        int? familySize = household is null
+            ? null
+            : household.FamilySize > 0
+                ? household.FamilySize
+                : household.Sims.Count > 0
+                    ? household.Sims.Count
+                    : null;
 
-        var members = new List<TrayMemberDisplayMetadata>();
-        if (TryGetPropertyIgnoreCase(element, "members", out var membersElement) &&
-            membersElement.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var memberElement in membersElement.EnumerateArray())
-            {
-                members.Add(new TrayMemberDisplayMetadata
-                {
-                    SlotIndex = ReadInt(memberElement, "slotIndex") ?? 0,
-                    FullName = ReadString(memberElement, "fullName"),
-                    Subtitle = ReadString(memberElement, "subtitle"),
-                    Detail = ReadString(memberElement, "detail")
-                });
-            }
-        }
-
-        result = new TrayMetadataResult
+        return new TrayMetadataResult
         {
             TrayItemPath = Path.GetFullPath(trayItemPath),
-            ItemType = ReadString(element, "itemType"),
-            Name = ReadString(element, "name"),
-            Description = ReadString(element, "description"),
-            CreatorName = ReadString(element, "creatorName"),
-            CreatorId = ReadString(element, "creatorId"),
-            FamilySize = ReadInt(element, "familySize"),
-            PendingBabies = ReadInt(element, "pendingBabies"),
-            SizeX = ReadInt(element, "sizeX"),
-            SizeZ = ReadInt(element, "sizeZ"),
-            PriceValue = ReadInt(element, "priceValue"),
-            NumBedrooms = ReadInt(element, "numBedrooms"),
-            NumBathrooms = ReadInt(element, "numBathrooms"),
-            Height = ReadInt(element, "height"),
-            IsModdedContent = ReadBool(element, "isModdedContent"),
+            TrayMetadataId = ToStringOrEmpty(metadata.Id),
+            ItemType = effectiveType,
+            Name = metadata.Name,
+            Description = metadata.Description,
+            DescriptionHashtags = specific?.DescriptionHashtags ?? string.Empty,
+            CreatorName = metadata.CreatorName,
+            CreatorId = ToStringOrEmpty(metadata.CreatorId),
+            ModifierName = metadata.ModifierName,
+            ModifierId = ToStringOrEmpty(metadata.ModifierId),
+            Favorites = metadata.Favorites,
+            Downloads = metadata.Downloads,
+            ItemTimestamp = metadata.ItemTimestamp,
+            MtxIds = metadata.MtxIds.ToArray(),
+            MetaInfo = metadata.MetaInfo.ToArray(),
+            VerifyCode = metadata.VerifyCode,
+            CustomImageCount = metadata.CustomImageCount,
+            MannequinCount = metadata.MannequinCount,
+            IndexedCounter = metadata.IndexedCounter,
+            CreatorPlatform = metadata.CreatorPlatform,
+            ModifierPlatform = metadata.ModifierPlatform,
+            CreatorPlatformId = metadata.CreatorPlatformId,
+            CreatorPlatformName = metadata.CreatorPlatformName,
+            ModifierPlatformId = metadata.ModifierPlatformId,
+            ModifierPlatformName = metadata.ModifierPlatformName,
+            ImageUriType = metadata.ImageUriType,
+            SharedTimestamp = metadata.SharedTimestamp,
+            Liked = metadata.Liked,
+            FamilySize = familySize,
+            PendingBabies = household?.PendingBabies > 0 ? household.PendingBabies : null,
+            SizeX = GetPositiveOrNull((blueprint?.SizeX ?? room?.SizeX) ?? 0),
+            SizeZ = GetPositiveOrNull((blueprint?.SizeZ ?? room?.SizeZ) ?? 0),
+            PriceValue = GetPositiveOrNull((blueprint?.PriceValue ?? room?.PriceValue) ?? 0),
+            NumBedrooms = GetPositiveOrNull(blueprint?.NumBedrooms ?? 0),
+            NumBathrooms = GetPositiveOrNull(blueprint?.NumBathrooms ?? 0),
+            Height = GetPositiveOrNull(room?.Height ?? 0),
+            IsModdedContent = specific?.IsModdedContent ?? false,
+            IsHidden = specific?.IsHidden,
+            IsDownloadTemp = specific?.IsDownloadTemp,
+            LanguageId = specific?.LanguageId,
+            SkuId = specific?.SkuId,
+            IsMaxisContent = specific?.IsMaxisContent,
+            PayloadSize = specific?.PayloadSize,
+            WasReported = specific?.WasReported,
+            WasReviewedAndCleared = specific?.WasReviewedAndCleared,
+            IsImageModdedContent = specific?.IsImageModdedContent,
+            SpecificCreatorPlatform = specific?.SpecificCreatorPlatform,
+            SpecificModifierPlatform = specific?.SpecificModifierPlatform,
+            SpecificCreatorPlatformPersonaId = specific?.SpecificCreatorPlatformPersonaId,
+            SpecificModifierPlatformPersonaId = specific?.SpecificModifierPlatformPersonaId,
+            IsCgItem = specific?.IsCgItem,
+            IsCgInterested = specific?.IsCgInterested,
+            CgName = specific?.CgName ?? string.Empty,
+            Sku2Id = specific?.Sku2Id,
+            CdsPatchBaseChangelists = specific?.CdsPatchBaseChangelists.ToArray() ?? Array.Empty<uint>(),
+            CdsContentPatchMounted = specific?.CdsContentPatchMounted,
+            SpecificDataVersion = specific?.Version,
+            VenueType = blueprint?.VenueType,
+            PriceLevel = blueprint?.PriceLevel ?? room?.PriceLevel,
+            ArchitectureValue = blueprint?.ArchitectureValue,
+            NumThumbnails = blueprint?.NumThumbnails ?? part?.NumThumbnails,
+            FrontSide = blueprint?.FrontSide,
+            VenueTypeStringKey = blueprint?.VenueTypeStringKey,
+            GroundFloorIndex = blueprint?.GroundFloorIndex,
+            OptionalRuleSatisfiedStringKeys = blueprint?.OptionalRuleSatisfiedStringKeys.ToArray() ?? Array.Empty<uint>(),
+            LotTraits = blueprint?.LotTraits.ToArray() ?? Array.Empty<ulong>(),
+            BuildingType = blueprint?.BuildingType,
+            LotTemplateId = blueprint?.LotTemplateId,
+            HasUniversityHousingConfiguration = blueprint?.HasUniversityHousingConfiguration ?? false,
+            TileCount = blueprint?.TileCount,
+            UnitCount = blueprint?.UnitCount,
+            UnitTraitCount = blueprint?.UnitTraitCount,
+            DynamicAreas = blueprint?.DynamicAreas.ToArray() ?? Array.Empty<uint>(),
+            RoomType = room?.RoomType,
+            RoomTypeStringKey = room?.RoomTypeStringKey,
+            PartBodyType = part?.BodyType,
             Members = members
         };
-        return true;
     }
 
-    private static string ReadString(JsonElement element, string propertyName)
+    private static TrayItemHeader ReadHeader(Stream stream)
     {
-        if (!TryGetPropertyIgnoreCase(element, propertyName, out var property))
+        Span<byte> buffer = stackalloc byte[TrayItemHeaderSize];
+        var totalRead = 0;
+        while (totalRead < buffer.Length)
         {
-            return string.Empty;
+            var read = stream.Read(buffer[totalRead..]);
+            if (read <= 0)
+            {
+                throw new InvalidDataException("Tray item header is incomplete.");
+            }
+
+            totalRead += read;
         }
 
-        return property.ValueKind switch
+        return new TrayItemHeader(
+            BinaryPrimitives.ReadUInt32LittleEndian(buffer[..4]),
+            checked((int)BinaryPrimitives.ReadUInt32LittleEndian(buffer[4..])));
+    }
+
+    private static byte[] ReadPayload(Stream stream, int dataSize)
+    {
+        if (dataSize <= 0)
         {
-            JsonValueKind.String => property.GetString() ?? string.Empty,
-            JsonValueKind.Number => property.GetRawText(),
-            JsonValueKind.True => bool.TrueString,
-            JsonValueKind.False => bool.FalseString,
+            throw new InvalidDataException("Tray item payload is empty.");
+        }
+
+        if (stream.CanSeek)
+        {
+            var remaining = stream.Length - stream.Position;
+            if (dataSize > remaining)
+            {
+                throw new InvalidDataException("Tray item payload length exceeds file size.");
+            }
+        }
+
+        var buffer = new byte[dataSize];
+        var totalRead = 0;
+        while (totalRead < buffer.Length)
+        {
+            var read = stream.Read(buffer, totalRead, buffer.Length - totalRead);
+            if (read <= 0)
+            {
+                throw new InvalidDataException("Tray item payload is incomplete.");
+            }
+
+            totalRead += read;
+        }
+
+        return buffer;
+    }
+
+    private static string ResolveEffectiveType(TrayMetadataPayload metadata, uint headerType)
+    {
+        return metadata.Type switch
+        {
+            1 => "Household",
+            2 => "Lot",
+            3 => "Room",
+            5 => "Part",
+            _ => ResolveTypeFromStructuredData(metadata, headerType)
+        };
+    }
+
+    private static string ResolveTypeFromStructuredData(TrayMetadataPayload metadata, uint headerType)
+    {
+        if (metadata.SpecificData?.Household is not null)
+        {
+            return "Household";
+        }
+
+        if (metadata.SpecificData?.Blueprint is not null)
+        {
+            return "Lot";
+        }
+
+        if (metadata.SpecificData?.Room is not null)
+        {
+            return "Room";
+        }
+
+        return headerType switch
+        {
+            1 => "Household",
+            2 => "Lot",
+            3 => "Room",
+            5 => "Part",
             _ => string.Empty
         };
     }
 
-    private static int? ReadInt(JsonElement element, string propertyName)
+    private static IReadOnlyList<TrayMemberDisplayMetadata> BuildMembers(IReadOnlyList<TraySimPayload> sims)
     {
-        if (!TryGetPropertyIgnoreCase(element, propertyName, out var property))
+        if (sims.Count == 0)
         {
-            return null;
+            return Array.Empty<TrayMemberDisplayMetadata>();
         }
 
-        if (property.ValueKind == JsonValueKind.Number && property.TryGetInt32(out var numericValue))
+        var members = new List<TrayMemberDisplayMetadata>(sims.Count);
+        foreach (var sim in sims)
         {
-            return numericValue;
-        }
+            var fullName = string.Join(
+                " ",
+                new[] { sim.FirstName, sim.LastName }
+                    .Where(value => !string.IsNullOrWhiteSpace(value)))
+                .Trim();
 
-        if (property.ValueKind == JsonValueKind.String &&
-            int.TryParse(property.GetString(), out var parsedValue))
-        {
-            return parsedValue;
-        }
-
-        return null;
-    }
-
-    private static bool ReadBool(JsonElement element, string propertyName)
-    {
-        if (!TryGetPropertyIgnoreCase(element, propertyName, out var property))
-        {
-            return false;
-        }
-
-        return property.ValueKind switch
-        {
-            JsonValueKind.True => true,
-            JsonValueKind.False => false,
-            JsonValueKind.String => bool.TryParse(property.GetString(), out var value) && value,
-            _ => false
-        };
-    }
-
-    private static bool TryGetPropertyIgnoreCase(JsonElement element, string propertyName, out JsonElement value)
-    {
-        foreach (var property in element.EnumerateObject())
-        {
-            if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+            if (string.IsNullOrWhiteSpace(fullName))
             {
-                value = property.Value;
-                return true;
-            }
-        }
-
-        value = default;
-        return false;
-    }
-
-    private string ResolveS4TiToolPath()
-    {
-        lock (_gate)
-        {
-            if (_toolPathResolved)
-            {
-                return _cachedToolPath;
+                fullName = sim.BreedName;
             }
 
-            _toolPathResolved = true;
-
-            foreach (var environmentVariable in ToolPathEnvironmentVariables)
+            if (string.IsNullOrWhiteSpace(fullName))
             {
-                var configuredValue = Environment.GetEnvironmentVariable(environmentVariable);
-                foreach (var candidate in ExpandToolPathCandidate(configuredValue))
+                continue;
+            }
+
+            members.Add(new TrayMemberDisplayMetadata
+            {
+                SlotIndex = members.Count + 1,
+                FullName = fullName,
+                Subtitle = string.Empty,
+                Detail = string.Empty,
+                SimId = ToStringOrEmpty(sim.Id),
+                Gender = sim.Gender,
+                AspirationId = sim.AspirationId,
+                Age = sim.Age,
+                Species = sim.Species,
+                IsCustomGender = sim.IsCustomGender,
+                OccultTypes = sim.OccultTypes,
+                BreedNameKey = sim.BreedNameKey,
+                FameRankedStatId = sim.Fame?.Id,
+                FameValue = sim.Fame?.Value,
+                DeathTrait = sim.DeathTrait
+            });
+        }
+
+        return members;
+    }
+
+    private static int? GetPositiveOrNull(int value)
+    {
+        return value > 0 ? value : null;
+    }
+
+    private static string ToStringOrEmpty(ulong? value)
+    {
+        return value.HasValue
+            ? value.Value.ToString(CultureInfo.InvariantCulture)
+            : string.Empty;
+    }
+
+    private readonly record struct TrayItemHeader(uint HeaderType, int DataSize);
+
+    private sealed class TrayMetadataPayload
+    {
+        public ulong? Id { get; set; }
+        public int Type { get; set; }
+        public ulong? CreatorId { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public string CreatorName { get; set; } = string.Empty;
+        public ulong? Favorites { get; set; }
+        public ulong? Downloads { get; set; }
+        public ulong? ItemTimestamp { get; set; }
+        public List<ulong> MtxIds { get; } = [];
+        public ulong? ModifierId { get; set; }
+        public string ModifierName { get; set; } = string.Empty;
+        public List<uint> MetaInfo { get; } = [];
+        public int? VerifyCode { get; set; }
+        public uint? CustomImageCount { get; set; }
+        public uint? MannequinCount { get; set; }
+        public ulong? IndexedCounter { get; set; }
+        public uint? CreatorPlatform { get; set; }
+        public uint? ModifierPlatform { get; set; }
+        public ulong? CreatorPlatformId { get; set; }
+        public string CreatorPlatformName { get; set; } = string.Empty;
+        public ulong? ModifierPlatformId { get; set; }
+        public string ModifierPlatformName { get; set; } = string.Empty;
+        public uint? ImageUriType { get; set; }
+        public ulong? SharedTimestamp { get; set; }
+        public bool? Liked { get; set; }
+        public TraySpecificDataPayload? SpecificData { get; set; }
+    }
+
+    private sealed class TraySpecificDataPayload
+    {
+        public TrayBlueprintPayload? Blueprint { get; set; }
+        public TrayHouseholdPayload? Household { get; set; }
+        public TrayRoomPayload? Room { get; set; }
+        public TrayPartPayload? Part { get; set; }
+        public bool IsModdedContent { get; set; }
+        public bool? IsHidden { get; set; }
+        public bool? IsDownloadTemp { get; set; }
+        public string DescriptionHashtags { get; set; } = string.Empty;
+        public ulong? LanguageId { get; set; }
+        public ulong? SkuId { get; set; }
+        public bool? IsMaxisContent { get; set; }
+        public uint? PayloadSize { get; set; }
+        public bool? WasReported { get; set; }
+        public bool? WasReviewedAndCleared { get; set; }
+        public bool? IsImageModdedContent { get; set; }
+        public uint? SpecificCreatorPlatform { get; set; }
+        public uint? SpecificModifierPlatform { get; set; }
+        public ulong? SpecificCreatorPlatformPersonaId { get; set; }
+        public ulong? SpecificModifierPlatformPersonaId { get; set; }
+        public bool? IsCgItem { get; set; }
+        public bool? IsCgInterested { get; set; }
+        public string CgName { get; set; } = string.Empty;
+        public ulong? Sku2Id { get; set; }
+        public List<uint> CdsPatchBaseChangelists { get; } = [];
+        public bool? CdsContentPatchMounted { get; set; }
+        public uint? Version { get; set; }
+    }
+
+    private sealed class TrayBlueprintPayload
+    {
+        public ulong? VenueType { get; set; }
+        public int SizeX { get; set; }
+        public int SizeZ { get; set; }
+        public int PriceValue { get; set; }
+        public int NumBedrooms { get; set; }
+        public int NumBathrooms { get; set; }
+        public uint? PriceLevel { get; set; }
+        public uint? ArchitectureValue { get; set; }
+        public uint? NumThumbnails { get; set; }
+        public uint? FrontSide { get; set; }
+        public uint? VenueTypeStringKey { get; set; }
+        public uint? GroundFloorIndex { get; set; }
+        public List<uint> OptionalRuleSatisfiedStringKeys { get; } = [];
+        public List<ulong> LotTraits { get; } = [];
+        public uint? BuildingType { get; set; }
+        public ulong? LotTemplateId { get; set; }
+        public bool? HasUniversityHousingConfiguration { get; set; }
+        public uint? TileCount { get; set; }
+        public uint? UnitCount { get; set; }
+        public int? UnitTraitCount { get; set; }
+        public List<uint> DynamicAreas { get; } = [];
+    }
+
+    private sealed class TrayRoomPayload
+    {
+        public uint? RoomType { get; set; }
+        public int SizeX { get; set; }
+        public int SizeZ { get; set; }
+        public int PriceValue { get; set; }
+        public int Height { get; set; }
+        public uint? PriceLevel { get; set; }
+        public uint? RoomTypeStringKey { get; set; }
+    }
+
+    private sealed class TrayPartPayload
+    {
+        public uint? BodyType { get; set; }
+        public uint? NumThumbnails { get; set; }
+    }
+
+    private sealed class TrayHouseholdPayload
+    {
+        public int FamilySize { get; set; }
+        public int PendingBabies { get; set; }
+        public List<TraySimPayload> Sims { get; } = [];
+    }
+
+    private sealed class TraySimPayload
+    {
+        public string FirstName { get; set; } = string.Empty;
+        public string LastName { get; set; } = string.Empty;
+        public string BreedName { get; set; } = string.Empty;
+        public ulong? Id { get; set; }
+        public uint? Gender { get; set; }
+        public ulong? AspirationId { get; set; }
+        public uint? Age { get; set; }
+        public uint? Species { get; set; }
+        public bool? IsCustomGender { get; set; }
+        public uint? OccultTypes { get; set; }
+        public uint? BreedNameKey { get; set; }
+        public TrayRankedStatPayload? Fame { get; set; }
+        public ulong? DeathTrait { get; set; }
+    }
+
+    private sealed class TrayRankedStatPayload
+    {
+        public ulong? Id { get; set; }
+        public float? Value { get; set; }
+    }
+
+    private static class TrayMetadataPayloadParser
+    {
+        public static TrayMetadataPayload Parse(ReadOnlySpan<byte> data)
+        {
+            var payload = new TrayMetadataPayload();
+            var reader = new ProtoReader(data);
+
+            while (reader.TryReadFieldHeader(out var fieldNumber, out var wireType))
+            {
+                switch (fieldNumber)
                 {
-                    if (IsValidToolPath(candidate))
-                    {
-                        _cachedToolPath = candidate;
-                        return _cachedToolPath;
-                    }
+                    case 1 when wireType == ProtoWireType.Varint:
+                        payload.Id = reader.ReadUInt64();
+                        break;
+                    case 2 when wireType == ProtoWireType.Varint:
+                        payload.Type = reader.ReadInt32();
+                        break;
+                    case 4 when wireType == ProtoWireType.LengthDelimited:
+                        payload.Name = reader.ReadString(Utf8Strict);
+                        break;
+                    case 5 when wireType == ProtoWireType.LengthDelimited:
+                        payload.Description = reader.ReadString(Utf8Strict);
+                        break;
+                    case 6 when wireType == ProtoWireType.Varint:
+                        payload.CreatorId = reader.ReadUInt64();
+                        break;
+                    case 7 when wireType == ProtoWireType.LengthDelimited:
+                        payload.CreatorName = reader.ReadString(Utf8Strict);
+                        break;
+                    case 8 when wireType == ProtoWireType.Varint:
+                        payload.Favorites = reader.ReadUInt64();
+                        break;
+                    case 9 when wireType == ProtoWireType.Varint:
+                        payload.Downloads = reader.ReadUInt64();
+                        break;
+                    case 10 when wireType == ProtoWireType.LengthDelimited:
+                        payload.SpecificData = ParseSpecificData(reader.ReadBytes());
+                        break;
+                    case 11 when wireType == ProtoWireType.Varint:
+                        payload.ItemTimestamp = reader.ReadUInt64();
+                        break;
+                    case 12 when wireType == ProtoWireType.Varint:
+                        payload.MtxIds.Add(reader.ReadUInt64());
+                        break;
+                    case 12 when wireType == ProtoWireType.LengthDelimited:
+                        AppendPackedUInt64Values(payload.MtxIds, reader.ReadBytes());
+                        break;
+                    case 14 when wireType == ProtoWireType.Varint:
+                        payload.ModifierId = reader.ReadUInt64();
+                        break;
+                    case 15 when wireType == ProtoWireType.LengthDelimited:
+                        payload.ModifierName = reader.ReadString(Utf8Strict);
+                        break;
+                    case 16 when wireType == ProtoWireType.Varint:
+                        payload.MetaInfo.Add(reader.ReadUInt32());
+                        break;
+                    case 16 when wireType == ProtoWireType.LengthDelimited:
+                        AppendPackedUInt32Values(payload.MetaInfo, reader.ReadBytes());
+                        break;
+                    case 17 when wireType == ProtoWireType.Varint:
+                        payload.VerifyCode = reader.ReadInt32();
+                        break;
+                    case 20 when wireType == ProtoWireType.Varint:
+                        payload.CustomImageCount = reader.ReadUInt32();
+                        break;
+                    case 21 when wireType == ProtoWireType.Varint:
+                        payload.MannequinCount = reader.ReadUInt32();
+                        break;
+                    case 25 when wireType == ProtoWireType.Varint:
+                        payload.IndexedCounter = reader.ReadUInt64();
+                        break;
+                    case 26 when wireType == ProtoWireType.Varint:
+                        payload.CreatorPlatform = reader.ReadUInt32();
+                        break;
+                    case 27 when wireType == ProtoWireType.Varint:
+                        payload.ModifierPlatform = reader.ReadUInt32();
+                        break;
+                    case 28 when wireType == ProtoWireType.Varint:
+                        payload.CreatorPlatformId = reader.ReadUInt64();
+                        break;
+                    case 29 when wireType == ProtoWireType.LengthDelimited:
+                        payload.CreatorPlatformName = reader.ReadString(Utf8Strict);
+                        break;
+                    case 30 when wireType == ProtoWireType.Varint:
+                        payload.ModifierPlatformId = reader.ReadUInt64();
+                        break;
+                    case 31 when wireType == ProtoWireType.LengthDelimited:
+                        payload.ModifierPlatformName = reader.ReadString(Utf8Strict);
+                        break;
+                    case 32 when wireType == ProtoWireType.Varint:
+                        payload.ImageUriType = reader.ReadUInt32();
+                        break;
+                    case 33 when wireType == ProtoWireType.Varint:
+                        payload.SharedTimestamp = reader.ReadUInt64();
+                        break;
+                    case 34 when wireType == ProtoWireType.Varint:
+                        payload.Liked = reader.ReadBoolean();
+                        break;
+                    default:
+                        reader.SkipField(wireType);
+                        break;
                 }
             }
 
-            foreach (var candidateSeed in DefaultToolPathCandidates)
+            return payload;
+        }
+
+        private static TraySpecificDataPayload ParseSpecificData(ReadOnlySpan<byte> data)
+        {
+            var payload = new TraySpecificDataPayload();
+            var reader = new ProtoReader(data);
+
+            while (reader.TryReadFieldHeader(out var fieldNumber, out var wireType))
             {
-                foreach (var candidate in ExpandToolPathCandidate(candidateSeed))
+                switch (fieldNumber)
                 {
-                    if (IsValidToolPath(candidate))
-                    {
-                        _cachedToolPath = candidate;
-                        return _cachedToolPath;
-                    }
+                    case 1 when wireType == ProtoWireType.LengthDelimited:
+                        payload.Blueprint = ParseBlueprint(reader.ReadBytes());
+                        break;
+                    case 2 when wireType == ProtoWireType.LengthDelimited:
+                        payload.Household = ParseHousehold(reader.ReadBytes());
+                        break;
+                    case 3 when wireType == ProtoWireType.Varint:
+                        payload.IsHidden = reader.ReadBoolean();
+                        break;
+                    case 4 when wireType == ProtoWireType.Varint:
+                        payload.IsDownloadTemp = reader.ReadBoolean();
+                        break;
+                    case 5 when wireType == ProtoWireType.Varint:
+                        payload.IsModdedContent = reader.ReadBoolean();
+                        break;
+                    case 7 when wireType == ProtoWireType.LengthDelimited:
+                        payload.Room = ParseRoom(reader.ReadBytes());
+                        break;
+                    case 8 when wireType == ProtoWireType.LengthDelimited:
+                        payload.DescriptionHashtags = reader.ReadString(Utf8Strict);
+                        break;
+                    case 9 when wireType == ProtoWireType.Varint:
+                        payload.LanguageId = reader.ReadUInt64();
+                        break;
+                    case 10 when wireType == ProtoWireType.Varint:
+                        payload.SkuId = reader.ReadUInt64();
+                        break;
+                    case 11 when wireType == ProtoWireType.Varint:
+                        payload.IsMaxisContent = reader.ReadBoolean();
+                        break;
+                    case 12 when wireType == ProtoWireType.Varint:
+                        payload.PayloadSize = reader.ReadUInt32();
+                        break;
+                    case 13 when wireType == ProtoWireType.Varint:
+                        payload.WasReported = reader.ReadBoolean();
+                        break;
+                    case 14 when wireType == ProtoWireType.Varint:
+                        payload.WasReviewedAndCleared = reader.ReadBoolean();
+                        break;
+                    case 15 when wireType == ProtoWireType.Varint:
+                        payload.IsImageModdedContent = reader.ReadBoolean();
+                        break;
+                    case 16 when wireType == ProtoWireType.Varint:
+                        payload.SpecificCreatorPlatform = reader.ReadUInt32();
+                        break;
+                    case 17 when wireType == ProtoWireType.Varint:
+                        payload.SpecificModifierPlatform = reader.ReadUInt32();
+                        break;
+                    case 18 when wireType == ProtoWireType.Varint:
+                        payload.SpecificCreatorPlatformPersonaId = reader.ReadUInt64();
+                        break;
+                    case 19 when wireType == ProtoWireType.Varint:
+                        payload.SpecificModifierPlatformPersonaId = reader.ReadUInt64();
+                        break;
+                    case 20 when wireType == ProtoWireType.Varint:
+                        payload.IsCgItem = reader.ReadBoolean();
+                        break;
+                    case 21 when wireType == ProtoWireType.Varint:
+                        payload.IsCgInterested = reader.ReadBoolean();
+                        break;
+                    case 22 when wireType == ProtoWireType.LengthDelimited:
+                        payload.CgName = reader.ReadString(Utf8Strict);
+                        break;
+                    case 23 when wireType == ProtoWireType.Varint:
+                        payload.Sku2Id = reader.ReadUInt64();
+                        break;
+                    case 24 when wireType == ProtoWireType.Varint:
+                        payload.CdsPatchBaseChangelists.Add(reader.ReadUInt32());
+                        break;
+                    case 24 when wireType == ProtoWireType.LengthDelimited:
+                        AppendPackedUInt32Values(payload.CdsPatchBaseChangelists, reader.ReadBytes());
+                        break;
+                    case 25 when wireType == ProtoWireType.Varint:
+                        payload.CdsContentPatchMounted = reader.ReadBoolean();
+                        break;
+                    case 26 when wireType == ProtoWireType.LengthDelimited:
+                        payload.Part = ParsePart(reader.ReadBytes());
+                        break;
+                    case 1001 when wireType == ProtoWireType.Varint:
+                        payload.Version = reader.ReadUInt32();
+                        break;
+                    default:
+                        reader.SkipField(wireType);
+                        break;
                 }
             }
 
-            _cachedToolPath = string.Empty;
-            return _cachedToolPath;
-        }
-    }
-
-    private static IEnumerable<string> ExpandToolPathCandidate(string? configuredPath)
-    {
-        if (string.IsNullOrWhiteSpace(configuredPath))
-        {
-            yield break;
+            return payload;
         }
 
-        string? normalizedPath;
-        try
+        private static TrayBlueprintPayload ParseBlueprint(ReadOnlySpan<byte> data)
         {
-            normalizedPath = NormalizeCandidatePath(configuredPath);
-        }
-        catch
-        {
-            yield break;
-        }
+            var payload = new TrayBlueprintPayload();
+            var reader = new ProtoReader(data);
 
-        if (string.IsNullOrWhiteSpace(normalizedPath))
-        {
-            yield break;
-        }
-
-        if (!Directory.Exists(normalizedPath))
-        {
-            yield break;
-        }
-
-        yield return normalizedPath;
-
-        IEnumerable<string> subDirectories;
-        try
-        {
-            subDirectories = Directory.EnumerateDirectories(normalizedPath, "S4TI*", SearchOption.TopDirectoryOnly)
-                .OrderByDescending(path => path, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-        }
-        catch
-        {
-            yield break;
-        }
-
-        foreach (var subDirectory in subDirectories)
-        {
-            yield return subDirectory;
-        }
-    }
-
-    private static string? NormalizeCandidatePath(string configuredPath)
-    {
-        var expanded = Environment.ExpandEnvironmentVariables(configuredPath.Trim());
-        if (File.Exists(expanded))
-        {
-            return Path.GetDirectoryName(Path.GetFullPath(expanded));
-        }
-
-        if (Directory.Exists(expanded))
-        {
-            return Path.GetFullPath(expanded)
-                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        }
-
-        return null;
-    }
-
-    private static bool IsValidToolPath(string candidate)
-    {
-        if (string.IsNullOrWhiteSpace(candidate))
-        {
-            return false;
-        }
-
-        return File.Exists(Path.Combine(candidate, "S4TI.exe")) &&
-               File.Exists(Path.Combine(candidate, "Sims4.UserData.dll"));
-    }
-
-    private static string ResolveWindowsPowerShellExecutable()
-    {
-        var windowsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
-        if (!string.IsNullOrWhiteSpace(windowsDirectory))
-        {
-            var systemPath = Path.Combine(
-                windowsDirectory,
-                "System32",
-                "WindowsPowerShell",
-                "v1.0",
-                "powershell.exe");
-
-            if (File.Exists(systemPath))
+            while (reader.TryReadFieldHeader(out var fieldNumber, out var wireType))
             {
-                return systemPath;
+                switch (fieldNumber)
+                {
+                    case 1 when wireType == ProtoWireType.Varint:
+                        payload.VenueType = reader.ReadUInt64();
+                        break;
+                    case 2 when wireType == ProtoWireType.Varint:
+                        payload.SizeX = reader.ReadInt32();
+                        break;
+                    case 3 when wireType == ProtoWireType.Varint:
+                        payload.SizeZ = reader.ReadInt32();
+                        break;
+                    case 4 when wireType == ProtoWireType.Varint:
+                        payload.PriceLevel = reader.ReadUInt32();
+                        break;
+                    case 5 when wireType == ProtoWireType.Varint:
+                        payload.PriceValue = reader.ReadInt32();
+                        break;
+                    case 6 when wireType == ProtoWireType.Varint:
+                        payload.NumBedrooms = reader.ReadInt32();
+                        break;
+                    case 7 when wireType == ProtoWireType.Varint:
+                        payload.NumBathrooms = reader.ReadInt32();
+                        break;
+                    case 8 when wireType == ProtoWireType.Varint:
+                        payload.ArchitectureValue = reader.ReadUInt32();
+                        break;
+                    case 9 when wireType == ProtoWireType.Varint:
+                        payload.NumThumbnails = reader.ReadUInt32();
+                        break;
+                    case 10 when wireType == ProtoWireType.Varint:
+                        payload.FrontSide = reader.ReadUInt32();
+                        break;
+                    case 11 when wireType == ProtoWireType.Varint:
+                        payload.VenueTypeStringKey = reader.ReadUInt32();
+                        break;
+                    case 12 when wireType == ProtoWireType.Varint:
+                        payload.GroundFloorIndex = reader.ReadUInt32();
+                        break;
+                    case 13 when wireType == ProtoWireType.Varint:
+                        payload.OptionalRuleSatisfiedStringKeys.Add(reader.ReadUInt32());
+                        break;
+                    case 13 when wireType == ProtoWireType.LengthDelimited:
+                        AppendPackedUInt32Values(payload.OptionalRuleSatisfiedStringKeys, reader.ReadBytes());
+                        break;
+                    case 14 when wireType == ProtoWireType.Fixed64:
+                        payload.LotTraits.Add(reader.ReadFixed64());
+                        break;
+                    case 14 when wireType == ProtoWireType.LengthDelimited:
+                        AppendPackedFixed64Values(payload.LotTraits, reader.ReadBytes());
+                        break;
+                    case 15 when wireType == ProtoWireType.Varint:
+                        payload.BuildingType = reader.ReadUInt32();
+                        break;
+                    case 16 when wireType == ProtoWireType.Varint:
+                        payload.LotTemplateId = reader.ReadUInt64();
+                        break;
+                    case 17 when wireType == ProtoWireType.LengthDelimited:
+                        payload.HasUniversityHousingConfiguration = true;
+                        _ = reader.ReadBytes();
+                        break;
+                    case 18 when wireType == ProtoWireType.Varint:
+                        payload.TileCount = reader.ReadUInt32();
+                        break;
+                    case 19 when wireType == ProtoWireType.Varint:
+                        payload.UnitCount = reader.ReadUInt32();
+                        break;
+                    case 20 when wireType == ProtoWireType.LengthDelimited:
+                        payload.UnitTraitCount = (payload.UnitTraitCount ?? 0) + 1;
+                        _ = reader.ReadBytes();
+                        break;
+                    case 21 when wireType == ProtoWireType.Varint:
+                        payload.DynamicAreas.Add(reader.ReadUInt32());
+                        break;
+                    case 21 when wireType == ProtoWireType.LengthDelimited:
+                        AppendPackedUInt32Values(payload.DynamicAreas, reader.ReadBytes());
+                        break;
+                    default:
+                        reader.SkipField(wireType);
+                        break;
+                }
+            }
+
+            return payload;
+        }
+
+        private static TrayRoomPayload ParseRoom(ReadOnlySpan<byte> data)
+        {
+            var payload = new TrayRoomPayload();
+            var reader = new ProtoReader(data);
+
+            while (reader.TryReadFieldHeader(out var fieldNumber, out var wireType))
+            {
+                switch (fieldNumber)
+                {
+                    case 1 when wireType == ProtoWireType.Varint:
+                        payload.RoomType = reader.ReadUInt32();
+                        break;
+                    case 2 when wireType == ProtoWireType.Varint:
+                        payload.SizeX = reader.ReadInt32();
+                        break;
+                    case 3 when wireType == ProtoWireType.Varint:
+                        payload.SizeZ = reader.ReadInt32();
+                        break;
+                    case 4 when wireType == ProtoWireType.Varint:
+                        payload.PriceValue = reader.ReadInt32();
+                        break;
+                    case 5 when wireType == ProtoWireType.Varint:
+                        payload.Height = reader.ReadInt32();
+                        break;
+                    case 6 when wireType == ProtoWireType.Varint:
+                        payload.PriceLevel = reader.ReadUInt32();
+                        break;
+                    case 7 when wireType == ProtoWireType.Varint:
+                        payload.RoomTypeStringKey = reader.ReadUInt32();
+                        break;
+                    default:
+                        reader.SkipField(wireType);
+                        break;
+                }
+            }
+
+            return payload;
+        }
+
+        private static TrayPartPayload ParsePart(ReadOnlySpan<byte> data)
+        {
+            var payload = new TrayPartPayload();
+            var reader = new ProtoReader(data);
+
+            while (reader.TryReadFieldHeader(out var fieldNumber, out var wireType))
+            {
+                switch (fieldNumber)
+                {
+                    case 1 when wireType == ProtoWireType.Varint:
+                        payload.BodyType = reader.ReadUInt32();
+                        break;
+                    case 2 when wireType == ProtoWireType.Varint:
+                        payload.NumThumbnails = reader.ReadUInt32();
+                        break;
+                    default:
+                        reader.SkipField(wireType);
+                        break;
+                }
+            }
+
+            return payload;
+        }
+
+        private static TrayHouseholdPayload ParseHousehold(ReadOnlySpan<byte> data)
+        {
+            var payload = new TrayHouseholdPayload();
+            var reader = new ProtoReader(data);
+
+            while (reader.TryReadFieldHeader(out var fieldNumber, out var wireType))
+            {
+                switch (fieldNumber)
+                {
+                    case 1 when wireType == ProtoWireType.Varint:
+                        payload.FamilySize = reader.ReadInt32();
+                        break;
+                    case 2 when wireType == ProtoWireType.LengthDelimited:
+                        payload.Sims.Add(ParseSim(reader.ReadBytes()));
+                        break;
+                    case 3 when wireType == ProtoWireType.Varint:
+                        payload.PendingBabies = reader.ReadInt32();
+                        break;
+                    default:
+                        reader.SkipField(wireType);
+                        break;
+                }
+            }
+
+            return payload;
+        }
+
+        private static TraySimPayload ParseSim(ReadOnlySpan<byte> data)
+        {
+            var payload = new TraySimPayload();
+            var reader = new ProtoReader(data);
+
+            while (reader.TryReadFieldHeader(out var fieldNumber, out var wireType))
+            {
+                switch (fieldNumber)
+                {
+                    case 3 when wireType == ProtoWireType.LengthDelimited:
+                        payload.FirstName = reader.ReadString(Utf8Strict);
+                        break;
+                    case 4 when wireType == ProtoWireType.LengthDelimited:
+                        payload.LastName = reader.ReadString(Utf8Strict);
+                        break;
+                    case 5 when wireType == ProtoWireType.Varint:
+                        payload.Id = reader.ReadUInt64();
+                        break;
+                    case 6 when wireType == ProtoWireType.Varint:
+                        payload.Gender = reader.ReadUInt32();
+                        break;
+                    case 7 when wireType == ProtoWireType.Varint:
+                        payload.AspirationId = reader.ReadUInt64();
+                        break;
+                    case 9 when wireType == ProtoWireType.Varint:
+                        payload.Age = reader.ReadUInt32();
+                        break;
+                    case 12 when wireType == ProtoWireType.Varint:
+                        payload.Species = reader.ReadUInt32();
+                        break;
+                    case 13 when wireType == ProtoWireType.Varint:
+                        payload.IsCustomGender = reader.ReadBoolean();
+                        break;
+                    case 14 when wireType == ProtoWireType.Varint:
+                        payload.OccultTypes = reader.ReadUInt32();
+                        break;
+                    case 15 when wireType == ProtoWireType.LengthDelimited:
+                        payload.BreedName = reader.ReadString(Utf8Strict);
+                        break;
+                    case 16 when wireType == ProtoWireType.Varint:
+                        payload.BreedNameKey = reader.ReadUInt32();
+                        break;
+                    case 17 when wireType == ProtoWireType.LengthDelimited:
+                        payload.Fame = ParseRankedStat(reader.ReadBytes());
+                        break;
+                    case 24 when wireType == ProtoWireType.Varint:
+                        payload.DeathTrait = reader.ReadUInt64();
+                        break;
+                    default:
+                        reader.SkipField(wireType);
+                        break;
+                }
+            }
+
+            return payload;
+        }
+
+        private static TrayRankedStatPayload ParseRankedStat(ReadOnlySpan<byte> data)
+        {
+            var payload = new TrayRankedStatPayload();
+            var reader = new ProtoReader(data);
+
+            while (reader.TryReadFieldHeader(out var fieldNumber, out var wireType))
+            {
+                switch (fieldNumber)
+                {
+                    case 1 when wireType == ProtoWireType.Varint:
+                        payload.Id = reader.ReadUInt64();
+                        break;
+                    case 2 when wireType == ProtoWireType.Fixed32:
+                        payload.Value = reader.ReadSingle();
+                        break;
+                    default:
+                        reader.SkipField(wireType);
+                        break;
+                }
+            }
+
+            return payload;
+        }
+
+        private static void AppendPackedUInt32Values(List<uint> target, ReadOnlySpan<byte> data)
+        {
+            var reader = new ProtoReader(data);
+            while (reader.HasRemaining)
+            {
+                target.Add(reader.ReadUInt32());
             }
         }
 
-        return string.Empty;
-    }
-
-    private static string BuildExtractionScript(
-        string toolPath,
-        string inputPath,
-        string outputPath)
-    {
-        var escapedToolPath = EscapePowerShellString(toolPath);
-        var escapedInputPath = EscapePowerShellString(inputPath);
-        var escapedOutputPath = EscapePowerShellString(outputPath);
-
-        return string.Join(
-            Environment.NewLine,
-            [
-                "$ErrorActionPreference = 'Stop'",
-                $"$toolDir = '{escapedToolPath}'",
-                "Get-ChildItem -LiteralPath $toolDir -Filter '*.dll' | Sort-Object Name | ForEach-Object { [Reflection.Assembly]::LoadFrom($_.FullName) | Out-Null }",
-                "$trayAsm = [AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.GetType('Sims4.UserData.TrayItem', $false) } | Select-Object -First 1",
-                "if ($null -eq $trayAsm) { throw 'Tray assembly not loaded.' }",
-                "$trayItemType = $trayAsm.GetType('Sims4.UserData.TrayItem')",
-                $"$inputPath = '{escapedInputPath}'",
-                $"$outputPath = '{escapedOutputPath}'",
-                "$paths = Get-Content -LiteralPath $inputPath -Raw | ConvertFrom-Json",
-                "$results = New-Object System.Collections.Generic.List[object]",
-                "foreach ($path in $paths) {",
-                "  if ([string]::IsNullOrWhiteSpace($path) -or -not (Test-Path -LiteralPath $path)) { continue }",
-                "  try {",
-                "    $trayItem = $trayItemType::Open($path)",
-                "    $metadata = $trayItem.Metadata",
-                "    if ($null -eq $metadata) { continue }",
-                "    $specific = $metadata.Metadata",
-                "    $members = @()",
-                "    if ($null -ne $specific -and $null -ne $specific.HhMetadata -and $null -ne $specific.HhMetadata.SimData) {",
-                "      for ($i = 0; $i -lt $specific.HhMetadata.SimData.Length; $i++) {",
-                "        $sim = $specific.HhMetadata.SimData[$i]",
-                "        if ($null -eq $sim) { continue }",
-                "        $fullName = (($sim.FirstName, $sim.LastName) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join ' '",
-                "        $subtitleParts = @()",
-                "        if (-not [string]::IsNullOrWhiteSpace([string]$sim.Age)) { $subtitleParts += [string]$sim.Age }",
-                "        if (-not [string]::IsNullOrWhiteSpace([string]$sim.Gender)) { $subtitleParts += [string]$sim.Gender }",
-                "        $detailParts = @()",
-                "        if (-not [string]::IsNullOrWhiteSpace([string]$sim.Species)) { $detailParts += [string]$sim.Species }",
-                "        if (-not [string]::IsNullOrWhiteSpace([string]$sim.OccultTypes) -and [string]$sim.OccultTypes -ne 'Human') { $detailParts += [string]$sim.OccultTypes }",
-                "        $members += [pscustomobject]@{",
-                "          SlotIndex = ($i + 1)",
-                "          FullName = $fullName",
-                "          Subtitle = ($subtitleParts -join ' • ')",
-                "          Detail = ($detailParts | Select-Object -Unique) -join ' • '",
-                "        }",
-                "      }",
-                "    }",
-                "    $results.Add([pscustomobject]@{",
-                "      TrayItemPath = [string]$path",
-                "      ItemType = [string]$metadata.Type",
-                "      Name = [string]$metadata.Name",
-                "      Description = [string]$metadata.Description",
-                "      CreatorName = [string]$metadata.CreatorName",
-                "      CreatorId = [string]$metadata.CreatorId",
-                "      FamilySize = if ($null -ne $specific -and $null -ne $specific.HhMetadata) { [int]$specific.HhMetadata.FamilySize } else { $null }",
-                "      PendingBabies = if ($null -ne $specific -and $null -ne $specific.HhMetadata) { [int]$specific.HhMetadata.PendingBabies } else { $null }",
-                "      SizeX = if ($null -ne $specific -and $null -ne $specific.BpMetadata) { [int]$specific.BpMetadata.SizeX } elseif ($null -ne $specific -and $null -ne $specific.RoMetadata) { [int]$specific.RoMetadata.SizeX } else { $null }",
-                "      SizeZ = if ($null -ne $specific -and $null -ne $specific.BpMetadata) { [int]$specific.BpMetadata.SizeZ } elseif ($null -ne $specific -and $null -ne $specific.RoMetadata) { [int]$specific.RoMetadata.SizeZ } else { $null }",
-                "      PriceValue = if ($null -ne $specific -and $null -ne $specific.BpMetadata) { [int]$specific.BpMetadata.PriceValue } elseif ($null -ne $specific -and $null -ne $specific.RoMetadata) { [int]$specific.RoMetadata.PriceValue } else { $null }",
-                "      NumBedrooms = if ($null -ne $specific -and $null -ne $specific.BpMetadata) { [int]$specific.BpMetadata.NumBedrooms } else { $null }",
-                "      NumBathrooms = if ($null -ne $specific -and $null -ne $specific.BpMetadata) { [int]$specific.BpMetadata.NumBathrooms } else { $null }",
-                "      Height = if ($null -ne $specific -and $null -ne $specific.RoMetadata) { [int]$specific.RoMetadata.Height } else { $null }",
-                "      IsModdedContent = if ($null -ne $specific) { [bool]$specific.IsModdedContent } else { $false }",
-                "      Members = @($members)",
-                "    }) | Out-Null",
-                "  }",
-                "  catch {",
-                "  }",
-                "}",
-                "$json = if ($results.Count -eq 0) { '[]' } else { ConvertTo-Json -InputObject @($results.ToArray()) -Depth 8 -Compress }",
-                "Set-Content -LiteralPath $outputPath -Value $json -Encoding UTF8"
-            ]);
-    }
-
-    private static string EscapePowerShellString(string value)
-    {
-        return value.Replace("'", "''");
-    }
-
-    private static void TryKillProcess(Process process)
-    {
-        try
+        private static void AppendPackedUInt64Values(List<ulong> target, ReadOnlySpan<byte> data)
         {
-            if (!process.HasExited)
+            var reader = new ProtoReader(data);
+            while (reader.HasRemaining)
             {
-                process.Kill(entireProcessTree: true);
+                target.Add(reader.ReadUInt64());
             }
         }
-        catch
-        {
-        }
-    }
 
-    private static void TryDeleteFile(string filePath)
-    {
-        try
+        private static void AppendPackedFixed64Values(List<ulong> target, ReadOnlySpan<byte> data)
         {
-            if (!string.IsNullOrWhiteSpace(filePath) && File.Exists(filePath))
+            if (data.Length % 8 != 0)
             {
-                File.Delete(filePath);
+                throw new InvalidDataException("Malformed packed fixed64 field.");
+            }
+
+            for (var offset = 0; offset < data.Length; offset += 8)
+            {
+                target.Add(BinaryPrimitives.ReadUInt64LittleEndian(data.Slice(offset, 8)));
             }
         }
-        catch
-        {
-        }
     }
 
-    private static void TryDeleteDirectory(string directoryPath)
+    private static class ProtoWireType
     {
-        try
+        public const int Varint = 0;
+        public const int Fixed64 = 1;
+        public const int LengthDelimited = 2;
+        public const int Fixed32 = 5;
+    }
+
+    private ref struct ProtoReader
+    {
+        private readonly ReadOnlySpan<byte> _data;
+        private int _position;
+
+        public ProtoReader(ReadOnlySpan<byte> data)
         {
-            if (!string.IsNullOrWhiteSpace(directoryPath) && Directory.Exists(directoryPath))
+            _data = data;
+            _position = 0;
+        }
+
+        public bool TryReadFieldHeader(out int fieldNumber, out int wireType)
+        {
+            if (_position >= _data.Length)
             {
-                Directory.Delete(directoryPath, recursive: true);
+                fieldNumber = 0;
+                wireType = 0;
+                return false;
+            }
+
+            var tag = ReadUInt64();
+            if (tag == 0)
+            {
+                throw new InvalidDataException("Encountered invalid protobuf tag.");
+            }
+
+            fieldNumber = checked((int)(tag >> 3));
+            wireType = checked((int)(tag & 0x07));
+            return true;
+        }
+
+        public bool HasRemaining => _position < _data.Length;
+
+        public ulong ReadUInt64()
+        {
+            ulong value = 0;
+            var shift = 0;
+
+            while (_position < _data.Length && shift < 64)
+            {
+                var current = _data[_position++];
+                value |= (ulong)(current & 0x7Fu) << shift;
+                if ((current & 0x80) == 0)
+                {
+                    return value;
+                }
+
+                shift += 7;
+            }
+
+            throw new InvalidDataException("Malformed protobuf varint.");
+        }
+
+        public int ReadInt32()
+        {
+            return unchecked((int)ReadUInt64());
+        }
+
+        public uint ReadUInt32()
+        {
+            return checked((uint)ReadUInt64());
+        }
+
+        public bool ReadBoolean()
+        {
+            return ReadUInt64() != 0;
+        }
+
+        public ulong ReadFixed64()
+        {
+            if (_position + 8 > _data.Length)
+            {
+                throw new InvalidDataException("Malformed protobuf fixed64 field.");
+            }
+
+            var value = BinaryPrimitives.ReadUInt64LittleEndian(_data.Slice(_position, 8));
+            _position += 8;
+            return value;
+        }
+
+        public uint ReadFixed32()
+        {
+            if (_position + 4 > _data.Length)
+            {
+                throw new InvalidDataException("Malformed protobuf fixed32 field.");
+            }
+
+            var value = BinaryPrimitives.ReadUInt32LittleEndian(_data.Slice(_position, 4));
+            _position += 4;
+            return value;
+        }
+
+        public float ReadSingle()
+        {
+            return BitConverter.UInt32BitsToSingle(ReadFixed32());
+        }
+
+        public ReadOnlySpan<byte> ReadBytes()
+        {
+            var length = checked((int)ReadUInt64());
+            if (_position + length > _data.Length)
+            {
+                throw new InvalidDataException("Malformed protobuf length-delimited field.");
+            }
+
+            var slice = _data.Slice(_position, length);
+            _position += length;
+            return slice;
+        }
+
+        public string ReadString(Encoding encoding)
+        {
+            var bytes = ReadBytes();
+            return bytes.IsEmpty ? string.Empty : encoding.GetString(bytes);
+        }
+
+        public void SkipField(int wireType)
+        {
+            switch (wireType)
+            {
+                case ProtoWireType.Varint:
+                    ReadUInt64();
+                    break;
+                case ProtoWireType.Fixed64:
+                    Advance(8);
+                    break;
+                case ProtoWireType.LengthDelimited:
+                    _ = ReadBytes();
+                    break;
+                case ProtoWireType.Fixed32:
+                    Advance(4);
+                    break;
+                default:
+                    throw new InvalidDataException($"Unsupported protobuf wire type: {wireType}.");
             }
         }
-        catch
-        {
-        }
-    }
 
-    private sealed class CacheEntry
-    {
-        public long Length { get; init; }
-        public DateTime LastWriteTimeUtc { get; init; }
-        public required TrayMetadataResult Value { get; init; }
+        private void Advance(int count)
+        {
+            if (_position + count > _data.Length)
+            {
+                throw new InvalidDataException("Malformed protobuf field length.");
+            }
+
+            _position += count;
+        }
     }
 }

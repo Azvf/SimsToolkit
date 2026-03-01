@@ -5,6 +5,8 @@ namespace SimsModDesktop.Services;
 
 public sealed class TrayMetadataIndexStore
 {
+    private const string CacheFormatVersion = "metadata-v3";
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -144,7 +146,8 @@ public sealed class TrayMetadataIndexStore
         {
             using var stream = File.OpenRead(_manifestPath);
             var payload = JsonSerializer.Deserialize<TrayMetadataIndexPayload>(stream, JsonOptions);
-            if (payload?.Entries is null)
+            if (payload?.Entries is null ||
+                !string.Equals(payload.FormatVersion, CacheFormatVersion, StringComparison.Ordinal))
             {
                 return;
             }
@@ -176,6 +179,7 @@ public sealed class TrayMetadataIndexStore
 
         var payload = new TrayMetadataIndexPayload
         {
+            FormatVersion = CacheFormatVersion,
             Entries = _entries.Values
                 .OrderBy(entry => entry.TrayItemPath, StringComparer.OrdinalIgnoreCase)
                 .ToList()
@@ -202,11 +206,33 @@ public sealed class TrayMetadataIndexStore
         return new TrayMetadataResult
         {
             TrayItemPath = trayItemPath,
+            TrayMetadataId = metadata.TrayMetadataId,
             ItemType = metadata.ItemType,
             Name = metadata.Name,
             Description = metadata.Description,
+            DescriptionHashtags = metadata.DescriptionHashtags,
             CreatorName = metadata.CreatorName,
             CreatorId = metadata.CreatorId,
+            ModifierName = metadata.ModifierName,
+            ModifierId = metadata.ModifierId,
+            Favorites = metadata.Favorites,
+            Downloads = metadata.Downloads,
+            ItemTimestamp = metadata.ItemTimestamp,
+            MtxIds = metadata.MtxIds.ToArray(),
+            MetaInfo = metadata.MetaInfo.ToArray(),
+            VerifyCode = metadata.VerifyCode,
+            CustomImageCount = metadata.CustomImageCount,
+            MannequinCount = metadata.MannequinCount,
+            IndexedCounter = metadata.IndexedCounter,
+            CreatorPlatform = metadata.CreatorPlatform,
+            ModifierPlatform = metadata.ModifierPlatform,
+            CreatorPlatformId = metadata.CreatorPlatformId,
+            CreatorPlatformName = metadata.CreatorPlatformName,
+            ModifierPlatformId = metadata.ModifierPlatformId,
+            ModifierPlatformName = metadata.ModifierPlatformName,
+            ImageUriType = metadata.ImageUriType,
+            SharedTimestamp = metadata.SharedTimestamp,
+            Liked = metadata.Liked,
             FamilySize = metadata.FamilySize,
             PendingBabies = metadata.PendingBabies,
             SizeX = metadata.SizeX,
@@ -216,13 +242,63 @@ public sealed class TrayMetadataIndexStore
             NumBathrooms = metadata.NumBathrooms,
             Height = metadata.Height,
             IsModdedContent = metadata.IsModdedContent,
+            IsHidden = metadata.IsHidden,
+            IsDownloadTemp = metadata.IsDownloadTemp,
+            LanguageId = metadata.LanguageId,
+            SkuId = metadata.SkuId,
+            IsMaxisContent = metadata.IsMaxisContent,
+            PayloadSize = metadata.PayloadSize,
+            WasReported = metadata.WasReported,
+            WasReviewedAndCleared = metadata.WasReviewedAndCleared,
+            IsImageModdedContent = metadata.IsImageModdedContent,
+            SpecificCreatorPlatform = metadata.SpecificCreatorPlatform,
+            SpecificModifierPlatform = metadata.SpecificModifierPlatform,
+            SpecificCreatorPlatformPersonaId = metadata.SpecificCreatorPlatformPersonaId,
+            SpecificModifierPlatformPersonaId = metadata.SpecificModifierPlatformPersonaId,
+            IsCgItem = metadata.IsCgItem,
+            IsCgInterested = metadata.IsCgInterested,
+            CgName = metadata.CgName,
+            Sku2Id = metadata.Sku2Id,
+            CdsPatchBaseChangelists = metadata.CdsPatchBaseChangelists.ToArray(),
+            CdsContentPatchMounted = metadata.CdsContentPatchMounted,
+            SpecificDataVersion = metadata.SpecificDataVersion,
+            VenueType = metadata.VenueType,
+            PriceLevel = metadata.PriceLevel,
+            ArchitectureValue = metadata.ArchitectureValue,
+            NumThumbnails = metadata.NumThumbnails,
+            FrontSide = metadata.FrontSide,
+            VenueTypeStringKey = metadata.VenueTypeStringKey,
+            GroundFloorIndex = metadata.GroundFloorIndex,
+            OptionalRuleSatisfiedStringKeys = metadata.OptionalRuleSatisfiedStringKeys.ToArray(),
+            LotTraits = metadata.LotTraits.ToArray(),
+            BuildingType = metadata.BuildingType,
+            LotTemplateId = metadata.LotTemplateId,
+            HasUniversityHousingConfiguration = metadata.HasUniversityHousingConfiguration,
+            TileCount = metadata.TileCount,
+            UnitCount = metadata.UnitCount,
+            UnitTraitCount = metadata.UnitTraitCount,
+            DynamicAreas = metadata.DynamicAreas.ToArray(),
+            RoomType = metadata.RoomType,
+            RoomTypeStringKey = metadata.RoomTypeStringKey,
+            PartBodyType = metadata.PartBodyType,
             Members = metadata.Members
                 .Select(member => new TrayMemberDisplayMetadata
                 {
                     SlotIndex = member.SlotIndex,
                     FullName = member.FullName,
                     Subtitle = member.Subtitle,
-                    Detail = member.Detail
+                    Detail = member.Detail,
+                    SimId = member.SimId,
+                    Gender = member.Gender,
+                    AspirationId = member.AspirationId,
+                    Age = member.Age,
+                    Species = member.Species,
+                    IsCustomGender = member.IsCustomGender,
+                    OccultTypes = member.OccultTypes,
+                    BreedNameKey = member.BreedNameKey,
+                    FameRankedStatId = member.FameRankedStatId,
+                    FameValue = member.FameValue,
+                    DeathTrait = member.DeathTrait
                 })
                 .ToList()
         };
@@ -230,6 +306,8 @@ public sealed class TrayMetadataIndexStore
 
     private sealed class TrayMetadataIndexPayload
     {
+        public string FormatVersion { get; init; } = string.Empty;
+
         public List<StoredMetadataEntry> Entries { get; init; } = new();
     }
 

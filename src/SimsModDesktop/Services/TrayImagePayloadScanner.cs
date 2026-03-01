@@ -4,150 +4,239 @@ namespace SimsModDesktop.Services;
 
 internal static class TrayImagePayloadScanner
 {
+    private const int EncodedContainerHeaderSize = 24;
+    private const int MaxEncodedPayloadBytes = 32 * 1024 * 1024;
+    private const int EmbeddedAlphaHeaderBytes = 8;
+
     private static ReadOnlySpan<byte> PngSignature => [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
-    private static ReadOnlySpan<byte> PngEndMarker => [0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82];
     private static ReadOnlySpan<byte> DdsSignature => [0x44, 0x44, 0x53, 0x20];
+    private static ReadOnlySpan<byte> XorKey => [0x41, 0x25, 0xE6, 0xCD, 0x47, 0xBA, 0xB2, 0x1A];
+    private static ReadOnlySpan<byte> AlfaTag => [0x41, 0x4C, 0x46, 0x41];
+    private static ReadOnlySpan<byte> AlfjTag => [0x41, 0x4C, 0x46, 0x4A];
 
     public static ExtractedTrayImage? TryExtractBestImage(ReadOnlySpan<byte> data)
     {
-        var structured = ExtractStructuredCandidates(data);
-        var bestStructured = SelectBest(structured);
-        if (bestStructured is not null)
+        if (TryExtractDirectImage(data, out var image))
         {
-            return bestStructured;
+            return image;
         }
 
-        return SelectBest(ExtractRawCandidates(data));
+        if (TryExtractEncodedContainerImage(data, out image))
+        {
+            return image;
+        }
+
+        return null;
     }
 
-    private static List<ExtractedTrayImage> ExtractStructuredCandidates(ReadOnlySpan<byte> data)
-    {
-        var candidates = new List<ExtractedTrayImage>();
-        if (data.Length < 16)
-        {
-            return candidates;
-        }
-
-        for (var i = 0; i <= data.Length - 12; i++)
-        {
-            var candidateLength = BinaryPrimitives.ReadInt32LittleEndian(data.Slice(i, 4));
-            if (candidateLength < 16 || candidateLength > data.Length - i - 4)
-            {
-                continue;
-            }
-
-            if (TryCreateCandidate(data.Slice(i + 4, candidateLength), 0, candidateLength, out var image, out _))
-            {
-                candidates.Add(image!);
-                i += candidateLength + 3;
-            }
-        }
-
-        return candidates;
-    }
-
-    private static List<ExtractedTrayImage> ExtractRawCandidates(ReadOnlySpan<byte> data)
-    {
-        var candidates = new List<ExtractedTrayImage>();
-        if (data.Length < 4)
-        {
-            return candidates;
-        }
-
-        for (var i = 0; i < data.Length - 2; i++)
-        {
-            if (!TryCreateCandidate(data, i, data.Length - i, out var image, out var consumed))
-            {
-                continue;
-            }
-
-            candidates.Add(image!);
-            i += Math.Max(consumed - 1, 0);
-        }
-
-        return candidates;
-    }
-
-    private static ExtractedTrayImage? SelectBest(IEnumerable<ExtractedTrayImage> candidates)
-    {
-        ExtractedTrayImage? best = null;
-
-        foreach (var candidate in candidates)
-        {
-            if (best is null || Compare(candidate, best) < 0)
-            {
-                best = candidate;
-            }
-        }
-
-        return best;
-    }
-
-    private static int Compare(ExtractedTrayImage left, ExtractedTrayImage right)
-    {
-        var leftAspect = Math.Abs(left.Width - left.Height) / (double)Math.Max(Math.Max(left.Width, left.Height), 1);
-        var rightAspect = Math.Abs(right.Width - right.Height) / (double)Math.Max(Math.Max(right.Width, right.Height), 1);
-        var aspectCompare = leftAspect.CompareTo(rightAspect);
-        if (aspectCompare != 0)
-        {
-            return aspectCompare;
-        }
-
-        var areaCompare = right.PixelArea.CompareTo(left.PixelArea);
-        if (areaCompare != 0)
-        {
-            return areaCompare;
-        }
-
-        return 0;
-    }
-
-    private static bool TryCreateCandidate(
-        ReadOnlySpan<byte> data,
-        int start,
-        int maxLength,
-        out ExtractedTrayImage? image,
-        out int consumedLength)
+    private static bool TryExtractDirectImage(ReadOnlySpan<byte> data, out ExtractedTrayImage? image)
     {
         image = null;
-        consumedLength = 0;
 
-        if (start < 0 || maxLength < 4 || start + 4 > data.Length)
+        if (!HasDirectImageSignature(data))
         {
             return false;
         }
 
-        if (HasSignature(data, start, PngSignature))
-        {
-            if (!TryFindPngLength(data, start, maxLength, out consumedLength))
-            {
-                return false;
-            }
+        return TryFinalizeCandidate(data, out image);
+    }
 
-            return TryFinalizeCandidate(data.Slice(start, consumedLength), out image);
+    private static bool TryExtractEncodedContainerImage(ReadOnlySpan<byte> data, out ExtractedTrayImage? image)
+    {
+        image = null;
+
+        if (data.Length < EncodedContainerHeaderSize)
+        {
+            return false;
         }
 
-        if (IsJpegStart(data, start))
+        var encodedPayloadLengthValue = BinaryPrimitives.ReadUInt32LittleEndian(data[..4]);
+        if (encodedPayloadLengthValue == 0 || encodedPayloadLengthValue > int.MaxValue)
         {
-            if (!TryFindJpegLength(data, start, maxLength, out consumedLength))
-            {
-                return false;
-            }
-
-            return TryFinalizeCandidate(data.Slice(start, consumedLength), out image);
+            return false;
         }
 
-        if (HasSignature(data, start, DdsSignature))
+        var encodedPayloadLength = (int)encodedPayloadLengthValue;
+        if (encodedPayloadLength > MaxEncodedPayloadBytes ||
+            EncodedContainerHeaderSize + encodedPayloadLength > data.Length)
         {
-            if (!TryFindDdsLength(data, start, maxLength, out consumedLength))
+            return false;
+        }
+
+        var decoded = DecodePayload(data.Slice(EncodedContainerHeaderSize, encodedPayloadLength));
+        if (!IsJpegStart(decoded))
+        {
+            return false;
+        }
+
+        if (TryExtractEmbeddedAlphaImage(decoded, out image))
+        {
+            return true;
+        }
+
+        return TryFinalizeCandidate(decoded, out image);
+    }
+
+    private static byte[] DecodePayload(ReadOnlySpan<byte> encoded)
+    {
+        var decoded = new byte[encoded.Length];
+        var key = XorKey;
+
+        for (var i = 0; i < encoded.Length; i++)
+        {
+            decoded[i] = (byte)(encoded[i] ^ key[i % key.Length]);
+        }
+
+        return decoded;
+    }
+
+    private static bool TryExtractEmbeddedAlphaImage(ReadOnlySpan<byte> jpegWithAlpha, out ExtractedTrayImage? image)
+    {
+        image = null;
+
+        if (!TryExtractNormalizedJpegAndAlphaMask(jpegWithAlpha, out var normalizedJpeg, out var alphaMaskBytes))
+        {
+            return false;
+        }
+
+        if (alphaMaskBytes is not null &&
+            TrayImageCodec.TryApplyAlphaMask(
+                normalizedJpeg,
+                alphaMaskBytes,
+                out var pngBytes,
+                out var width,
+                out var height))
+        {
+            image = new ExtractedTrayImage
+            {
+                Data = pngBytes,
+                Width = width,
+                Height = height
+            };
+            return true;
+        }
+
+        return TryFinalizeCandidate(normalizedJpeg, out image);
+    }
+
+    private static bool TryExtractNormalizedJpegAndAlphaMask(
+        ReadOnlySpan<byte> jpegWithAlpha,
+        out byte[] normalizedJpeg,
+        out byte[]? alphaMaskBytes)
+    {
+        normalizedJpeg = Array.Empty<byte>();
+        alphaMaskBytes = null;
+
+        if (!IsJpegStart(jpegWithAlpha) || jpegWithAlpha.Length < 4)
+        {
+            return false;
+        }
+
+        var normalized = new List<byte>(jpegWithAlpha.Length)
+        {
+            jpegWithAlpha[0],
+            jpegWithAlpha[1]
+        };
+
+        var foundEmbeddedAlpha = false;
+        var position = 2;
+
+        while (position < jpegWithAlpha.Length)
+        {
+            if (jpegWithAlpha[position] != 0xFF)
             {
                 return false;
             }
 
-            return TryFinalizeCandidate(data.Slice(start, consumedLength), out image);
+            var markerStart = position;
+            while (position < jpegWithAlpha.Length && jpegWithAlpha[position] == 0xFF)
+            {
+                position++;
+            }
+
+            if (position >= jpegWithAlpha.Length)
+            {
+                return false;
+            }
+
+            var marker = jpegWithAlpha[position++];
+            if (marker == 0xD9)
+            {
+                normalized.AddRange(jpegWithAlpha.Slice(markerStart, position - markerStart).ToArray());
+                normalizedJpeg = normalized.ToArray();
+                return foundEmbeddedAlpha;
+            }
+
+            if (IsStandaloneMarker(marker))
+            {
+                normalized.AddRange(jpegWithAlpha.Slice(markerStart, position - markerStart).ToArray());
+                continue;
+            }
+
+            if (position + 2 > jpegWithAlpha.Length)
+            {
+                return false;
+            }
+
+            var segmentLength = BinaryPrimitives.ReadUInt16BigEndian(jpegWithAlpha.Slice(position, 2));
+            if (segmentLength < 2 || position + segmentLength > jpegWithAlpha.Length)
+            {
+                return false;
+            }
+
+            if (marker == 0xDA)
+            {
+                normalized.AddRange(jpegWithAlpha[markerStart..].ToArray());
+                normalizedJpeg = normalized.ToArray();
+                return foundEmbeddedAlpha;
+            }
+
+            var payload = jpegWithAlpha.Slice(position + 2, segmentLength - 2);
+            var isEmbeddedAlpha = marker == 0xE0 &&
+                                  (payload.StartsWith(AlfaTag) || payload.StartsWith(AlfjTag));
+
+            if (isEmbeddedAlpha)
+            {
+                if (foundEmbeddedAlpha)
+                {
+                    return false;
+                }
+
+                foundEmbeddedAlpha = true;
+                alphaMaskBytes = TryReadEmbeddedAlphaMask(payload);
+            }
+            else
+            {
+                normalized.AddRange(
+                    jpegWithAlpha.Slice(markerStart, (position - markerStart) + segmentLength).ToArray());
+            }
+
+            position += segmentLength;
         }
 
         return false;
+    }
+
+    private static byte[]? TryReadEmbeddedAlphaMask(ReadOnlySpan<byte> payload)
+    {
+        if (payload.Length <= EmbeddedAlphaHeaderBytes)
+        {
+            return null;
+        }
+
+        var alphaLengthValue = BinaryPrimitives.ReadUInt32BigEndian(payload.Slice(4, 4));
+        if (alphaLengthValue == 0 || alphaLengthValue > int.MaxValue)
+        {
+            return null;
+        }
+
+        var alphaLength = (int)alphaLengthValue;
+        if (alphaLength > MaxEncodedPayloadBytes || payload.Length != EmbeddedAlphaHeaderBytes + alphaLength)
+        {
+            return null;
+        }
+
+        return payload.Slice(EmbeddedAlphaHeaderBytes, alphaLength).ToArray();
     }
 
     private static bool TryFinalizeCandidate(ReadOnlySpan<byte> payload, out ExtractedTrayImage? image)
@@ -168,84 +257,23 @@ internal static class TrayImagePayloadScanner
         return true;
     }
 
-    private static bool TryFindPngLength(ReadOnlySpan<byte> data, int start, int maxLength, out int length)
+    private static bool HasDirectImageSignature(ReadOnlySpan<byte> data)
     {
-        length = 0;
-        var maxEnd = Math.Min(data.Length, start + maxLength);
-        var marker = PngEndMarker;
-
-        for (var i = start + PngSignature.Length; i <= maxEnd - marker.Length; i++)
-        {
-            if (!HasSignature(data, i, marker))
-            {
-                continue;
-            }
-
-            length = (i - start) + marker.Length;
-            return true;
-        }
-
-        return false;
+        return data.StartsWith(PngSignature) ||
+               data.StartsWith(DdsSignature) ||
+               IsJpegStart(data);
     }
 
-    private static bool TryFindJpegLength(ReadOnlySpan<byte> data, int start, int maxLength, out int length)
+    private static bool IsJpegStart(ReadOnlySpan<byte> data)
     {
-        length = 0;
-        var maxEnd = Math.Min(data.Length, start + maxLength);
-
-        for (var i = start + 2; i < maxEnd - 1; i++)
-        {
-            if (data[i] != 0xFF || data[i + 1] != 0xD9)
-            {
-                continue;
-            }
-
-            length = (i - start) + 2;
-            return true;
-        }
-
-        return false;
+        return data.Length >= 4 &&
+               data[0] == 0xFF &&
+               data[1] == 0xD8 &&
+               data[2] == 0xFF;
     }
 
-    private static bool TryFindDdsLength(ReadOnlySpan<byte> data, int start, int maxLength, out int length)
+    private static bool IsStandaloneMarker(byte marker)
     {
-        length = 0;
-        var maxEnd = Math.Min(data.Length, start + maxLength);
-
-        if (maxEnd - start < 128)
-        {
-            return false;
-        }
-
-        for (var i = start + 128; i < maxEnd - 4; i++)
-        {
-            if (!HasSignature(data, i, PngSignature) &&
-                !IsJpegStart(data, i) &&
-                !HasSignature(data, i, DdsSignature))
-            {
-                continue;
-            }
-
-            length = i - start;
-            return length > 128;
-        }
-
-        length = maxEnd - start;
-        return length > 128;
-    }
-
-    private static bool IsJpegStart(ReadOnlySpan<byte> data, int index)
-    {
-        return index + 2 < data.Length &&
-               data[index] == 0xFF &&
-               data[index + 1] == 0xD8 &&
-               data[index + 2] == 0xFF;
-    }
-
-    private static bool HasSignature(ReadOnlySpan<byte> data, int index, ReadOnlySpan<byte> signature)
-    {
-        return index >= 0 &&
-               index + signature.Length <= data.Length &&
-               data.Slice(index, signature.Length).SequenceEqual(signature);
+        return marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7);
     }
 }

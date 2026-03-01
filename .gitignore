@@ -37,3 +37,11 @@ Thumbs.db
 # Local temporary build outputs
 build_tmp/
 **/build_tmp/
+
+# Local desktop verification / export folders
+src/SimsModDesktop/obj-test-output/
+src/SimsModDesktop/obj-verify/
+src/SimsModDesktop/test-out/
+
+# Local reverse-engineering / scratch space
+src/temp-inspect/

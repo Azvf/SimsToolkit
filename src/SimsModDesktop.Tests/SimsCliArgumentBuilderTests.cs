@@ -75,8 +75,7 @@ public sealed class SimsCliArgumentBuilderTests
             new FlattenCliArgumentMapper(),
             new NormalizeCliArgumentMapper(),
             new MergeCliArgumentMapper(),
-            new FindDupCliArgumentMapper(),
-            new TrayDependenciesCliArgumentMapper()
+            new FindDupCliArgumentMapper()
         });
     }
 }

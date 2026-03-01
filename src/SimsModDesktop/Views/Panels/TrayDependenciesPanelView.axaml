@@ -23,26 +23,24 @@
                     <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="Tray Item Key" />
                     <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding TrayDependencies.TrayItemKey}" />
 
-                    <TextBlock Grid.Row="0" Grid.Column="2" VerticalAlignment="Center" Text="S4TI Path" />
-                    <TextBox Grid.Row="0" Grid.Column="3" Classes="path-field" Text="{Binding TrayDependencies.S4tiPath}" />
+                    <TextBlock Grid.Row="0" Grid.Column="2" VerticalAlignment="Center" Text="TopN" />
+                    <TextBox Grid.Row="0" Grid.Column="3" Text="{Binding TrayDependencies.TopNText}" />
 
                     <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="Minimum Match Count" />
                     <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding TrayDependencies.MinMatchCountText}" />
 
-                    <TextBlock Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" Text="TopN" />
-                    <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding TrayDependencies.TopNText}" />
+                    <TextBlock Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" Text="Max Package Count" />
+                    <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding TrayDependencies.MaxPackageCountText}" />
 
-                    <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="Max Package Count" />
-                    <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding TrayDependencies.MaxPackageCountText}" />
-
-                    <TextBlock Grid.Row="2" Grid.Column="2" VerticalAlignment="Center" Text="Export Confidence" />
+                    <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="Export Confidence" />
                     <ComboBox Grid.Row="2"
-                              Grid.Column="3"
+                              Grid.Column="1"
                               ItemsSource="{Binding TrayDependencies.AvailableExportMinConfidence}"
                               SelectedItem="{Binding TrayDependencies.ExportMinConfidence}" />
 
+                    <CheckBox Grid.Row="2" Grid.Column="3" Content="Export matched packages" IsChecked="{Binding TrayDependencies.ExportMatchedPackages}" />
+
                     <CheckBox Grid.Row="3" Grid.Column="1" Content="Export unused packages" IsChecked="{Binding TrayDependencies.ExportUnusedPackages}" />
-                    <CheckBox Grid.Row="3" Grid.Column="3" Content="Export matched packages" IsChecked="{Binding TrayDependencies.ExportMatchedPackages}" />
 
                     <TextBlock Grid.Row="4" VerticalAlignment="Center" Text="Output CSV" />
                     <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding TrayDependencies.OutputCsv}" />

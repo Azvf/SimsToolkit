@@ -13,12 +13,14 @@ public sealed class AppSettings
     public MergeSettings Merge { get; set; } = new();
     public FindDupSettings FindDup { get; set; } = new();
     public TrayDependenciesSettings TrayDependencies { get; set; } = new();
+    public ModPreviewSettings ModPreview { get; set; } = new();
     public TrayPreviewSettings TrayPreview { get; set; } = new();
     public SharedFileOpsSettings SharedFileOps { get; set; } = new();
     public UiStateSettings UiState { get; set; } = new();
     public NavigationSettings Navigation { get; set; } = new();
     public FeatureFlagsSettings FeatureFlags { get; set; } = new();
     public GameLaunchSettings GameLaunch { get; set; } = new();
+    public SavesSettings Saves { get; set; } = new();
     public ThemeSettings Theme { get; set; } = new();
 
     public sealed class OrganizeSettings
@@ -59,7 +61,6 @@ public sealed class AppSettings
     public sealed class TrayDependenciesSettings
     {
         public string TrayItemKey { get; set; } = string.Empty;
-        public string S4tiPath { get; set; } = string.Empty;
         public string MinMatchCountText { get; set; } = "1";
         public string TopNText { get; set; } = "200";
         public string MaxPackageCountText { get; set; } = "0";
@@ -69,6 +70,16 @@ public sealed class AppSettings
         public string UnusedOutputCsv { get; set; } = string.Empty;
         public string ExportTargetPath { get; set; } = string.Empty;
         public string ExportMinConfidence { get; set; } = "Low";
+    }
+
+    public sealed class ModPreviewSettings
+    {
+        public string ModsRoot { get; set; } = string.Empty;
+        public string PackageTypeFilter { get; set; } = "All";
+        public string ScopeFilter { get; set; } = "All";
+        public string SortBy { get; set; } = "Last Updated";
+        public string SearchQuery { get; set; } = string.Empty;
+        public bool ShowOverridesOnly { get; set; }
     }
 
     public sealed class TrayPreviewSettings
@@ -102,8 +113,7 @@ public sealed class AppSettings
 
     public sealed class NavigationSettings
     {
-        public AppSection SelectedSection { get; set; } = AppSection.Mods;
-        public string SelectedModuleKey { get; set; } = "organize";
+        public AppSection SelectedSection { get; set; } = AppSection.Toolkit;
     }
 
     public sealed class FeatureFlagsSettings
@@ -118,6 +128,12 @@ public sealed class AppSettings
         public string ModsPath { get; set; } = string.Empty;
         public string TrayPath { get; set; } = string.Empty;
         public string SavesPath { get; set; } = string.Empty;
+    }
+
+    public sealed class SavesSettings
+    {
+        public string LastExportRoot { get; set; } = string.Empty;
+        public bool GenerateThumbnails { get; set; } = true;
     }
 
     public sealed class ThemeSettings

@@ -1,18 +1,18 @@
 using SimsModDesktop.Services;
+using SimsModDesktop.Models;
 
 namespace SimsModDesktop.Tests;
 
 public sealed class TrayEmbeddedImageExtractorTests
 {
     [Fact]
-    public void TryExtractBestImage_FindsPngEmbeddedInNoise()
+    public void TryExtractBestImage_DecodesExactEncodedTrayImageFile()
     {
         using var tempFile = new TempBinaryFile(".bpi");
-        var payload = new byte[] { 0x10, 0x20, 0x30, 0x40 }
-            .Concat(ImageTestHelpers.CreatePngBytes(2, 2))
-            .Concat(new byte[] { 0x50, 0x60, 0x70 })
-            .ToArray();
-        File.WriteAllBytes(tempFile.Path, payload);
+        File.WriteAllBytes(
+            tempFile.Path,
+            ImageTestHelpers.CreateEncodedTrayImageBytes(
+                ImageTestHelpers.CreateJpegBytes(2, 2)));
 
         var extractor = new TrayEmbeddedImageExtractor();
         var image = extractor.TryExtractBestImage(tempFile.Path);
@@ -33,6 +33,31 @@ public sealed class TrayEmbeddedImageExtractorTests
         var image = extractor.TryExtractBestImage(tempFile.Path);
 
         Assert.Null(image);
+    }
+
+    [Fact]
+    public void TryExtractBestImage_ItemScansSourceFilesWithoutS4ti()
+    {
+        using var tempTrayItem = new TempBinaryFile(".trayitem");
+        using var tempSgi = new TempBinaryFile(".sgi");
+        File.WriteAllBytes(tempTrayItem.Path, new byte[] { 0x01, 0x02, 0x03, 0x04 });
+        File.WriteAllBytes(
+            tempSgi.Path,
+            ImageTestHelpers.CreateEncodedTrayImageBytes(
+                ImageTestHelpers.CreateJpegBytes(3, 2)));
+
+        var extractor = new TrayEmbeddedImageExtractor();
+        var image = extractor.TryExtractBestImage(new SimsTrayPreviewItem
+        {
+            TrayItemKey = "0x1",
+            PresetType = "Household",
+            TrayRootPath = Path.GetDirectoryName(tempTrayItem.Path) ?? string.Empty,
+            SourceFilePaths = [tempTrayItem.Path, tempSgi.Path]
+        });
+
+        Assert.NotNull(image);
+        Assert.Equal(3, image!.Width);
+        Assert.Equal(2, image.Height);
     }
 
     private sealed class TempBinaryFile : IDisposable

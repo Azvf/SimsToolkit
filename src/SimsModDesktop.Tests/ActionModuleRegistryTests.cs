@@ -258,7 +258,6 @@ public sealed class ActionModuleRegistryTests
         public string TrayPath { get; set; } = string.Empty;
         public string ModsPath { get; set; } = string.Empty;
         public string TrayItemKey { get; set; } = string.Empty;
-        public string S4tiPath { get; set; } = string.Empty;
         public string MinMatchCountText { get; set; } = "1";
         public string TopNText { get; set; } = "200";
         public string MaxPackageCountText { get; set; } = "0";

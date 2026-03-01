@@ -1,0 +1,131 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:SimsModDesktop.ViewModels.Saves"
+             xmlns:savedata="clr-namespace:SimsModDesktop.SaveData.Models;assembly=SimsModDesktop.SaveData"
+             mc:Ignorable="d"
+             x:Class="SimsModDesktop.Views.Saves.SavesView"
+             x:DataType="vm:SaveHouseholdsViewModel">
+    <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="12" MinHeight="0">
+        <StackPanel Spacing="6">
+            <TextBlock Classes="section-title" Text="Save Household Export" />
+            <TextBlock Classes="helper-text"
+                       TextWrapping="Wrap"
+                       Text="Read a TS4 .save slot, inspect households, and export a staged Tray bundle into a separate folder." />
+        </StackPanel>
+
+        <Border Grid.Row="1" Classes="settings-section" Padding="12">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="8">
+                <TextBlock VerticalAlignment="Center" Text="Saves Path" />
+                <Border Grid.Column="1" Grid.ColumnSpan="3" Classes="settings-readonly-field">
+                    <TextBlock Classes="settings-readonly-value" Text="{Binding SavesPath}" />
+                </Border>
+
+                <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="Export Root" />
+                <TextBox Grid.Row="1"
+                         Grid.Column="1"
+                         Classes="path-field"
+                         Text="{Binding ExportRootPath}" />
+                <Button Grid.Row="1"
+                        Grid.Column="2"
+                        Classes="secondary"
+                        Content="Browse"
+                        Command="{Binding BrowseExportRootCommand}" />
+                <CheckBox Grid.Row="1"
+                          Grid.Column="3"
+                          VerticalAlignment="Center"
+                          Content="Generate Thumbnails"
+                          IsChecked="{Binding GenerateThumbnails}" />
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="2" ColumnDefinitions="1.15*,1.35*,1*" ColumnSpacing="12" MinHeight="0">
+            <Border Classes="settings-section" Padding="12">
+                <Grid RowDefinitions="Auto,*" RowSpacing="8" MinHeight="0">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Classes="secondary"
+                                Content="Refresh Saves"
+                                Command="{Binding RefreshSavesCommand}" />
+                        <Button Classes="secondary"
+                                Content="Load Households"
+                                Command="{Binding LoadHouseholdsCommand}" />
+                    </StackPanel>
+                    <ListBox Grid.Row="1"
+                             MinHeight="0"
+                             ItemsSource="{Binding SaveFiles}"
+                             SelectedItem="{Binding SelectedSave}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="savedata:SaveFileEntry">
+                                <TextBlock Text="{Binding DisplayLabel}" TextWrapping="Wrap" />
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="1" Classes="settings-section" Padding="12">
+                <Grid RowDefinitions="*,Auto" RowSpacing="8" MinHeight="0">
+                    <ListBox MinHeight="0"
+                             ItemsSource="{Binding Households}"
+                             SelectedItem="{Binding SelectedHousehold}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="savedata:SaveHouseholdItem">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="{Binding DisplayLabel}" />
+                                    <TextBlock Classes="helper-text" Text="{Binding LocationLabel}" />
+                                    <TextBlock Classes="helper-text"
+                                               IsVisible="{Binding HasExportBlockReason}"
+                                               Text="{Binding ExportBlockReason}"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <Button Grid.Row="1"
+                            Classes="primary"
+                            Content="Export Household to Tray Bundle"
+                            Command="{Binding ExportCommand}" />
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="2" Classes="settings-section" Padding="12">
+                <Grid RowDefinitions="Auto,Auto,*" RowSpacing="8" MinHeight="0">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="{Binding SelectedHouseholdTitle}" />
+                        <TextBlock Classes="helper-text" Text="{Binding SelectedHouseholdLocation}" />
+                        <TextBlock Classes="helper-text"
+                                   Text="{Binding SelectedHouseholdBlockReason}"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <TextBlock Grid.Row="1" Classes="helper-text" Text="Members" />
+
+                    <ListBox Grid.Row="2"
+                             MinHeight="0"
+                             ItemsSource="{Binding SelectedHouseholdMembers}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="savedata:SaveMemberItem">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="{Binding FullName}" />
+                                    <TextBlock Classes="helper-text" Text="{Binding Subtitle}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="3" Classes="settings-section" Padding="12">
+            <StackPanel Spacing="6">
+                <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" />
+                <TextBox Text="{Binding ExportLogText}"
+                         IsReadOnly="True"
+                         AcceptsReturn="True"
+                         TextWrapping="Wrap"
+                         MinHeight="120" />
+            </StackPanel>
+        </Border>
+    </Grid>
+</UserControl>

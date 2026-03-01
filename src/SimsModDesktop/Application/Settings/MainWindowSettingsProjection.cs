@@ -17,6 +17,7 @@ public sealed class MainWindowSettingsProjection : IMainWindowSettingsProjection
             SelectedWorkspace = snapshot.Workspace,
             SelectedAction = snapshot.SelectedAction,
             WhatIf = snapshot.WhatIf,
+            ModPreview = CloneModPreview(snapshot.ModPreview),
             SharedFileOps = CloneShared(snapshot.SharedFileOps),
             UiState = CloneUiState(snapshot.UiState),
             Navigation = CloneNavigation(snapshot.Navigation),
@@ -55,6 +56,7 @@ public sealed class MainWindowSettingsProjection : IMainWindowSettingsProjection
             UiLanguageCode = string.IsNullOrWhiteSpace(settings.UiLanguageCode) ? "en-US" : settings.UiLanguageCode.Trim(),
             ScriptPath = settings.ScriptPath,
             WhatIf = settings.WhatIf,
+            ModPreview = CloneModPreview(settings.ModPreview),
             SharedFileOps = CloneShared(settings.SharedFileOps),
             UiState = CloneUiState(settings.UiState),
             Navigation = CloneNavigation(settings.Navigation),
@@ -93,6 +95,20 @@ public sealed class MainWindowSettingsProjection : IMainWindowSettingsProjection
         };
     }
 
+    private static AppSettings.ModPreviewSettings CloneModPreview(AppSettings.ModPreviewSettings? value)
+    {
+        var source = value ?? new AppSettings.ModPreviewSettings();
+        return new AppSettings.ModPreviewSettings
+        {
+            ModsRoot = source.ModsRoot,
+            PackageTypeFilter = source.PackageTypeFilter,
+            ScopeFilter = source.ScopeFilter,
+            SortBy = source.SortBy,
+            SearchQuery = source.SearchQuery,
+            ShowOverridesOnly = source.ShowOverridesOnly
+        };
+    }
+
     private static AppSettings.UiStateSettings CloneUiState(AppSettings.UiStateSettings? value)
     {
         var source = value ?? new AppSettings.UiStateSettings();
@@ -109,8 +125,7 @@ public sealed class MainWindowSettingsProjection : IMainWindowSettingsProjection
         var source = value ?? new AppSettings.NavigationSettings();
         return new AppSettings.NavigationSettings
         {
-            SelectedSection = source.SelectedSection,
-            SelectedModuleKey = source.SelectedModuleKey
+            SelectedSection = source.SelectedSection
         };
     }
 

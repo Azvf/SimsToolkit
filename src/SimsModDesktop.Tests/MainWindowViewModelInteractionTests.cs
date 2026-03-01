@@ -10,6 +10,7 @@ using SimsModDesktop.Infrastructure.Localization;
 using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Models;
 using SimsModDesktop.Services;
+using SimsModDesktop.TrayDependencyEngine;
 using SimsModDesktop.ViewModels;
 using SimsModDesktop.ViewModels.Panels;
 
@@ -99,6 +100,37 @@ public sealed class MainWindowViewModelInteractionTests
     }
 
     [Fact]
+    public async Task RunToolkitAsync_TrayDependencies_UsesInternalAnalysisWithoutScriptPath()
+    {
+        var analysisService = new FakeTrayDependencyAnalysisService();
+        var vm = CreateViewModel(
+            new FakeExecutionCoordinator(),
+            new FakeConfirmationDialogService(),
+            trayDependencyAnalysisService: analysisService);
+        await vm.InitializeAsync();
+
+        using var trayRoot = new TempDirectory();
+        using var modsRoot = new TempDirectory();
+        vm.SelectedAction = SimsAction.TrayDependencies;
+        vm.ScriptPath = string.Empty;
+        vm.TrayDependencies.TrayPath = trayRoot.Path;
+        vm.TrayDependencies.ModsPath = modsRoot.Path;
+        vm.TrayDependencies.TrayItemKey = "0x123";
+
+        InvokePrivateVoid(vm, "RefreshValidationNow");
+        Assert.False(vm.HasValidationErrors);
+
+        await InvokePrivateAsync(vm, "RunToolkitAsync");
+
+        Assert.Equal(1, analysisService.AnalyzeCount);
+        Assert.NotNull(analysisService.LastRequest);
+        Assert.Equal(trayRoot.Path, analysisService.LastRequest!.TrayPath);
+        Assert.Equal(modsRoot.Path, analysisService.LastRequest.ModsRootPath);
+        Assert.Equal("0x123", analysisService.LastRequest.TrayItemKey);
+        Assert.Contains("[action] traydependencies", vm.LogText, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task PersistSettings_RoundTripsUiState()
     {
         var settingsStore = new FakeSettingsStore(new AppSettings());
@@ -133,8 +165,7 @@ public sealed class MainWindowViewModelInteractionTests
         {
             Navigation = new AppSettings.NavigationSettings
             {
-                SelectedSection = AppSection.Settings,
-                SelectedModuleKey = "traypreview"
+                SelectedSection = AppSection.Settings
             },
             Theme = new AppSettings.ThemeSettings
             {
@@ -154,7 +185,6 @@ public sealed class MainWindowViewModelInteractionTests
         Assert.NotNull(settingsStore.LastSaved);
         Assert.Equal("Grid", settingsStore.LastSaved!.TrayPreview.LayoutMode);
         Assert.Equal(AppSection.Settings, settingsStore.LastSaved.Navigation.SelectedSection);
-        Assert.Equal("traypreview", settingsStore.LastSaved.Navigation.SelectedModuleKey);
         Assert.Equal("Light", settingsStore.LastSaved.Theme.RequestedTheme);
     }
 
@@ -277,11 +307,416 @@ public sealed class MainWindowViewModelInteractionTests
         Assert.False(vm.PreviewItems[0].IsThumbnailLoading);
     }
 
+    [Fact]
+    public async Task TrayPreviewSelection_SupportsSingleCtrlAndShiftRange()
+    {
+        var vm = CreateViewModel(new FakeExecutionCoordinator(), new FakeConfirmationDialogService());
+        await vm.InitializeAsync();
+
+        using var trayRoot = new TempDirectory();
+        InvokePrivateVoid(
+            vm,
+            "SetTrayPreviewPage",
+            new SimsTrayPreviewPage
+            {
+                PageIndex = 1,
+                PageSize = 50,
+                TotalItems = 4,
+                TotalPages = 1,
+                Items =
+                [
+                    new SimsTrayPreviewItem { TrayItemKey = "0x1", PresetType = "Household", TrayRootPath = trayRoot.Path },
+                    new SimsTrayPreviewItem { TrayItemKey = "0x2", PresetType = "Household", TrayRootPath = trayRoot.Path },
+                    new SimsTrayPreviewItem { TrayItemKey = "0x3", PresetType = "Household", TrayRootPath = trayRoot.Path },
+                    new SimsTrayPreviewItem { TrayItemKey = "0x4", PresetType = "Household", TrayRootPath = trayRoot.Path }
+                ]
+            },
+            1);
+
+        await WaitForAsync(() => vm.PreviewItems.Count == 4);
+
+        vm.ApplyTrayPreviewSelection(vm.PreviewItems[0], controlPressed: false, shiftPressed: false);
+        Assert.Equal(1, vm.SelectedTrayPreviewCount);
+        Assert.True(vm.PreviewItems[0].IsSelected);
+        Assert.False(vm.PreviewItems[1].IsSelected);
+
+        vm.ApplyTrayPreviewSelection(vm.PreviewItems[2], controlPressed: false, shiftPressed: true);
+        Assert.Equal(3, vm.SelectedTrayPreviewCount);
+        Assert.True(vm.PreviewItems[0].IsSelected);
+        Assert.True(vm.PreviewItems[1].IsSelected);
+        Assert.True(vm.PreviewItems[2].IsSelected);
+        Assert.False(vm.PreviewItems[3].IsSelected);
+
+        vm.ApplyTrayPreviewSelection(vm.PreviewItems[1], controlPressed: true, shiftPressed: false);
+        Assert.Equal(2, vm.SelectedTrayPreviewCount);
+        Assert.True(vm.PreviewItems[0].IsSelected);
+        Assert.False(vm.PreviewItems[1].IsSelected);
+        Assert.True(vm.PreviewItems[2].IsSelected);
+        Assert.False(vm.PreviewItems[3].IsSelected);
+
+        vm.ApplyTrayPreviewSelection(vm.PreviewItems[0], controlPressed: false, shiftPressed: false);
+        Assert.Equal(1, vm.SelectedTrayPreviewCount);
+        Assert.Equal("1 selected / 4 on page / 4 total", vm.TrayPreviewSelectionSummaryText);
+        Assert.False(vm.PreviewItems[0].IsSelected);
+        Assert.False(vm.PreviewItems[1].IsSelected);
+        Assert.True(vm.PreviewItems[2].IsSelected);
+        Assert.False(vm.PreviewItems[3].IsSelected);
+
+        vm.SelectAllTrayPreviewPageCommand.Execute(null);
+        Assert.Equal(4, vm.SelectedTrayPreviewCount);
+        Assert.Equal("4 selected / 4 on page / 4 total", vm.TrayPreviewSelectionSummaryText);
+        Assert.All(vm.PreviewItems, item => Assert.True(item.IsSelected));
+
+        vm.ClearTrayPreviewSelectionCommand.Execute(null);
+        Assert.Equal(0, vm.SelectedTrayPreviewCount);
+        Assert.Equal("0 selected / 4 on page / 4 total", vm.TrayPreviewSelectionSummaryText);
+        Assert.All(vm.PreviewItems, item => Assert.False(item.IsSelected));
+    }
+
+    [Fact]
+    public async Task ExportSelectedTrayPreviewFiles_ExportsOnlySelectedSourceFiles()
+    {
+        var fileDialog = new FakeFileDialogService();
+        var exportService = new FakeTrayDependencyExportService
+        {
+            OnExport = request =>
+            {
+                Directory.CreateDirectory(request.TrayExportRoot);
+                Directory.CreateDirectory(request.ModsExportRoot);
+                foreach (var sourceFile in request.TraySourceFiles)
+                {
+                    File.Copy(sourceFile, System.IO.Path.Combine(request.TrayExportRoot, System.IO.Path.GetFileName(sourceFile)));
+                }
+
+                File.WriteAllText(System.IO.Path.Combine(request.ModsExportRoot, "resolved.package"), "mod");
+                return new TrayDependencyExportResult
+                {
+                    Success = true,
+                    CopiedTrayFileCount = request.TraySourceFiles.Count,
+                    CopiedModFileCount = 1
+                };
+            }
+        };
+        var vm = CreateViewModel(
+            new FakeExecutionCoordinator(),
+            new FakeConfirmationDialogService(),
+            trayDependencyExportService: exportService,
+            fileDialogService: fileDialog);
+        await vm.InitializeAsync();
+        vm.Workspace = AppWorkspace.TrayPreview;
+
+        using var trayRoot = new TempDirectory();
+        using var modsRoot = new TempDirectory();
+        using var exportRoot = new TempDirectory();
+        var sourceA = System.IO.Path.Combine(trayRoot.Path, "0x1.trayitem");
+        var sourceB = System.IO.Path.Combine(trayRoot.Path, "0x2.trayitem");
+        File.WriteAllText(sourceA, "a");
+        File.WriteAllText(sourceB, "b");
+        vm.TrayDependencies.ModsPath = modsRoot.Path;
+
+        InvokePrivateVoid(
+            vm,
+            "SetTrayPreviewPage",
+            new SimsTrayPreviewPage
+            {
+                PageIndex = 1,
+                PageSize = 50,
+                TotalItems = 2,
+                TotalPages = 1,
+                Items =
+                [
+                    new SimsTrayPreviewItem
+                    {
+                        TrayItemKey = "0x1",
+                        PresetType = "Household",
+                        TrayRootPath = trayRoot.Path,
+                        SourceFilePaths = [sourceA]
+                    },
+                    new SimsTrayPreviewItem
+                    {
+                        TrayItemKey = "0x2",
+                        PresetType = "Household",
+                        TrayRootPath = trayRoot.Path,
+                        SourceFilePaths = [sourceB]
+                    }
+                ]
+            },
+            1);
+
+        await WaitForAsync(() => vm.PreviewItems.Count == 2);
+        vm.ApplyTrayPreviewSelection(vm.PreviewItems[1], controlPressed: false, shiftPressed: false);
+        fileDialog.NextFolderPaths = [exportRoot.Path];
+
+        await InvokePrivateAsync(vm, "ExportSelectedTrayPreviewFilesAsync");
+
+        Assert.Empty(Directory.GetFiles(exportRoot.Path, "0x1.trayitem", SearchOption.AllDirectories));
+        var exportedFiles = Directory.GetFiles(exportRoot.Path, "0x2.trayitem", SearchOption.AllDirectories);
+        Assert.Single(exportedFiles);
+        Assert.Contains($"{System.IO.Path.DirectorySeparatorChar}Tray{System.IO.Path.DirectorySeparatorChar}", exportedFiles[0]);
+        Assert.Equal("Exported 1 tray files and 1 referenced mod files.", vm.StatusMessage);
+        Assert.Single(vm.TrayExportTasks);
+        Assert.True(vm.TrayExportTasks[0].IsCompleted);
+        Assert.False(vm.TrayExportTasks[0].IsFailed);
+        Assert.Equal("Completed.", vm.TrayExportTasks[0].StatusText);
+        Assert.True(vm.TrayExportTasks[0].HasExportRoot);
+        Assert.Equal("100%", vm.TrayExportTasks[0].ProgressText);
+        Assert.Equal(100d, vm.TrayExportTasks[0].ProgressPercent);
+
+        vm.ClearCompletedTrayExportTasksCommand.Execute(null);
+        Assert.Empty(vm.TrayExportTasks);
+    }
+
+    [Fact]
+    public async Task ExportSelectedTrayPreviewFiles_SetupFailureWhenModsPathMissing_DoesNotDuplicateDetails()
+    {
+        var fileDialog = new FakeFileDialogService();
+        var vm = CreateViewModel(
+            new FakeExecutionCoordinator(),
+            new FakeConfirmationDialogService(),
+            fileDialogService: fileDialog);
+        await vm.InitializeAsync();
+        vm.Workspace = AppWorkspace.TrayPreview;
+
+        using var trayRoot = new TempDirectory();
+        using var exportRoot = new TempDirectory();
+        var source = System.IO.Path.Combine(trayRoot.Path, "0x2.trayitem");
+        File.WriteAllText(source, "b");
+
+        InvokePrivateVoid(
+            vm,
+            "SetTrayPreviewPage",
+            new SimsTrayPreviewPage
+            {
+                PageIndex = 1,
+                PageSize = 50,
+                TotalItems = 1,
+                TotalPages = 1,
+                Items =
+                [
+                    new SimsTrayPreviewItem
+                    {
+                        TrayItemKey = "0x2",
+                        PresetType = "Household",
+                        TrayRootPath = trayRoot.Path,
+                        SourceFilePaths = [source]
+                    }
+                ]
+            },
+            1);
+
+        await WaitForAsync(() => vm.PreviewItems.Count == 1);
+        vm.ApplyTrayPreviewSelection(vm.PreviewItems[0], controlPressed: false, shiftPressed: false);
+        fileDialog.NextFolderPaths = [exportRoot.Path];
+
+        await InvokePrivateAsync(vm, "ExportSelectedTrayPreviewFilesAsync");
+
+        Assert.Equal("Mods Path is missing. Set a valid Mods Path before exporting referenced mods.", vm.StatusMessage);
+        Assert.Single(vm.TrayExportTasks);
+        Assert.True(vm.IsTrayExportQueueDockVisible);
+        Assert.True(vm.IsTrayExportQueueVisible);
+        Assert.Equal("Hide Tasks", vm.TrayExportQueueToggleText);
+        Assert.Equal("Failed", vm.TrayExportTasks[0].ProgressText);
+        Assert.False(vm.TrayExportTasks[0].HasDetails);
+        Assert.False(vm.TrayExportTasks[0].CanShowDetailsToggle);
+
+        vm.ToggleTrayExportQueueCommand.Execute(null);
+        Assert.True(vm.IsTrayExportQueueDockVisible);
+        Assert.False(vm.IsTrayExportQueueVisible);
+        Assert.Equal("Show Tasks (1)", vm.TrayExportQueueToggleText);
+
+        vm.ToggleTrayExportQueueCommand.Execute(null);
+        Assert.True(vm.IsTrayExportQueueVisible);
+        Assert.Equal("Hide Tasks", vm.TrayExportQueueToggleText);
+    }
+
+    [Fact]
+    public async Task ExportSelectedTrayPreviewFiles_FailsAndRollsBackWhenModExportFails()
+    {
+        var fileDialog = new FakeFileDialogService();
+        var exportService = new FakeTrayDependencyExportService
+        {
+            OnExport = request =>
+            {
+                Directory.CreateDirectory(request.TrayExportRoot);
+                Directory.CreateDirectory(request.ModsExportRoot);
+                foreach (var sourceFile in request.TraySourceFiles)
+                {
+                    File.Copy(sourceFile, System.IO.Path.Combine(request.TrayExportRoot, System.IO.Path.GetFileName(sourceFile)));
+                }
+
+                File.WriteAllText(System.IO.Path.Combine(request.ModsExportRoot, "broken.package"), "partial");
+                return new TrayDependencyExportResult
+                {
+                    Success = false,
+                    CopiedTrayFileCount = request.TraySourceFiles.Count,
+                    Issues =
+                    [
+                        new TrayDependencyIssue
+                        {
+                            Severity = TrayDependencyIssueSeverity.Error,
+                            Kind = TrayDependencyIssueKind.CopyError,
+                            Message = "mod export crashed"
+                        },
+                        new TrayDependencyIssue
+                        {
+                            Severity = TrayDependencyIssueSeverity.Warning,
+                            Kind = TrayDependencyIssueKind.MissingReference,
+                            Message = "Access denied while exporting foo.package"
+                        }
+                    ]
+                };
+            }
+        };
+        var vm = CreateViewModel(
+            new FakeExecutionCoordinator(),
+            new FakeConfirmationDialogService(),
+            trayDependencyExportService: exportService,
+            fileDialogService: fileDialog);
+        await vm.InitializeAsync();
+
+        using var trayRoot = new TempDirectory();
+        using var modsRoot = new TempDirectory();
+        using var exportRoot = new TempDirectory();
+        var source = System.IO.Path.Combine(trayRoot.Path, "0x2.trayitem");
+        File.WriteAllText(source, "b");
+        vm.TrayDependencies.ModsPath = modsRoot.Path;
+
+        InvokePrivateVoid(
+            vm,
+            "SetTrayPreviewPage",
+            new SimsTrayPreviewPage
+            {
+                PageIndex = 1,
+                PageSize = 50,
+                TotalItems = 1,
+                TotalPages = 1,
+                Items =
+                [
+                    new SimsTrayPreviewItem
+                    {
+                        TrayItemKey = "0x2",
+                        PresetType = "Household",
+                        TrayRootPath = trayRoot.Path,
+                        SourceFilePaths = [source]
+                    }
+                ]
+            },
+            1);
+
+        await WaitForAsync(() => vm.PreviewItems.Count == 1);
+        vm.ApplyTrayPreviewSelection(vm.PreviewItems[0], controlPressed: false, shiftPressed: false);
+        fileDialog.NextFolderPaths = [exportRoot.Path];
+
+        await InvokePrivateAsync(vm, "ExportSelectedTrayPreviewFilesAsync");
+
+        Assert.Equal("Export failed: mod export crashed", vm.StatusMessage);
+        Assert.Empty(Directory.EnumerateFileSystemEntries(exportRoot.Path));
+        Assert.Single(vm.TrayExportTasks);
+        Assert.True(vm.TrayExportTasks[0].IsCompleted);
+        Assert.True(vm.TrayExportTasks[0].IsFailed);
+        Assert.Equal("20%", vm.TrayExportTasks[0].ProgressText);
+        Assert.Equal("Mods export failed: mod export crashed", vm.TrayExportTasks[0].StatusText);
+        Assert.True(vm.TrayExportTasks[0].CanShowDetailsToggle);
+        Assert.Contains("Access denied while exporting foo.package", vm.TrayExportTasks[0].DetailsText, StringComparison.Ordinal);
+        Assert.Contains("mod export crashed", vm.TrayExportTasks[0].DetailsText, StringComparison.Ordinal);
+
+        vm.ToggleTrayExportTaskDetailsCommand.Execute(vm.TrayExportTasks[0]);
+        Assert.True(vm.TrayExportTasks[0].IsDetailsExpanded);
+    }
+
+    [Fact]
+    public async Task ExportSelectedTrayPreviewFiles_IgnoresMissingPackageFileFailuresForMods()
+    {
+        var fileDialog = new FakeFileDialogService();
+        var exportService = new FakeTrayDependencyExportService
+        {
+            OnExport = request =>
+            {
+                Directory.CreateDirectory(request.TrayExportRoot);
+                Directory.CreateDirectory(request.ModsExportRoot);
+                foreach (var sourceFile in request.TraySourceFiles)
+                {
+                    File.Copy(sourceFile, System.IO.Path.Combine(request.TrayExportRoot, System.IO.Path.GetFileName(sourceFile)));
+                }
+
+                return new TrayDependencyExportResult
+                {
+                    Success = true,
+                    CopiedTrayFileCount = request.TraySourceFiles.Count,
+                    CopiedModFileCount = 0,
+                    HasMissingReferenceWarnings = true,
+                    Issues =
+                    [
+                        new TrayDependencyIssue
+                        {
+                            Severity = TrayDependencyIssueSeverity.Warning,
+                            Kind = TrayDependencyIssueKind.MissingReference,
+                            Message = "Missing package file: missing-test.package"
+                        }
+                    ]
+                };
+            }
+        };
+        var vm = CreateViewModel(
+            new FakeExecutionCoordinator(),
+            new FakeConfirmationDialogService(),
+            trayDependencyExportService: exportService,
+            fileDialogService: fileDialog);
+        await vm.InitializeAsync();
+
+        using var trayRoot = new TempDirectory();
+        using var modsRoot = new TempDirectory();
+        using var exportRoot = new TempDirectory();
+        var source = System.IO.Path.Combine(trayRoot.Path, "0x2.trayitem");
+        File.WriteAllText(source, "b");
+        vm.TrayDependencies.ModsPath = modsRoot.Path;
+
+        InvokePrivateVoid(
+            vm,
+            "SetTrayPreviewPage",
+            new SimsTrayPreviewPage
+            {
+                PageIndex = 1,
+                PageSize = 50,
+                TotalItems = 1,
+                TotalPages = 1,
+                Items =
+                [
+                    new SimsTrayPreviewItem
+                    {
+                        TrayItemKey = "0x2",
+                        PresetType = "Household",
+                        TrayRootPath = trayRoot.Path,
+                        SourceFilePaths = [source]
+                    }
+                ]
+            },
+            1);
+
+        await WaitForAsync(() => vm.PreviewItems.Count == 1);
+        vm.ApplyTrayPreviewSelection(vm.PreviewItems[0], controlPressed: false, shiftPressed: false);
+        fileDialog.NextFolderPaths = [exportRoot.Path];
+
+        await InvokePrivateAsync(vm, "ExportSelectedTrayPreviewFilesAsync");
+
+        var exportedFiles = Directory.GetFiles(exportRoot.Path, "0x2.trayitem", SearchOption.AllDirectories);
+        Assert.Single(exportedFiles);
+        Assert.Equal("Exported 1 tray files and 0 referenced mod files (1 warning item(s) ignored).", vm.StatusMessage);
+        Assert.Single(vm.TrayExportTasks);
+        Assert.True(vm.TrayExportTasks[0].IsCompleted);
+        Assert.False(vm.TrayExportTasks[0].IsFailed);
+        Assert.Equal("Completed (missing references ignored).", vm.TrayExportTasks[0].StatusText);
+        Assert.Contains("Missing package file: missing-test.package", vm.TrayExportTasks[0].DetailsText, StringComparison.Ordinal);
+    }
+
     private static MainWindowViewModel CreateViewModel(
         FakeExecutionCoordinator execution,
         FakeConfirmationDialogService confirmation,
         FakeSettingsStore? settingsStore = null,
-        ITrayThumbnailService? trayThumbnailService = null)
+        ITrayDependencyExportService? trayDependencyExportService = null,
+        ITrayDependencyAnalysisService? trayDependencyAnalysisService = null,
+        ITrayThumbnailService? trayThumbnailService = null,
+        FakeFileDialogService? fileDialogService = null)
     {
         var organize = new OrganizePanelViewModel();
         var flatten = new FlattenPanelViewModel();
@@ -289,6 +724,7 @@ public sealed class MainWindowViewModelInteractionTests
         var merge = new MergePanelViewModel();
         var findDup = new FindDupPanelViewModel();
         var trayDependencies = new TrayDependenciesPanelViewModel();
+        var modPreview = new ModPreviewPanelViewModel();
         var trayPreview = new TrayPreviewPanelViewModel();
         var sharedFileOps = new SharedFileOpsPanelViewModel();
 
@@ -307,7 +743,9 @@ public sealed class MainWindowViewModelInteractionTests
         return new MainWindowViewModel(
             new ToolkitExecutionRunner(execution),
             new TrayPreviewRunner(trayPreviewCoordinator),
-            new FakeFileDialogService(),
+            trayDependencyExportService ?? new FakeTrayDependencyExportService(),
+            trayDependencyAnalysisService ?? new FakeTrayDependencyAnalysisService(),
+            fileDialogService ?? new FakeFileDialogService(),
             confirmation,
             new JsonLocalizationService(),
             settingsStore ?? new FakeSettingsStore(new AppSettings()),
@@ -319,10 +757,11 @@ public sealed class MainWindowViewModelInteractionTests
             normalize,
             merge,
             findDup,
-            trayDependencies,
-            trayPreview,
-            sharedFileOps,
-            trayThumbnailService);
+            trayDependencies: trayDependencies,
+            modPreview: modPreview,
+            trayPreview: trayPreview,
+            sharedFileOps: sharedFileOps,
+            trayThumbnailService: trayThumbnailService);
     }
 
     private static async Task InvokePrivateAsync(object target, string methodName, params object?[] args)
@@ -362,13 +801,32 @@ public sealed class MainWindowViewModelInteractionTests
     private sealed class FakeExecutionCoordinator : IExecutionCoordinator
     {
         public int ExecuteCount { get; private set; }
+        public int NextExitCode { get; set; }
+        public IReadOnlyList<string> NextOutputLines { get; set; } = Array.Empty<string>();
+        public IReadOnlyList<SimsProgressUpdate> NextProgressUpdates { get; set; } = Array.Empty<SimsProgressUpdate>();
+        public string? NextExceptionMessage { get; set; }
 
         public Task<SimsExecutionResult> ExecuteAsync(ISimsExecutionInput input, Action<string> onOutput, Action<SimsProgressUpdate>? onProgress = null, CancellationToken cancellationToken = default)
         {
             ExecuteCount++;
+            foreach (var progress in NextProgressUpdates)
+            {
+                onProgress?.Invoke(progress);
+            }
+
+            foreach (var line in NextOutputLines)
+            {
+                onOutput(line);
+            }
+
+            if (!string.IsNullOrWhiteSpace(NextExceptionMessage))
+            {
+                throw new InvalidOperationException(NextExceptionMessage);
+            }
+
             return Task.FromResult(new SimsExecutionResult
             {
-                ExitCode = 0,
+                ExitCode = NextExitCode,
                 Executable = "pwsh",
                 Arguments = Array.Empty<string>()
             });
@@ -424,9 +882,11 @@ public sealed class MainWindowViewModelInteractionTests
 
     private sealed class FakeFileDialogService : IFileDialogService
     {
+        public IReadOnlyList<string> NextFolderPaths { get; set; } = Array.Empty<string>();
+
         public Task<IReadOnlyList<string>> PickFolderPathsAsync(string title, bool allowMultiple)
         {
-            return Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
+            return Task.FromResult(NextFolderPaths);
         }
 
         public Task<string?> PickFilePathAsync(string title, string fileTypeName, IReadOnlyList<string> patterns)
@@ -473,6 +933,83 @@ public sealed class MainWindowViewModelInteractionTests
             LastSaved = settings;
             _settings = settings;
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FakeTrayDependencyExportService : ITrayDependencyExportService
+    {
+        public Func<TrayDependencyExportRequest, TrayDependencyExportResult>? OnExport { get; set; }
+
+        public Task<TrayDependencyExportResult> ExportAsync(
+            TrayDependencyExportRequest request,
+            IProgress<TrayDependencyExportProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            progress?.Report(new TrayDependencyExportProgress
+            {
+                Stage = TrayDependencyExportStage.Preparing,
+                Percent = 0,
+                Detail = "Copying tray files..."
+            });
+            progress?.Report(new TrayDependencyExportProgress
+            {
+                Stage = TrayDependencyExportStage.IndexingPackages,
+                Percent = 30,
+                Detail = "Indexing packages..."
+            });
+            progress?.Report(new TrayDependencyExportProgress
+            {
+                Stage = TrayDependencyExportStage.Completed,
+                Percent = 100,
+                Detail = "Completed."
+            });
+
+            return Task.FromResult(OnExport?.Invoke(request) ?? new TrayDependencyExportResult
+            {
+                Success = true,
+                CopiedTrayFileCount = request.TraySourceFiles.Count,
+                CopiedModFileCount = 1
+            });
+        }
+    }
+
+    private sealed class FakeTrayDependencyAnalysisService : ITrayDependencyAnalysisService
+    {
+        public int AnalyzeCount { get; private set; }
+        public TrayDependencyAnalysisRequest? LastRequest { get; private set; }
+        public Func<TrayDependencyAnalysisRequest, TrayDependencyAnalysisResult>? OnAnalyze { get; set; }
+
+        public Task<TrayDependencyAnalysisResult> AnalyzeAsync(
+            TrayDependencyAnalysisRequest request,
+            IProgress<TrayDependencyAnalysisProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            AnalyzeCount++;
+            LastRequest = request;
+            progress?.Report(new TrayDependencyAnalysisProgress
+            {
+                Stage = TrayDependencyAnalysisStage.Preparing,
+                Percent = 0,
+                Detail = "Locating tray files..."
+            });
+            progress?.Report(new TrayDependencyAnalysisProgress
+            {
+                Stage = TrayDependencyAnalysisStage.IndexingPackages,
+                Percent = 25,
+                Detail = "Indexing packages..."
+            });
+            progress?.Report(new TrayDependencyAnalysisProgress
+            {
+                Stage = TrayDependencyAnalysisStage.Completed,
+                Percent = 100,
+                Detail = "Completed."
+            });
+
+            return Task.FromResult(OnAnalyze?.Invoke(request) ?? new TrayDependencyAnalysisResult
+            {
+                Success = true,
+                MatchedPackageCount = 1
+            });
         }
     }
 

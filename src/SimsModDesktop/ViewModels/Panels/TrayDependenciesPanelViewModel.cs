@@ -8,7 +8,6 @@ public sealed class TrayDependenciesPanelViewModel : ObservableObject, ITrayDepe
     private string _trayPath = string.Empty;
     private string _modsPath = string.Empty;
     private string _trayItemKey = string.Empty;
-    private string _s4tiPath = string.Empty;
     private string _minMatchCountText = "1";
     private string _topNText = "200";
     private string _maxPackageCountText = "0";
@@ -37,12 +36,6 @@ public sealed class TrayDependenciesPanelViewModel : ObservableObject, ITrayDepe
     {
         get => _trayItemKey;
         set => SetProperty(ref _trayItemKey, value);
-    }
-
-    public string S4tiPath
-    {
-        get => _s4tiPath;
-        set => SetProperty(ref _s4tiPath, value);
     }
 
     public string MinMatchCountText

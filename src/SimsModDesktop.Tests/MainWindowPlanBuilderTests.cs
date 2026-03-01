@@ -146,4 +146,57 @@ public sealed class MainWindowPlanBuilderTests
         Assert.Equal("Last30d", input.TimeFilter);
         Assert.Equal("villa", input.SearchQuery);
     }
+
+    [Fact]
+    public void TryBuildTrayDependenciesPlan_WithoutScriptPath_Succeeds()
+    {
+        var trayRoot = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")));
+        var modsRoot = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")));
+
+        try
+        {
+            var trayDependenciesPanel = new TrayDependenciesPanelViewModel
+            {
+                TrayPath = trayRoot.FullName,
+                ModsPath = modsRoot.FullName,
+                TrayItemKey = "0x123",
+                MinMatchCountText = "2",
+                TopNText = "10",
+                MaxPackageCountText = "25",
+                ExportMatchedPackages = true,
+                ExportTargetPath = @"D:\Out",
+                ExportMinConfidence = "Medium"
+            };
+            var registry = new ActionModuleRegistry(
+            [
+                new TrayDependenciesActionModule(trayDependenciesPanel)
+            ]);
+            var builder = new MainWindowPlanBuilder(registry);
+
+            var ok = builder.TryBuildTrayDependenciesPlan(
+                new MainWindowPlanBuilderState
+                {
+                    ScriptPath = string.Empty,
+                    SelectedAction = SimsAction.TrayDependencies
+                },
+                out var plan,
+                out var error);
+
+            Assert.True(ok, error);
+            Assert.Equal(trayRoot.FullName, plan.Request.TrayPath);
+            Assert.Equal(modsRoot.FullName, plan.Request.ModsRootPath);
+            Assert.Equal("0x123", plan.Request.TrayItemKey);
+            Assert.Equal(2, plan.Request.MinMatchCount);
+            Assert.Equal(10, plan.Request.TopN);
+            Assert.Equal(25, plan.Request.MaxPackageCount);
+            Assert.True(plan.Request.ExportMatchedPackages);
+            Assert.Equal(@"D:\Out", plan.Request.ExportTargetPath);
+            Assert.Equal("Medium", plan.Request.ExportMinConfidence);
+        }
+        finally
+        {
+            trayRoot.Delete(recursive: true);
+            modsRoot.Delete(recursive: true);
+        }
+    }
 }

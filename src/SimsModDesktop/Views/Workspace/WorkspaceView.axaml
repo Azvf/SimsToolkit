@@ -12,8 +12,14 @@
     <Grid RowDefinitions="*,Auto" RowSpacing="12" MinHeight="0">
         <Grid>
             <Border Classes="card" IsVisible="{Binding IsToolkitWorkspace}" Padding="12">
-                <Grid RowDefinitions="Auto,*" RowSpacing="12">
-                    <Border Classes="card-muted" Padding="10">
+                <Grid RowDefinitions="Auto,Auto,*" RowSpacing="12">
+                    <StackPanel Spacing="2">
+                        <TextBlock Classes="section-title" Text="Toolkit Workspace" />
+                        <TextBlock Classes="helper-text"
+                                   Text="Utility-focused workflows for common Mods folder cleanup, organization, and dependency tasks." />
+                    </StackPanel>
+
+                    <Border Grid.Row="1" Classes="card-muted" Padding="10">
                         <Grid ColumnDefinitions="Auto,190,*" ColumnSpacing="8">
                             <TextBlock VerticalAlignment="Center" Text="Action" />
                             <ComboBox Grid.Column="1" Width="180" ItemsSource="{Binding AvailableToolkitActions}" SelectedItem="{Binding SelectedAction}" />
@@ -21,7 +27,7 @@
                         </Grid>
                     </Border>
 
-                    <ScrollViewer Grid.Row="1">
+                    <ScrollViewer Grid.Row="2">
                         <StackPanel Spacing="12">
                             <panels:OrganizePanelView />
                             <panels:FlattenPanelView />
@@ -65,6 +71,156 @@
                             </Border>
                         </StackPanel>
                     </ScrollViewer>
+                </Grid>
+            </Border>
+
+            <Border Classes="card" IsVisible="{Binding IsModPreviewWorkspace}" Padding="12" MinHeight="0">
+                <Grid RowDefinitions="Auto,Auto,*" RowSpacing="12" MinHeight="0">
+                    <StackPanel Spacing="2">
+                        <TextBlock Classes="section-title" Text="Mod Workspace" />
+                        <TextBlock Classes="helper-text"
+                                   Text="Scaffold for parsing package metadata and building an S4MM-style preview flow." />
+                    </StackPanel>
+
+                    <Border Grid.Row="1" Classes="card-muted" Padding="10">
+                        <Grid ColumnDefinitions="Auto,*,Auto,*,Auto,*"
+                              RowDefinitions="Auto,Auto"
+                              ColumnSpacing="8"
+                              RowSpacing="8">
+                            <TextBlock VerticalAlignment="Center" Text="Package Type" />
+                            <ComboBox Grid.Column="1"
+                                      ItemsSource="{Binding ModPreviewPackageTypeFilterOptions}"
+                                      SelectedItem="{Binding ModPreview.PackageTypeFilter}" />
+                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="Scope" />
+                            <ComboBox Grid.Column="3"
+                                      ItemsSource="{Binding ModPreviewScopeFilterOptions}"
+                                      SelectedItem="{Binding ModPreview.ScopeFilter}" />
+                            <TextBlock Grid.Column="4" VerticalAlignment="Center" Text="Sort" />
+                            <ComboBox Grid.Column="5"
+                                      ItemsSource="{Binding ModPreviewSortOptions}"
+                                      SelectedItem="{Binding ModPreview.SortBy}" />
+
+                            <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="Search" />
+                            <TextBox Grid.Row="1"
+                                     Grid.Column="1"
+                                     Grid.ColumnSpan="3"
+                                     Watermark="Package name or creator"
+                                     Text="{Binding ModPreview.SearchQuery}" />
+                            <CheckBox Grid.Row="1"
+                                      Grid.Column="4"
+                                      Grid.ColumnSpan="2"
+                                      Content="Overrides Only"
+                                      IsChecked="{Binding ModPreview.ShowOverridesOnly}" />
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Row="2" Classes="card-muted" Padding="10" MinHeight="0">
+                        <Grid RowDefinitions="Auto,*" RowSpacing="10" MinHeight="0">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <TextBlock Classes="helper-text"
+                                           VerticalAlignment="Center"
+                                           Text="{Binding ModPreviewPathHintText}" />
+                                <TextBlock Grid.Column="1"
+                                           Classes="helper-text"
+                                           VerticalAlignment="Center"
+                                           Text="Preview parser scaffold" />
+                            </Grid>
+
+                            <Grid Grid.Row="1"
+                                  ColumnDefinitions="300,*"
+                                  ColumnSpacing="12"
+                                  MinHeight="0">
+                                <Border Classes="card"
+                                        Padding="12"
+                                        MinHeight="0">
+                                    <Grid RowDefinitions="Auto,Auto,*,Auto"
+                                          RowSpacing="10"
+                                          MinHeight="0">
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Classes="sub-title" Text="Preview Catalog" />
+                                            <TextBlock Classes="helper-text"
+                                                       Text="This area is reserved for the scanned package list, grouping, and quick summaries." />
+                                        </StackPanel>
+
+                                        <Border Grid.Row="1"
+                                                Classes="card-muted"
+                                                Padding="10">
+                                            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                                                <TextBlock VerticalAlignment="Center" Text="Root" />
+                                                <TextBlock Grid.Column="1"
+                                                           Classes="helper-text"
+                                                           Text="{Binding ModPreview.ModsRoot}"
+                                                           TextTrimming="CharacterEllipsis" />
+                                            </Grid>
+                                        </Border>
+
+                                        <Border Grid.Row="2"
+                                                Classes="card-muted"
+                                                Padding="10">
+                                            <StackPanel Spacing="8">
+                                                <TextBlock FontWeight="SemiBold" Text="Package list placeholder" />
+                                                <TextBlock Classes="helper-text"
+                                                           Text="Planned: .package /.ts4script inventory, tag buckets, conflict markers, and quick stats." />
+                                                <Border Classes="card" Padding="10">
+                                                    <TextBlock Text="Catalog row skeleton" />
+                                                </Border>
+                                                <Border Classes="card" Padding="10">
+                                                    <TextBlock Text="Catalog row skeleton" />
+                                                </Border>
+                                                <Border Classes="card" Padding="10">
+                                                    <TextBlock Text="Catalog row skeleton" />
+                                                </Border>
+                                            </StackPanel>
+                                        </Border>
+
+                                        <TextBlock Grid.Row="3"
+                                                   Classes="helper-text"
+                                                   Text="Next step: wire a package parser and bind real items into this list." />
+                                    </Grid>
+                                </Border>
+
+                                <Border Grid.Column="1"
+                                        Classes="card"
+                                        Padding="12"
+                                        MinHeight="0">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                                  HorizontalScrollBarVisibility="Disabled">
+                                        <StackPanel Spacing="10">
+                                            <StackPanel Spacing="2">
+                                                <TextBlock Classes="sub-title" Text="Preview Module" />
+                                                <TextBlock Classes="helper-text"
+                                                           Text="The detail pane is ready for package metadata, resource summaries, thumbnails, and conflict diagnostics." />
+                                            </StackPanel>
+
+                                            <Border Classes="card-muted" Padding="12">
+                                                <StackPanel Spacing="6">
+                                                    <TextBlock FontWeight="SemiBold" Text="Package Overview" />
+                                                    <TextBlock Classes="helper-text"
+                                                               Text="Target shape: basic identity, file size, timestamps, package type, and mod classification." />
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Border Classes="card-muted" Padding="12">
+                                                <StackPanel Spacing="6">
+                                                    <TextBlock FontWeight="SemiBold" Text="Resource Preview" />
+                                                    <TextBlock Classes="helper-text"
+                                                               Text="Target shape: selected resource entries, swatches/thumbnails, and decoded metadata blocks." />
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Border Classes="card-muted" Padding="12">
+                                                <StackPanel Spacing="6">
+                                                    <TextBlock FontWeight="SemiBold" Text="Dependency / Conflict Notes" />
+                                                    <TextBlock Classes="helper-text"
+                                                               Text="Target shape: cross-package references, override chains, and suspected duplicates." />
+                                                </StackPanel>
+                                            </Border>
+                                        </StackPanel>
+                                    </ScrollViewer>
+                                </Border>
+                            </Grid>
+                        </Grid>
+                    </Border>
                 </Grid>
             </Border>
 
@@ -133,9 +289,41 @@
 
                     <Border Grid.Row="1" Classes="card-muted" Padding="10" MinHeight="0">
                         <Grid RowDefinitions="Auto,*,Auto" RowSpacing="8" MinHeight="0">
-                            <TextBlock Classes="helper-text"
-                                       IsVisible="{Binding HasTrayPreviewItems}"
-                                       Text="{Binding PreviewSummaryText}" />
+                            <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto"
+                                  ColumnSpacing="8"
+                                  IsVisible="{Binding HasTrayPreviewItems}">
+                                <TextBlock Classes="helper-text"
+                                           VerticalAlignment="Center"
+                                           Text="{Binding PreviewSummaryText}" />
+                                <TextBlock Grid.Column="1"
+                                           Classes="helper-text"
+                                           VerticalAlignment="Center"
+                                           Text="{Binding TrayPreviewSelectionSummaryText}" />
+                                <Button Grid.Column="2"
+                                        Classes="secondary"
+                                        Height="30"
+                                        Padding="10,0"
+                                        Content="Open Selected"
+                                        Command="{Binding OpenSelectedTrayPreviewPathsCommand}" />
+                                <Button Grid.Column="3"
+                                        Classes="secondary"
+                                        Height="30"
+                                        Padding="10,0"
+                                        Content="Select Page"
+                                        Command="{Binding SelectAllTrayPreviewPageCommand}" />
+                                <Button Grid.Column="4"
+                                        Classes="secondary"
+                                        Height="30"
+                                        Padding="10,0"
+                                        Content="Export Selected"
+                                        Command="{Binding ExportSelectedTrayPreviewFilesCommand}" />
+                                <Button Grid.Column="5"
+                                        Classes="secondary"
+                                        Height="30"
+                                        Padding="10,0"
+                                        Content="Clear"
+                                        Command="{Binding ClearTrayPreviewSelectionCommand}" />
+                            </Grid>
 
                             <Grid Grid.Row="1" MinHeight="0" ClipToBounds="True">
                                 <ScrollViewer x:Name="TrayPreviewScrollViewer"
@@ -154,7 +342,11 @@
                                         </ItemsControl.ItemsPanel>
                                         <ItemsControl.ItemTemplate>
                                         <DataTemplate x:DataType="panelvm:TrayPreviewListItemViewModel">
-                                            <Border Classes="card" Margin="0,0,0,8" Padding="8">
+                                            <Border Classes="card tray-preview-item-card"
+                                                    Classes.selected="{Binding IsSelected}"
+                                                    Margin="0,0,0,8"
+                                                    Padding="8"
+                                                    PointerPressed="OnTrayPreviewSelectPointerPressed">
                                                 <Grid ColumnDefinitions="192,*" ColumnSpacing="12">
                                                     <Border Cursor="Hand"
                                                             Background="Transparent"
@@ -198,15 +390,20 @@
                                                     <StackPanel Grid.Column="1"
                                                                 VerticalAlignment="Top"
                                                                 Spacing="4">
-                                                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                                        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                                                            <CheckBox Focusable="False"
+                                                                      VerticalAlignment="Center"
+                                                                      IsChecked="{Binding IsSelected, Mode=OneWay}"
+                                                                      PointerPressed="OnTrayPreviewSelectPointerPressed" />
                                                             <Border Cursor="Hand"
+                                                                    Grid.Column="1"
                                                                     Background="Transparent"
                                                                     PointerPressed="OnTrayPreviewOpenDetailsPointerPressed">
                                                                 <TextBlock FontWeight="SemiBold"
                                                                            Text="{Binding Item.DisplayTitle}"
                                                                            TextTrimming="CharacterEllipsis" />
                                                             </Border>
-                                                            <TextBlock Grid.Column="1" Classes="helper-text" Text="{Binding Item.PresetType}" />
+                                                            <TextBlock Grid.Column="2" Classes="helper-text" Text="{Binding Item.PresetType}" />
                                                         </Grid>
                                                         <TextBlock Classes="helper-text"
                                                                    IsVisible="{Binding Item.HasDisplaySubtitle}"
@@ -368,10 +565,12 @@
                                         </ItemsControl.ItemsPanel>
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate x:DataType="panelvm:TrayPreviewListItemViewModel">
-                                                <Border Classes="card"
+                                                <Border Classes="card tray-preview-item-card"
+                                                        Classes.selected="{Binding IsSelected}"
                                                         Width="236"
                                                         Margin="0,0,8,8"
-                                                        Padding="8">
+                                                        Padding="8"
+                                                        PointerPressed="OnTrayPreviewSelectPointerPressed">
                                                     <StackPanel Spacing="6">
                                                         <Border Cursor="Hand"
                                                                 Background="Transparent"
@@ -411,16 +610,21 @@
                                                             </Border>
                                                         </Border>
 
-                                                        <Grid ColumnDefinitions="*,Auto"
+                                                        <Grid ColumnDefinitions="Auto,*,Auto"
                                                               ColumnSpacing="6">
+                                                            <CheckBox Focusable="False"
+                                                                      VerticalAlignment="Center"
+                                                                      IsChecked="{Binding IsSelected, Mode=OneWay}"
+                                                                      PointerPressed="OnTrayPreviewSelectPointerPressed" />
                                                             <Border Cursor="Hand"
+                                                                    Grid.Column="1"
                                                                     Background="Transparent"
                                                                     PointerPressed="OnTrayPreviewOpenDetailsPointerPressed">
                                                                 <TextBlock FontWeight="SemiBold"
                                                                            Text="{Binding Item.DisplayTitle}"
                                                                            TextTrimming="CharacterEllipsis" />
                                                             </Border>
-                                                            <TextBlock Grid.Column="1"
+                                                            <TextBlock Grid.Column="2"
                                                                        Classes="helper-text"
                                                                        Text="{Binding Item.PresetType}" />
                                                         </Grid>
@@ -437,10 +641,6 @@
                                                                    Text="{Binding Item.DisplaySecondaryMeta}"
                                                                    TextTrimming="CharacterEllipsis"
                                                                    MaxLines="1" />
-                                                        <TextBlock Classes="helper-text"
-                                                                   IsVisible="{Binding CanToggleChildren}"
-                                                                   Text="{Binding ToggleChildrenText}"
-                                                                   TextTrimming="CharacterEllipsis" />
 
                                                         <Border Classes="card-muted"
                                                                 IsVisible="{Binding ShowDebugPreview}"
@@ -721,6 +921,126 @@
                     </ScrollViewer>
                 </Grid>
             </Border>
+        </Border>
+
+        <Border Grid.RowSpan="2"
+                Classes="card tray-export-queue"
+                IsVisible="{Binding IsTrayExportQueueVisible}"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Bottom"
+                Width="360"
+                MaxWidth="360"
+                Margin="0,0,12,56"
+                Padding="10">
+            <Grid RowDefinitions="Auto,*"
+                  RowSpacing="8">
+                <Grid ColumnDefinitions="*,Auto"
+                      ColumnSpacing="8">
+                    <StackPanel Spacing="2">
+                        <TextBlock Classes="sub-title"
+                                   Text="Export Queue" />
+                        <TextBlock Classes="helper-text"
+                                   Text="{Binding TrayExportQueueSummaryText}" />
+                    </StackPanel>
+                    <Button Grid.Column="1"
+                            Classes="secondary"
+                            Height="28"
+                            Padding="10,0"
+                            IsVisible="{Binding HasCompletedTrayExportTasks}"
+                            Content="Clear Finished"
+                            Command="{Binding ClearCompletedTrayExportTasksCommand}" />
+                </Grid>
+
+                <ScrollViewer Grid.Row="1"
+                              MaxHeight="240"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <ItemsControl ItemsSource="{Binding TrayExportTasks}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:TrayExportTaskItemViewModel">
+                                <Border Classes="card-muted tray-export-task-card"
+                                        Classes.running="{Binding IsRunning}"
+                                        Classes.failed="{Binding IsFailed}"
+                                        Cursor="Hand"
+                                        Margin="0,0,0,8"
+                                        Padding="10"
+                                        PointerPressed="OnTrayExportTaskPointerPressed">
+                                    <Grid RowDefinitions="Auto,Auto,Auto,Auto"
+                                          RowSpacing="4">
+                                        <Grid ColumnDefinitions="*,Auto,Auto"
+                                              ColumnSpacing="8">
+                                            <TextBlock FontWeight="SemiBold"
+                                                       Text="{Binding Title}"
+                                                       TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1"
+                                                       Classes="helper-text"
+                                                       VerticalAlignment="Center"
+                                                       Text="{Binding ProgressText}" />
+                                            <Button Grid.Column="2"
+                                                    Classes="secondary"
+                                                    Height="26"
+                                                    Padding="8,0"
+                                                    Focusable="False"
+                                                    IsVisible="{Binding CanShowDetailsToggle}"
+                                                    Content="Details"
+                                                    Click="OnTrayExportTaskDetailsClick" />
+                                        </Grid>
+
+                                        <ProgressBar Grid.Row="1"
+                                                     Height="6"
+                                                     Minimum="0"
+                                                     Maximum="100"
+                                                     Value="{Binding ProgressPercent}" />
+
+                                        <TextBlock Grid.Row="2"
+                                                   Classes="helper-text"
+                                                   Text="{Binding StatusText}"
+                                                   TextWrapping="Wrap" />
+
+                                        <Border Grid.Row="3"
+                                                Classes="card-muted"
+                                                IsVisible="{Binding IsDetailsExpanded}"
+                                                Padding="8"
+                                                Margin="0,4,0,0">
+                                            <ScrollViewer MaxHeight="120"
+                                                          VerticalScrollBarVisibility="Auto"
+                                                          HorizontalScrollBarVisibility="Disabled">
+                                                <TextBlock Classes="helper-text"
+                                                           Text="{Binding DetailsText}"
+                                                           TextWrapping="Wrap" />
+                                            </ScrollViewer>
+                                        </Border>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Grid>
+        </Border>
+
+        <Border Grid.RowSpan="2"
+                Classes="card tray-export-queue-dock"
+                IsVisible="{Binding IsTrayExportQueueDockVisible}"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Bottom"
+                MinWidth="220"
+                Margin="0,0,12,12"
+                Padding="8">
+            <Grid ColumnDefinitions="Auto,*"
+                  ColumnSpacing="8">
+                <Button Classes="secondary"
+                        MinWidth="108"
+                        Height="30"
+                        Padding="10,0"
+                        Content="{Binding TrayExportQueueToggleText}"
+                        Command="{Binding ToggleTrayExportQueueCommand}" />
+                <TextBlock Grid.Column="1"
+                           VerticalAlignment="Center"
+                           Classes="helper-text"
+                           Text="{Binding TrayExportQueueSummaryText}"
+                           TextTrimming="CharacterEllipsis" />
+            </Grid>
         </Border>
 
         <Border Grid.Row="1" Classes="card" Padding="12" IsVisible="{Binding IsToolkitWorkspace}">

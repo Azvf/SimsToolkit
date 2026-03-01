@@ -6,20 +6,22 @@ using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Models;
 using SimsModDesktop.Services;
 using SimsModDesktop.ViewModels.Infrastructure;
+using SimsModDesktop.ViewModels.Saves;
 
 namespace SimsModDesktop.ViewModels.Shell;
 
 public sealed class MainShellViewModel : ObservableObject
 {
     private readonly MainWindowViewModel _workspaceVm;
+    private readonly SaveHouseholdsViewModel _savesVm;
     private readonly INavigationService _navigation;
     private readonly IFileDialogService _fileDialogService;
     private readonly ISettingsStore _settingsStore;
     private readonly ITS4PathDiscoveryService _pathDiscovery;
     private readonly IGameLaunchService _gameLaunchService;
+    private readonly IAppCacheMaintenanceService _appCacheMaintenanceService;
 
-    private AppSection _selectedSection = AppSection.Mods;
-    private string _selectedModuleKey = "organize";
+    private AppSection _selectedSection = AppSection.Toolkit;
     private bool _enableLaunchGame = true;
     private string _requestedTheme = "Dark";
     private string _ts4RootPath = string.Empty;
@@ -28,6 +30,7 @@ public sealed class MainShellViewModel : ObservableObject
     private string _trayPath = string.Empty;
     private string _savesPath = string.Empty;
     private string _launchGameStatus = string.Empty;
+    private string _cacheMaintenanceStatus = string.Empty;
     private bool _isApplyingDerivedPaths;
     private string _lastDerivedModsPath = string.Empty;
     private string _lastDerivedTrayPath = string.Empty;
@@ -38,25 +41,29 @@ public sealed class MainShellViewModel : ObservableObject
 
     public MainShellViewModel(
         MainWindowViewModel workspaceVm,
+        SaveHouseholdsViewModel savesVm,
         INavigationService navigation,
         IFileDialogService fileDialogService,
         ISettingsStore settingsStore,
         ITS4PathDiscoveryService pathDiscovery,
-        IGameLaunchService gameLaunchService)
+        IGameLaunchService gameLaunchService,
+        IAppCacheMaintenanceService appCacheMaintenanceService)
     {
         _workspaceVm = workspaceVm;
+        _savesVm = savesVm;
         _navigation = navigation;
         _fileDialogService = fileDialogService;
         _settingsStore = settingsStore;
         _pathDiscovery = pathDiscovery;
         _gameLaunchService = gameLaunchService;
+        _appCacheMaintenanceService = appCacheMaintenanceService;
 
         SelectSectionCommand = new RelayCommand<string>(SelectSection);
-        SelectModuleCommand = new RelayCommand<string>(SelectModule);
         LaunchGameCommand = new AsyncRelayCommand(LaunchGameAsync, () => CanLaunchGame);
         SetDarkThemeCommand = new RelayCommand(() => RequestedTheme = "Dark");
         SetLightThemeCommand = new RelayCommand(() => RequestedTheme = "Light");
         BrowseTs4RootCommand = new AsyncRelayCommand(BrowseTs4RootAsync, () => !_workspaceVm.IsBusy, disableWhileRunning: false);
+        ClearCacheCommand = new AsyncRelayCommand(ClearCacheAsync, () => !_workspaceVm.IsBusy, disableWhileRunning: false);
         NavigateToSettingsForPathFixCommand = new RelayCommand(
             NavigateToSettingsForPathFix,
             () => !HasAllCorePathsValid);
@@ -66,17 +73,17 @@ public sealed class MainShellViewModel : ObservableObject
     }
 
     public MainWindowViewModel WorkspaceVm => _workspaceVm;
+    public SaveHouseholdsViewModel SavesVm => _savesVm;
 
     public RelayCommand<string> SelectSectionCommand { get; }
-    public RelayCommand<string> SelectModuleCommand { get; }
     public AsyncRelayCommand LaunchGameCommand { get; }
     public RelayCommand SetDarkThemeCommand { get; }
     public RelayCommand SetLightThemeCommand { get; }
     public AsyncRelayCommand BrowseTs4RootCommand { get; }
+    public AsyncRelayCommand ClearCacheCommand { get; }
     public RelayCommand NavigateToSettingsForPathFixCommand { get; }
 
     public IReadOnlyList<NavigationItem> SectionItems => _navigation.SectionItems;
-    public IReadOnlyList<NavigationItem> ModuleItems => _navigation.CurrentModules;
 
     public AppSection SelectedSection
     {
@@ -88,36 +95,17 @@ public sealed class MainShellViewModel : ObservableObject
                 return;
             }
 
+            OnPropertyChanged(nameof(IsToolkitSectionVisible));
             OnPropertyChanged(nameof(IsModsSectionVisible));
             OnPropertyChanged(nameof(IsTraySectionVisible));
             OnPropertyChanged(nameof(IsSavesVisible));
             OnPropertyChanged(nameof(IsSettingsVisible));
-            OnPropertyChanged(nameof(ModuleItems));
+            OnPropertyChanged(nameof(IsToolkitSectionSelected));
             OnPropertyChanged(nameof(IsModsSectionSelected));
             OnPropertyChanged(nameof(IsTraySectionSelected));
             OnPropertyChanged(nameof(IsSavesSectionSelected));
             OnPropertyChanged(nameof(IsSettingsSectionSelected));
             OnPropertyChanged(nameof(IsWorkspaceSectionVisible));
-        }
-    }
-
-    public string SelectedModuleKey
-    {
-        get => _selectedModuleKey;
-        private set
-        {
-            if (!SetProperty(ref _selectedModuleKey, value))
-            {
-                return;
-            }
-
-            OnPropertyChanged(nameof(IsOrganizeModuleSelected));
-            OnPropertyChanged(nameof(IsFlattenModuleSelected));
-            OnPropertyChanged(nameof(IsNormalizeModuleSelected));
-            OnPropertyChanged(nameof(IsMergeModuleSelected));
-            OnPropertyChanged(nameof(IsFindDupModuleSelected));
-            OnPropertyChanged(nameof(IsTrayPreviewModuleSelected));
-            OnPropertyChanged(nameof(IsTrayDepsModuleSelected));
         }
     }
 
@@ -193,7 +181,7 @@ public sealed class MainShellViewModel : ObservableObject
             }
 
             NotifyPathHealthChanged();
-            SyncTrayPathsToWorkspace();
+            SyncWorkspacePaths();
         }
     }
 
@@ -208,7 +196,7 @@ public sealed class MainShellViewModel : ObservableObject
             }
 
             NotifyPathHealthChanged();
-            SyncTrayPathsToWorkspace();
+            SyncWorkspacePaths();
         }
     }
 
@@ -223,6 +211,7 @@ public sealed class MainShellViewModel : ObservableObject
             }
 
             NotifyPathHealthChanged();
+            _savesVm.SavesPath = _savesPath;
         }
     }
 
@@ -232,22 +221,22 @@ public sealed class MainShellViewModel : ObservableObject
         private set => SetProperty(ref _launchGameStatus, value);
     }
 
+    public string CacheMaintenanceStatus
+    {
+        get => _cacheMaintenanceStatus;
+        private set => SetProperty(ref _cacheMaintenanceStatus, value);
+    }
+
+    public bool IsToolkitSectionVisible => SelectedSection == AppSection.Toolkit;
     public bool IsModsSectionVisible => SelectedSection == AppSection.Mods;
     public bool IsTraySectionVisible => SelectedSection == AppSection.Tray;
     public bool IsSavesVisible => SelectedSection == AppSection.Saves;
     public bool IsSettingsVisible => SelectedSection == AppSection.Settings;
+    public bool IsToolkitSectionSelected => SelectedSection == AppSection.Toolkit;
     public bool IsModsSectionSelected => SelectedSection == AppSection.Mods;
     public bool IsTraySectionSelected => SelectedSection == AppSection.Tray;
     public bool IsSavesSectionSelected => SelectedSection == AppSection.Saves;
     public bool IsSettingsSectionSelected => SelectedSection == AppSection.Settings;
-
-    public bool IsOrganizeModuleSelected => string.Equals(SelectedModuleKey, "organize", StringComparison.OrdinalIgnoreCase);
-    public bool IsFlattenModuleSelected => string.Equals(SelectedModuleKey, "flatten", StringComparison.OrdinalIgnoreCase);
-    public bool IsNormalizeModuleSelected => string.Equals(SelectedModuleKey, "normalize", StringComparison.OrdinalIgnoreCase);
-    public bool IsMergeModuleSelected => string.Equals(SelectedModuleKey, "merge", StringComparison.OrdinalIgnoreCase);
-    public bool IsFindDupModuleSelected => string.Equals(SelectedModuleKey, "finddup", StringComparison.OrdinalIgnoreCase);
-    public bool IsTrayPreviewModuleSelected => string.Equals(SelectedModuleKey, "traypreview", StringComparison.OrdinalIgnoreCase);
-    public bool IsTrayDepsModuleSelected => string.Equals(SelectedModuleKey, "traydeps", StringComparison.OrdinalIgnoreCase);
 
     public bool HasGameExecutable => !string.IsNullOrWhiteSpace(GameExecutablePath) && File.Exists(GameExecutablePath);
     public bool HasModsPath => !string.IsNullOrWhiteSpace(ModsPath) && Directory.Exists(ModsPath);
@@ -287,7 +276,7 @@ public sealed class MainShellViewModel : ObservableObject
 
     public bool CanLaunchGame => EnableLaunchGame && HasGameExecutable;
     public string LaunchButtonText => HasGameExecutable ? "Launch The Sims 4" : "Set Game Path First";
-    public bool IsWorkspaceSectionVisible => IsModsSectionVisible || IsTraySectionVisible;
+    public bool IsWorkspaceSectionVisible => IsToolkitSectionVisible || IsModsSectionVisible || IsTraySectionVisible;
     public bool IsDerivedPathsReadOnly => !string.IsNullOrWhiteSpace(Ts4RootPath);
     public bool IsDarkThemeSelected => string.Equals(RequestedTheme, "Dark", StringComparison.OrdinalIgnoreCase);
     public bool IsLightThemeSelected => string.Equals(RequestedTheme, "Light", StringComparison.OrdinalIgnoreCase);
@@ -335,7 +324,7 @@ public sealed class MainShellViewModel : ObservableObject
 
         ApplyTheme();
         ApplyNavigationToWorkspace();
-        SyncTrayPathsToWorkspace();
+        SyncWorkspacePaths();
         _isInitialized = true;
     }
 
@@ -346,8 +335,7 @@ public sealed class MainShellViewModel : ObservableObject
         var settings = await _settingsStore.LoadAsync();
         settings.Navigation = new AppSettings.NavigationSettings
         {
-            SelectedSection = SelectedSection,
-            SelectedModuleKey = SelectedModuleKey
+            SelectedSection = SelectedSection
         };
         settings.FeatureFlags = new AppSettings.FeatureFlagsSettings
         {
@@ -365,6 +353,7 @@ public sealed class MainShellViewModel : ObservableObject
         {
             RequestedTheme = RequestedTheme
         };
+        settings.Saves = SavesVm.ToSettings();
 
         await _settingsStore.SaveAsync(settings);
     }
@@ -381,14 +370,12 @@ public sealed class MainShellViewModel : ObservableObject
         TrayPath = settings.GameLaunch.TrayPath;
         SavesPath = settings.GameLaunch.SavesPath;
         Ts4RootPath = settings.GameLaunch.Ts4RootPath;
+        SavesVm.LoadFromSettings(settings.Saves ?? new AppSettings.SavesSettings());
+        SavesVm.SavesPath = SavesPath;
 
         _navigation.SelectSection(settings.Navigation.SelectedSection);
-        _navigation.SelectModule(string.IsNullOrWhiteSpace(settings.Navigation.SelectedModuleKey)
-            ? "organize"
-            : settings.Navigation.SelectedModuleKey);
 
         SelectedSection = _navigation.SelectedSection;
-        SelectedModuleKey = _navigation.SelectedModuleKey;
     }
 
     private void ApplyTheme()
@@ -418,56 +405,25 @@ public sealed class MainShellViewModel : ObservableObject
 
         _navigation.SelectSection(section);
         SelectedSection = _navigation.SelectedSection;
-        SelectedModuleKey = _navigation.SelectedModuleKey;
-        ApplyNavigationToWorkspace();
-    }
-
-    private void SelectModule(string? moduleKey)
-    {
-        if (string.IsNullOrWhiteSpace(moduleKey))
-        {
-            return;
-        }
-
-        _navigation.SelectModule(moduleKey);
-        SelectedModuleKey = _navigation.SelectedModuleKey;
         ApplyNavigationToWorkspace();
     }
 
     private void ApplyNavigationToWorkspace()
     {
-        switch (SelectedModuleKey.ToLowerInvariant())
+        switch (SelectedSection)
         {
-            case "organize":
+            case AppSection.Toolkit:
                 _workspaceVm.Workspace = AppWorkspace.Toolkit;
-                _workspaceVm.SelectedAction = SimsAction.Organize;
                 break;
-            case "flatten":
-                _workspaceVm.Workspace = AppWorkspace.Toolkit;
-                _workspaceVm.SelectedAction = SimsAction.Flatten;
+            case AppSection.Mods:
+                _workspaceVm.Workspace = AppWorkspace.ModPreview;
                 break;
-            case "normalize":
-                _workspaceVm.Workspace = AppWorkspace.Toolkit;
-                _workspaceVm.SelectedAction = SimsAction.Normalize;
-                break;
-            case "merge":
-                _workspaceVm.Workspace = AppWorkspace.Toolkit;
-                _workspaceVm.SelectedAction = SimsAction.Merge;
-                break;
-            case "finddup":
-                _workspaceVm.Workspace = AppWorkspace.Toolkit;
-                _workspaceVm.SelectedAction = SimsAction.FindDuplicates;
-                break;
-            case "traydeps":
-                _workspaceVm.Workspace = AppWorkspace.Toolkit;
-                _workspaceVm.SelectedAction = SimsAction.TrayDependencies;
-                break;
-            case "traypreview":
+            case AppSection.Tray:
                 _workspaceVm.Workspace = AppWorkspace.TrayPreview;
                 break;
         }
 
-        SyncTrayPathsToWorkspace();
+        SyncWorkspacePaths();
     }
 
     private async Task LaunchGameAsync()
@@ -493,6 +449,7 @@ public sealed class MainShellViewModel : ObservableObject
         }
 
         BrowseTs4RootCommand.NotifyCanExecuteChanged();
+        ClearCacheCommand.NotifyCanExecuteChanged();
     }
 
     private async Task BrowseTs4RootAsync()
@@ -518,22 +475,19 @@ public sealed class MainShellViewModel : ObservableObject
         Ts4RootFocusRequested?.Invoke(this, EventArgs.Empty);
     }
 
+    private async Task ClearCacheAsync()
+    {
+        CacheMaintenanceStatus = "Clearing disk cache...";
+        var result = await _appCacheMaintenanceService.ClearAsync();
+        CacheMaintenanceStatus = result.Message;
+    }
+
     private void OnNavigationPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (string.Equals(e.PropertyName, nameof(INavigationService.SelectedSection), StringComparison.Ordinal))
         {
             SelectedSection = _navigation.SelectedSection;
             OnPropertyChanged(nameof(SectionItems));
-        }
-
-        if (string.Equals(e.PropertyName, nameof(INavigationService.SelectedModuleKey), StringComparison.Ordinal))
-        {
-            SelectedModuleKey = _navigation.SelectedModuleKey;
-        }
-
-        if (string.Equals(e.PropertyName, nameof(INavigationService.CurrentModules), StringComparison.Ordinal))
-        {
-            OnPropertyChanged(nameof(ModuleItems));
         }
     }
 
@@ -612,8 +566,9 @@ public sealed class MainShellViewModel : ObservableObject
         NavigateToSettingsForPathFixCommand.NotifyCanExecuteChanged();
     }
 
-    private void SyncTrayPathsToWorkspace()
+    private void SyncWorkspacePaths()
     {
+        _workspaceVm.ModPreview.ModsRoot = ModsPath;
         _workspaceVm.TrayPreview.TrayRoot = TrayPath;
         _workspaceVm.TrayDependencies.TrayPath = TrayPath;
         _workspaceVm.TrayDependencies.ModsPath = ModsPath;

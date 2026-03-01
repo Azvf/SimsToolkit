@@ -40,6 +40,6 @@ This checklist freezes expected behavior before and after the MVVM refactor.
 - Expected UI update: dashboard cards and page list populated.
 
 ## Action: tray dependencies
-- Required input: `ScriptPath`, existing `TrayPath`, existing `ModsPath`.
-- Strict mode requires existing `S4TI path`.
-- Expected validation failure when strict mode is selected without S4TI path.
+- Required input: existing `TrayPath`, existing `ModsPath`, `TrayItemKey`.
+- Optional inputs: `Minimum Match Count`, `TopN`, `Max Package Count`, `Export Confidence`.
+- Expected UI behavior: runs fully in-app without external tools.

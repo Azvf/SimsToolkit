@@ -3,6 +3,7 @@ using SimsModDesktop.Application.Cli;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Requests;
+using SimsModDesktop.Application.Saves;
 using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Application.Validation;
@@ -12,9 +13,12 @@ using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Infrastructure.Windowing;
 using SimsModDesktop.Models;
 using SimsModDesktop.Services;
+using SimsModDesktop.SaveData.Services;
+using SimsModDesktop.TrayDependencyEngine;
 using SimsModDesktop.ViewModels.Shell;
 using SimsModDesktop.ViewModels;
 using SimsModDesktop.ViewModels.Panels;
+using SimsModDesktop.ViewModels.Saves;
 using SimsModDesktop.Views;
 
 namespace SimsModDesktop.Composition;
@@ -33,14 +37,22 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<ISimsPowerShellRunner, SimsPowerShellRunner>();
         services.AddSingleton<TrayThumbnailCacheStore>();
         services.AddSingleton<TrayMetadataIndexStore>();
+        services.AddSingleton<IAppCacheMaintenanceService, AppCacheMaintenanceService>();
         services.AddSingleton<ITrayMetadataService, TrayMetadataService>();
         services.AddSingleton<TrayEmbeddedImageExtractor>();
         services.AddSingleton<LocalthumbcacheThumbnailReader>();
         services.AddSingleton<ITrayThumbnailService, TrayThumbnailService>();
         services.AddSingleton<ISimsTrayPreviewService, SimsTrayPreviewService>();
+        services.AddSingleton<IPackageIndexCache, PackageIndexCache>();
+        services.AddSingleton<ITrayDependencyExportService, TrayDependencyExportService>();
+        services.AddSingleton<ITrayDependencyAnalysisService, TrayDependencyAnalysisService>();
         services.AddSingleton<INavigationService, NavigationService>();
         services.AddSingleton<ITS4PathDiscoveryService, TS4PathDiscoveryService>();
         services.AddSingleton<IGameLaunchService, GameLaunchService>();
+        services.AddSingleton<ISaveCatalogService, SaveCatalogService>();
+        services.AddSingleton<ISaveHouseholdReader, SaveHouseholdReader>();
+        services.AddSingleton<IHouseholdTrayExporter, HouseholdTrayExporter>();
+        services.AddSingleton<ISaveHouseholdCoordinator, SaveHouseholdCoordinator>();
         return services;
     }
 
@@ -51,7 +63,6 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<IActionCliArgumentMapper, NormalizeCliArgumentMapper>();
         services.AddSingleton<IActionCliArgumentMapper, MergeCliArgumentMapper>();
         services.AddSingleton<IActionCliArgumentMapper, FindDupCliArgumentMapper>();
-        services.AddSingleton<IActionCliArgumentMapper, TrayDependenciesCliArgumentMapper>();
         services.AddSingleton<ISimsCliArgumentBuilder, SimsCliArgumentBuilder>();
 
         services.AddSingleton<IActionInputValidator<SharedFileOpsInput>, SharedFileOpsInputValidator>();
@@ -60,7 +71,6 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<IActionInputValidator<NormalizeInput>, NormalizeInputValidator>();
         services.AddSingleton<IActionInputValidator<MergeInput>, MergeInputValidator>();
         services.AddSingleton<IActionInputValidator<FindDupInput>, FindDupInputValidator>();
-        services.AddSingleton<IActionInputValidator<TrayDependenciesInput>, TrayDependenciesInputValidator>();
         services.AddSingleton<IActionInputValidator<TrayPreviewInput>, TrayPreviewInputValidator>();
 
         services.AddActionExecutionStrategy<OrganizeInput>(SimsAction.Organize);
@@ -68,7 +78,6 @@ internal static class ServiceCollectionExtensions
         services.AddActionExecutionStrategy<NormalizeInput>(SimsAction.Normalize);
         services.AddActionExecutionStrategy<MergeInput>(SimsAction.Merge);
         services.AddActionExecutionStrategy<FindDupInput>(SimsAction.FindDuplicates);
-        services.AddActionExecutionStrategy<TrayDependenciesInput>(SimsAction.TrayDependencies);
 
         services.AddSingleton<IExecutionCoordinator, ExecutionCoordinator>();
         services.AddSingleton<ITrayPreviewCoordinator, TrayPreviewCoordinator>();
@@ -87,6 +96,7 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<MergePanelViewModel>();
         services.AddSingleton<FindDupPanelViewModel>();
         services.AddSingleton<TrayDependenciesPanelViewModel>();
+        services.AddSingleton<ModPreviewPanelViewModel>();
         services.AddSingleton<TrayPreviewPanelViewModel>();
         services.AddSingleton<SharedFileOpsPanelViewModel>();
 
@@ -113,6 +123,7 @@ internal static class ServiceCollectionExtensions
     public static IServiceCollection AddSimsDesktopPresentation(this IServiceCollection services)
     {
         services.AddSingleton<MainWindowViewModel>();
+        services.AddSingleton<SaveHouseholdsViewModel>();
         services.AddSingleton<MainShellViewModel>();
         services.AddTransient<MainWindow>();
         return services;

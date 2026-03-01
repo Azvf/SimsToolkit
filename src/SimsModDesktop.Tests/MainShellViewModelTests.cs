@@ -1,16 +1,20 @@
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Requests;
+using SimsModDesktop.Application.Saves;
 using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Infrastructure.Dialogs;
 using SimsModDesktop.Infrastructure.Localization;
 using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Models;
+using SimsModDesktop.SaveData.Models;
 using SimsModDesktop.Services;
+using SimsModDesktop.TrayDependencyEngine;
 using SimsModDesktop.ViewModels;
 using SimsModDesktop.ViewModels.Panels;
 using SimsModDesktop.ViewModels.Shell;
+using SimsModDesktop.ViewModels.Saves;
 
 namespace SimsModDesktop.Tests;
 
@@ -58,20 +62,58 @@ public sealed class MainShellViewModelTests
         vm.NavigateToSettingsForPathFixCommand.Execute(null);
 
         Assert.False(focusRequested);
-        Assert.Equal(AppSection.Mods, vm.SelectedSection);
+        Assert.Equal(AppSection.Toolkit, vm.SelectedSection);
     }
 
-    private static MainShellViewModel CreateShellViewModel()
+    [Fact]
+    public async Task ClearCache_UpdatesStatusMessage()
+    {
+        var cacheService = new FakeAppCacheMaintenanceService
+        {
+            NextResult = new AppCacheMaintenanceResult
+            {
+                Success = true,
+                RemovedDirectoryCount = 2,
+                Message = "Cleared 2 cache folder(s). Restart the app to drop in-memory caches."
+            }
+        };
+        var vm = CreateShellViewModel(cacheService);
+
+        Assert.True(vm.ClearCacheCommand.CanExecute(null));
+
+        vm.ClearCacheCommand.Execute(null);
+        await Task.Delay(10);
+
+        Assert.Equal(1, cacheService.CallCount);
+        Assert.Equal("Cleared 2 cache folder(s). Restart the app to drop in-memory caches.", vm.CacheMaintenanceStatus);
+    }
+
+    [Fact]
+    public void ModsPath_SyncsIntoModPreviewWorkspace()
+    {
+        var vm = CreateShellViewModel();
+        using var modsRoot = new TempDirectory();
+
+        vm.ModsPath = modsRoot.Path;
+
+        Assert.Equal(modsRoot.Path, vm.WorkspaceVm.ModPreview.ModsRoot);
+    }
+
+    private static MainShellViewModel CreateShellViewModel(FakeAppCacheMaintenanceService? cacheService = null)
     {
         var settingsStore = new FakeSettingsStore(new AppSettings());
         var workspaceVm = CreateWorkspaceViewModel(settingsStore);
+        var fileDialog = new FakeFileDialogService();
+        var savesVm = new SaveHouseholdsViewModel(new FakeSaveHouseholdCoordinator(), fileDialog);
         return new MainShellViewModel(
             workspaceVm,
+            savesVm,
             new NavigationService(),
-            new FakeFileDialogService(),
+            fileDialog,
             settingsStore,
             new FakePathDiscoveryService(),
-            new FakeGameLaunchService());
+            new FakeGameLaunchService(),
+            cacheService ?? new FakeAppCacheMaintenanceService());
     }
 
     private static MainWindowViewModel CreateWorkspaceViewModel(ISettingsStore settingsStore)
@@ -82,6 +124,7 @@ public sealed class MainShellViewModelTests
         var merge = new MergePanelViewModel();
         var findDup = new FindDupPanelViewModel();
         var trayDependencies = new TrayDependenciesPanelViewModel();
+        var modPreview = new ModPreviewPanelViewModel();
         var trayPreview = new TrayPreviewPanelViewModel();
         var sharedFileOps = new SharedFileOpsPanelViewModel();
 
@@ -99,6 +142,8 @@ public sealed class MainShellViewModelTests
         return new MainWindowViewModel(
             new ToolkitExecutionRunner(new FakeExecutionCoordinator()),
             new TrayPreviewRunner(new FakeTrayPreviewCoordinator()),
+            new FakeTrayDependencyExportService(),
+            new FakeTrayDependencyAnalysisService(),
             new FakeFileDialogService(),
             new FakeConfirmationDialogService(),
             new JsonLocalizationService(),
@@ -111,9 +156,11 @@ public sealed class MainShellViewModelTests
             normalize,
             merge,
             findDup,
-            trayDependencies,
-            trayPreview,
-            sharedFileOps);
+            trayDependencies: trayDependencies,
+            modPreview: modPreview,
+            trayPreview: trayPreview,
+            sharedFileOps: sharedFileOps,
+            trayThumbnailService: null);
     }
 
     private sealed class FakeExecutionCoordinator : IExecutionCoordinator
@@ -180,6 +227,20 @@ public sealed class MainShellViewModelTests
         }
     }
 
+    private sealed class FakeTrayDependencyAnalysisService : ITrayDependencyAnalysisService
+    {
+        public Task<TrayDependencyAnalysisResult> AnalyzeAsync(
+            TrayDependencyAnalysisRequest request,
+            IProgress<TrayDependencyAnalysisProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new TrayDependencyAnalysisResult
+            {
+                Success = true
+            });
+        }
+    }
+
     private sealed class FakeFileDialogService : IFileDialogService
     {
         public Task<IReadOnlyList<string>> PickFolderPathsAsync(string title, bool allowMultiple)
@@ -195,6 +256,20 @@ public sealed class MainShellViewModelTests
         public Task<string?> PickCsvSavePathAsync(string title, string suggestedFileName)
         {
             return Task.FromResult<string?>(null);
+        }
+    }
+
+    private sealed class FakeTrayDependencyExportService : ITrayDependencyExportService
+    {
+        public Task<TrayDependencyExportResult> ExportAsync(
+            TrayDependencyExportRequest request,
+            IProgress<TrayDependencyExportProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new TrayDependencyExportResult
+            {
+                Success = true
+            });
         }
     }
 
@@ -243,6 +318,46 @@ public sealed class MainShellViewModelTests
                 Success = true,
                 Message = "ok"
             };
+        }
+    }
+
+    private sealed class FakeSaveHouseholdCoordinator : ISaveHouseholdCoordinator
+    {
+        public IReadOnlyList<SaveFileEntry> GetSaveFiles(string savesRootPath)
+        {
+            return Array.Empty<SaveFileEntry>();
+        }
+
+        public bool TryLoadHouseholds(string saveFilePath, out SaveHouseholdSnapshot? snapshot, out string error)
+        {
+            snapshot = null;
+            error = string.Empty;
+            return false;
+        }
+
+        public SaveHouseholdExportResult Export(SaveHouseholdExportRequest request)
+        {
+            return new SaveHouseholdExportResult
+            {
+                Succeeded = false,
+                Error = "not implemented for tests"
+            };
+        }
+    }
+
+    private sealed class FakeAppCacheMaintenanceService : IAppCacheMaintenanceService
+    {
+        public int CallCount { get; private set; }
+        public AppCacheMaintenanceResult NextResult { get; set; } = new()
+        {
+            Success = true,
+            Message = "No disk cache folders were present. Restart the app to drop in-memory caches."
+        };
+
+        public Task<AppCacheMaintenanceResult> ClearAsync(CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            return Task.FromResult(NextResult);
         }
     }
 

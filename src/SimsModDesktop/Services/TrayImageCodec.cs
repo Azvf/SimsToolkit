@@ -103,4 +103,72 @@ internal static class TrayImageCodec
             return false;
         }
     }
+
+    public static bool TryApplyAlphaMask(
+        ReadOnlySpan<byte> rgbData,
+        ReadOnlySpan<byte> alphaMaskData,
+        out byte[] pngBytes,
+        out int width,
+        out int height)
+    {
+        pngBytes = Array.Empty<byte>();
+        width = 0;
+        height = 0;
+
+        if (rgbData.IsEmpty || alphaMaskData.IsEmpty)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var rgbBitmap = SKBitmap.Decode(rgbData.ToArray());
+            using var alphaBitmap = SKBitmap.Decode(alphaMaskData.ToArray());
+            if (rgbBitmap is null ||
+                alphaBitmap is null ||
+                rgbBitmap.Width < 1 ||
+                rgbBitmap.Height < 1 ||
+                alphaBitmap.Width != rgbBitmap.Width ||
+                alphaBitmap.Height != rgbBitmap.Height)
+            {
+                return false;
+            }
+
+            width = rgbBitmap.Width;
+            height = rgbBitmap.Height;
+
+            var rgbPixels = rgbBitmap.Pixels;
+            var alphaPixels = alphaBitmap.Pixels;
+            var outputPixels = new SKColor[rgbPixels.Length];
+
+            for (var i = 0; i < outputPixels.Length; i++)
+            {
+                var source = rgbPixels[i];
+                var alpha = alphaPixels[i].Blue;
+                outputPixels[i] = alpha == 0
+                    ? new SKColor(0, 0, 0, 0)
+                    : new SKColor(source.Red, source.Green, source.Blue, alpha);
+            }
+
+            using var output = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Unpremul));
+            output.Pixels = outputPixels;
+
+            using var image = SKImage.FromBitmap(output);
+            using var encoded = image.Encode(SKEncodedImageFormat.Png, 100);
+            if (encoded is null)
+            {
+                return false;
+            }
+
+            pngBytes = encoded.ToArray();
+            return pngBytes.Length > 0;
+        }
+        catch
+        {
+            pngBytes = Array.Empty<byte>();
+            width = 0;
+            height = 0;
+            return false;
+        }
+    }
 }

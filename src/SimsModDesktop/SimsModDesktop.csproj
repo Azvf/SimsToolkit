@@ -29,4 +29,9 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SimsModDesktop.TrayDependencyEngine\SimsModDesktop.TrayDependencyEngine.csproj" />
+    <ProjectReference Include="..\SimsModDesktop.SaveData\SimsModDesktop.SaveData.csproj" />
+  </ItemGroup>
 </Project>

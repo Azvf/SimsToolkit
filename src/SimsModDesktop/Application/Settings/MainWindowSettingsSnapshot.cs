@@ -9,6 +9,7 @@ public sealed record MainWindowSettingsSnapshot
     public AppWorkspace Workspace { get; init; } = AppWorkspace.Toolkit;
     public SimsAction SelectedAction { get; init; } = SimsAction.Organize;
     public bool WhatIf { get; init; }
+    public AppSettings.ModPreviewSettings ModPreview { get; init; } = new();
     public AppSettings.SharedFileOpsSettings SharedFileOps { get; init; } = new();
     public AppSettings.UiStateSettings UiState { get; init; } = new();
     public AppSettings.NavigationSettings Navigation { get; init; } = new();
@@ -22,6 +23,7 @@ public sealed record MainWindowResolvedSettings
     public string UiLanguageCode { get; init; } = "en-US";
     public string ScriptPath { get; init; } = string.Empty;
     public bool WhatIf { get; init; }
+    public AppSettings.ModPreviewSettings ModPreview { get; init; } = new();
     public AppSettings.SharedFileOpsSettings SharedFileOps { get; init; } = new();
     public AppSettings.UiStateSettings UiState { get; init; } = new();
     public AppSettings.NavigationSettings Navigation { get; init; } = new();

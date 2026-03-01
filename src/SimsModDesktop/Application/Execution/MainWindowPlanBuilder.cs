@@ -46,6 +46,36 @@ public sealed class MainWindowPlanBuilder : IMainWindowPlanBuilder
         return true;
     }
 
+    public bool TryBuildTrayDependenciesPlan(
+        MainWindowPlanBuilderState state,
+        out TrayDependenciesExecutionPlan plan,
+        out string error)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+
+        plan = null!;
+
+        if (!TryBuildGlobalExecutionOptions(state, requireScriptPath: false, includeShared: false, out var options, out error))
+        {
+            return false;
+        }
+
+        var module = _moduleRegistry.Get(SimsAction.TrayDependencies);
+        if (!module.TryBuildPlan(options, out var builtPlan, out error))
+        {
+            return false;
+        }
+
+        if (builtPlan is not TrayDependenciesExecutionPlan trayDependenciesPlan)
+        {
+            error = "Tray dependencies module returned unsupported execution plan.";
+            return false;
+        }
+
+        plan = trayDependenciesPlan;
+        return true;
+    }
+
     public bool TryBuildTrayPreviewInput(
         MainWindowPlanBuilderState state,
         out TrayPreviewInput input,

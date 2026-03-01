@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ScriptPath,
     [Parameter(Mandatory = $true)]
-    [ValidateSet('organize','flatten','normalize','merge','finddup','traypreview','trayprobe')]
+    [ValidateSet('organize','flatten','normalize','merge','finddup','traypreview','traydependencies')]
     [string]$Action
 )
 
@@ -32,7 +32,7 @@ switch ($Action) {
     'traypreview' {
         Write-Host "Tray preview is client-only in desktop app. Validate via UI run flow."
     }
-    'trayprobe' {
-        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $ScriptPath -Action trayprobe -WhatIf
+    'traydependencies' {
+        Write-Host "Tray dependencies are client-only in desktop app. Validate via UI run flow."
     }
 }

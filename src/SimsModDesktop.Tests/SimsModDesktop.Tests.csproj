@@ -21,6 +21,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SimsModDesktop\SimsModDesktop.csproj" />
+    <ProjectReference Include="..\SimsModDesktop.TrayDependencyEngine\SimsModDesktop.TrayDependencyEngine.csproj" />
+    <ProjectReference Include="..\SimsModDesktop.SaveData\SimsModDesktop.SaveData.csproj" />
     <PackageReference Include="SkiaSharp" Version="2.88.9" />
   </ItemGroup>
 

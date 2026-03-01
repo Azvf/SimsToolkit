@@ -1,7 +1,7 @@
 using System.Text.Json.Nodes;
-using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Validation;
 using SimsModDesktop.Models;
+using SimsModDesktop.TrayDependencyEngine;
 
 namespace SimsModDesktop.Application.Modules;
 
@@ -10,7 +10,6 @@ public sealed class TrayDependenciesActionModule : IActionModule
     private static readonly IReadOnlyList<string> ActionPatchKeys =
     [
         "trayItemKey",
-        "s4tiPath",
         "minMatchCount",
         "topN",
         "maxPackageCount",
@@ -30,7 +29,7 @@ public sealed class TrayDependenciesActionModule : IActionModule
     }
 
     public SimsAction Action => SimsAction.TrayDependencies;
-    public string ModuleKey => "trayprobe";
+    public string ModuleKey => "traydeps";
     public string DisplayName => "Tray Dependencies";
     public bool UsesSharedFileOps => false;
     public IReadOnlyCollection<string> SupportedActionPatchKeys => ActionPatchKeys;
@@ -38,7 +37,6 @@ public sealed class TrayDependenciesActionModule : IActionModule
     public void LoadFromSettings(AppSettings settings)
     {
         _panel.TrayItemKey = settings.TrayDependencies.TrayItemKey;
-        _panel.S4tiPath = settings.TrayDependencies.S4tiPath;
         _panel.MinMatchCountText = settings.TrayDependencies.MinMatchCountText;
         _panel.TopNText = settings.TrayDependencies.TopNText;
         _panel.MaxPackageCountText = settings.TrayDependencies.MaxPackageCountText;
@@ -53,7 +51,6 @@ public sealed class TrayDependenciesActionModule : IActionModule
     public void SaveToSettings(AppSettings settings)
     {
         settings.TrayDependencies.TrayItemKey = _panel.TrayItemKey;
-        settings.TrayDependencies.S4tiPath = _panel.S4tiPath;
         settings.TrayDependencies.MinMatchCountText = _panel.MinMatchCountText;
         settings.TrayDependencies.TopNText = _panel.TopNText;
         settings.TrayDependencies.MaxPackageCountText = _panel.MaxPackageCountText;
@@ -67,9 +64,46 @@ public sealed class TrayDependenciesActionModule : IActionModule
 
     public bool TryBuildPlan(GlobalExecutionOptions options, out ModuleExecutionPlan plan, out string error)
     {
+        _ = options;
         plan = null!;
-        if (!ModuleHelpers.TryResolveScriptPath(options.ScriptPath, out var scriptPath, out error))
+        var trayPath = ModuleHelpers.ToNullIfWhiteSpace(_panel.TrayPath);
+        if (string.IsNullOrWhiteSpace(trayPath))
         {
+            error = "TrayPath is required for tray dependency analysis.";
+            return false;
+        }
+
+        if (!Directory.Exists(trayPath))
+        {
+            error = "TrayPath does not exist for tray dependency analysis.";
+            return false;
+        }
+
+        var modsPath = ModuleHelpers.ToNullIfWhiteSpace(_panel.ModsPath);
+        if (string.IsNullOrWhiteSpace(modsPath))
+        {
+            error = "ModsPath is required for tray dependency analysis.";
+            return false;
+        }
+
+        if (!Directory.Exists(modsPath))
+        {
+            error = "ModsPath does not exist for tray dependency analysis.";
+            return false;
+        }
+
+        var trayItemKey = ModuleHelpers.ToNullIfWhiteSpace(_panel.TrayItemKey);
+        if (string.IsNullOrWhiteSpace(trayItemKey))
+        {
+            error = "TrayItemKey is required for tray dependency analysis.";
+            return false;
+        }
+
+        var exportTargetPath = ModuleHelpers.ToNullIfWhiteSpace(_panel.ExportTargetPath);
+        if ((_panel.ExportMatchedPackages || _panel.ExportUnusedPackages) &&
+            string.IsNullOrWhiteSpace(exportTargetPath))
+        {
+            error = "ExportTargetPath is required when exporting dependency packages.";
             return false;
         }
 
@@ -88,14 +122,11 @@ public sealed class TrayDependenciesActionModule : IActionModule
             return false;
         }
 
-        plan = new CliExecutionPlan(new TrayDependenciesInput
+        plan = new TrayDependenciesExecutionPlan(new TrayDependencyAnalysisRequest
         {
-            ScriptPath = scriptPath,
-            WhatIf = options.WhatIf,
-            TrayPath = ModuleHelpers.ToNullIfWhiteSpace(_panel.TrayPath),
-            ModsPath = ModuleHelpers.ToNullIfWhiteSpace(_panel.ModsPath),
-            TrayItemKey = ModuleHelpers.ToNullIfWhiteSpace(_panel.TrayItemKey),
-            S4tiPath = ModuleHelpers.ToNullIfWhiteSpace(_panel.S4tiPath),
+            TrayPath = trayPath,
+            ModsRootPath = modsPath,
+            TrayItemKey = trayItemKey,
             MinMatchCount = minMatchCount,
             TopN = topN,
             MaxPackageCount = maxPackageCount,
@@ -103,7 +134,7 @@ public sealed class TrayDependenciesActionModule : IActionModule
             ExportMatchedPackages = _panel.ExportMatchedPackages,
             OutputCsv = ModuleHelpers.ToNullIfWhiteSpace(_panel.OutputCsv),
             UnusedOutputCsv = ModuleHelpers.ToNullIfWhiteSpace(_panel.UnusedOutputCsv),
-            ExportTargetPath = ModuleHelpers.ToNullIfWhiteSpace(_panel.ExportTargetPath),
+            ExportTargetPath = exportTargetPath,
             ExportMinConfidence = ModuleHelpers.ToNullIfWhiteSpace(_panel.ExportMinConfidence) ?? "Low"
         });
         error = string.Empty;
@@ -115,7 +146,6 @@ public sealed class TrayDependenciesActionModule : IActionModule
         error = string.Empty;
 
         if (!ModuleHelpers.TryGetString(patch, "trayItemKey", out var hasTrayItemKey, out var trayItemKey, out error) ||
-            !ModuleHelpers.TryGetString(patch, "s4tiPath", out var hasS4tiPath, out var s4tiPath, out error) ||
             !ModuleHelpers.TryGetString(patch, "outputCsv", out var hasOutputCsv, out var outputCsv, out error) ||
             !ModuleHelpers.TryGetString(patch, "unusedOutputCsv", out var hasUnusedOutputCsv, out var unusedOutputCsv, out error) ||
             !ModuleHelpers.TryGetString(patch, "exportTargetPath", out var hasExportTargetPath, out var exportTargetPath, out error) ||
@@ -136,11 +166,6 @@ public sealed class TrayDependenciesActionModule : IActionModule
         if (hasTrayItemKey)
         {
             _panel.TrayItemKey = trayItemKey ?? string.Empty;
-        }
-
-        if (hasS4tiPath)
-        {
-            _panel.S4tiPath = s4tiPath ?? string.Empty;
         }
 
         if (hasMinMatchCount)

@@ -45,12 +45,12 @@ public sealed class TrayThumbnailService : ITrayThumbnailService
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        var embeddedImage = TryExtractEmbeddedImage(item, cancellationToken);
-        var localthumbcacheImage = embeddedImage is null
-            ? _localthumbcacheThumbnailReader.TryExtractBestImage(
-                item.TrayRootPath,
-                item.TrayInstanceId,
-                cancellationToken)
+        var localthumbcacheImage = _localthumbcacheThumbnailReader.TryExtractBestImage(
+            item.TrayRootPath,
+            item.TrayInstanceId,
+            cancellationToken);
+        var embeddedImage = localthumbcacheImage is null
+            ? _embeddedImageExtractor.TryExtractBestImage(item, cancellationToken)
             : null;
 
         var sourceKind = TrayThumbnailSourceKind.Placeholder;
@@ -96,79 +96,6 @@ public sealed class TrayThumbnailService : ITrayThumbnailService
         return _cacheStore.CleanupStaleEntriesAsync(trayRootPath, liveItemKeys, cancellationToken);
     }
 
-    private ExtractedTrayImage? TryExtractEmbeddedImage(
-        SimsTrayPreviewItem item,
-        CancellationToken cancellationToken)
-    {
-        var trayItemImage = _embeddedImageExtractor.TryExtractBestImage(item, cancellationToken);
-        if (trayItemImage is not null)
-        {
-            return trayItemImage;
-        }
-
-        foreach (var candidatePath in OrderSourcePaths(item))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var image = _embeddedImageExtractor.TryExtractBestImage(candidatePath, cancellationToken);
-            if (image is not null)
-            {
-                return image;
-            }
-        }
-
-        return null;
-    }
-
-    private static IEnumerable<string> OrderSourcePaths(SimsTrayPreviewItem item)
-    {
-        ArgumentNullException.ThrowIfNull(item);
-
-        if (item.SourceFilePaths.Count == 0)
-        {
-            return Array.Empty<string>();
-        }
-
-        var rank = item.PresetType switch
-        {
-            "Lot" => new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
-            {
-                [".bpi"] = 0,
-                [".blueprint"] = 1,
-                [".trayitem"] = 2
-            },
-            "Room" => new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
-            {
-                [".rmi"] = 0,
-                [".room"] = 1,
-                [".trayitem"] = 2
-            },
-            "Household" => new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
-            {
-                [".hhi"] = 0,
-                [".sgi"] = 1,
-                [".trayitem"] = 2
-            },
-            _ => new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
-            {
-                [".bpi"] = 0,
-                [".rmi"] = 1,
-                [".hhi"] = 2,
-                [".sgi"] = 3,
-                [".trayitem"] = 4
-            }
-        };
-
-        return item.SourceFilePaths
-            .OrderBy(path =>
-            {
-                var extension = Path.GetExtension(path);
-                return rank.TryGetValue(extension, out var value)
-                    ? value
-                    : 99;
-            })
-            .ThenBy(path => path, StringComparer.OrdinalIgnoreCase);
-    }
-
     private static ExtractedTrayImage? SelectBestImage(
         ExtractedTrayImage? embeddedImage,
         ExtractedTrayImage? localthumbcacheImage,
@@ -180,25 +107,20 @@ public sealed class TrayThumbnailService : ITrayThumbnailService
             return null;
         }
 
-        if (embeddedImage is null)
-        {
-            sourceKind = TrayThumbnailSourceKind.Localthumbcache;
-            return localthumbcacheImage;
-        }
-
         if (localthumbcacheImage is null)
         {
             sourceKind = TrayThumbnailSourceKind.Embedded;
             return embeddedImage;
         }
 
-        if (localthumbcacheImage.PixelArea > embeddedImage.PixelArea)
+        if (embeddedImage is null)
         {
             sourceKind = TrayThumbnailSourceKind.Localthumbcache;
             return localthumbcacheImage;
         }
 
-        sourceKind = TrayThumbnailSourceKind.Embedded;
-        return embeddedImage;
+        // Prefer the game's own localthumbcache preview when available.
+        sourceKind = TrayThumbnailSourceKind.Localthumbcache;
+        return localthumbcacheImage;
     }
 }

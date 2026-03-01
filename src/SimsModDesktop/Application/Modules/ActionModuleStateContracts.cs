@@ -44,7 +44,6 @@ public interface ITrayDependenciesModuleState
     string TrayPath { get; set; }
     string ModsPath { get; set; }
     string TrayItemKey { get; set; }
-    string S4tiPath { get; set; }
     string MinMatchCountText { get; set; }
     string TopNText { get; set; }
     string MaxPackageCountText { get; set; }

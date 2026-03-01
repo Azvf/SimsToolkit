@@ -10,6 +10,7 @@ public sealed class TrayPreviewListItemViewModel : ObservableObject, IDisposable
     private bool _isThumbnailLoading;
     private bool _hasThumbnailError;
     private bool _isExpanded;
+    private bool _isSelected;
     private bool _showDebugPreview;
     private readonly Action<TrayPreviewListItemViewModel>? _expandedCallback;
     private readonly Action<TrayPreviewListItemViewModel>? _openDetailsCallback;
@@ -99,6 +100,13 @@ public sealed class TrayPreviewListItemViewModel : ObservableObject, IDisposable
         get => _showDebugPreview;
         private set => SetProperty(ref _showDebugPreview, value);
     }
+
+    public bool IsSelected
+    {
+        get => _isSelected;
+        private set => SetProperty(ref _isSelected, value);
+    }
+
     public bool IsThumbnailPlaceholderVisible => !HasThumbnail && !IsThumbnailLoading;
 
     public void SetThumbnail(Bitmap bitmap)
@@ -145,6 +153,11 @@ public sealed class TrayPreviewListItemViewModel : ObservableObject, IDisposable
         {
             child.SetDebugPreviewEnabled(enabled);
         }
+    }
+
+    public void SetSelected(bool selected)
+    {
+        IsSelected = selected;
     }
 
     private void ToggleChildren()

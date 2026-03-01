@@ -9,7 +9,7 @@ public sealed class TrayThumbnailCacheStore
 {
     private const int DefaultTargetWidth = 768;
     private const int DefaultTargetHeight = 576;
-    private const string CacheTransformVersion = "canvas-fit-v4";
+    private const string CacheTransformVersion = "canvas-fit-v5";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

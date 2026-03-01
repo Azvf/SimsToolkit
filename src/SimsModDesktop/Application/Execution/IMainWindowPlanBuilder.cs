@@ -12,6 +12,11 @@ public interface IMainWindowPlanBuilder
         out CliExecutionPlan plan,
         out string error);
 
+    bool TryBuildTrayDependenciesPlan(
+        MainWindowPlanBuilderState state,
+        out TrayDependenciesExecutionPlan plan,
+        out string error);
+
     bool TryBuildTrayPreviewInput(
         MainWindowPlanBuilderState state,
         out TrayPreviewInput input,

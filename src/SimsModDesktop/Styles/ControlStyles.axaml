@@ -19,6 +19,38 @@
         <Setter Property="CornerRadius" Value="{DynamicResource Radius.Small}" />
     </Style>
 
+    <Style Selector="Border.tray-preview-item-card">
+        <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
+    </Style>
+
+    <Style Selector="Border.tray-preview-item-card.selected">
+        <Setter Property="Background" Value="{DynamicResource Brush.AccentMuted}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderFocus}" />
+        <Setter Property="BorderThickness" Value="1.5" />
+    </Style>
+
+    <Style Selector="Border.tray-export-queue">
+        <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderFocus}" />
+        <Setter Property="BorderThickness" Value="1" />
+    </Style>
+
+    <Style Selector="Border.tray-export-queue-dock">
+        <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
+        <Setter Property="BorderThickness" Value="1" />
+    </Style>
+
+    <Style Selector="Border.tray-export-task-card.running">
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderFocus}" />
+    </Style>
+
+    <Style Selector="Border.tray-export-task-card.failed">
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Danger}" />
+        <Setter Property="BorderThickness" Value="1.5" />
+    </Style>
+
     <Style Selector="Border.tray-preview-empty-state">
         <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
         <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderHover}" />
