@@ -17,22 +17,25 @@ public sealed class SavePreviewCacheStore : ISavePreviewCacheStore
     };
 
     private readonly string _cacheRootPath;
-    private readonly SqliteCacheDatabase _database;
+    private readonly AppCacheDatabase _database;
 
     public SavePreviewCacheStore()
-        : this(
-            Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "SimsModDesktop",
-                "Cache",
-                "SavePreview"))
+        : this(GetDefaultCacheBasePath())
     {
     }
 
-    internal SavePreviewCacheStore(string cacheRootPath)
+    internal SavePreviewCacheStore(string cacheBasePath)
     {
-        _cacheRootPath = cacheRootPath;
-        _database = new SqliteCacheDatabase(Path.Combine(_cacheRootPath, "cache.db"));
+        _cacheRootPath = Path.Combine(cacheBasePath, "SavePreview");
+        _database = new AppCacheDatabase(cacheBasePath);
+    }
+
+    private static string GetDefaultCacheBasePath()
+    {
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "SimsModDesktop",
+            "Cache");
     }
 
     public string GetCacheRootPath(string saveFilePath)

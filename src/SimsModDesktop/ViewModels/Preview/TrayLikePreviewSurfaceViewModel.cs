@@ -19,6 +19,9 @@ public enum PreviewSurfaceSelectionMode
 
 public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposable
 {
+    private const int InitialPriorityThumbnailCount = 12;
+    private const int MaxConcurrentThumbnailLoads = 8;
+
     private readonly ITrayPreviewRunner _trayPreviewRunner;
     private readonly ITrayThumbnailService _trayThumbnailService;
     private readonly HashSet<string> _selectedKeys = new(StringComparer.OrdinalIgnoreCase);
@@ -43,6 +46,8 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
     private string? _selectionAnchorKey;
     private TrayPreviewListItemViewModel? _selectedItem;
     private int _thumbnailBatchId;
+    private bool _backgroundLoadingPaused;
+    private bool _refreshRequestedWhilePaused;
 
     public TrayLikePreviewSurfaceViewModel(
         ITrayPreviewRunner trayPreviewRunner,
@@ -221,7 +226,8 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
     public void Configure(
         TrayLikePreviewFilterViewModel filter,
         Func<string> trayPathProvider,
-        PreviewSurfaceSelectionMode selectionMode)
+        PreviewSurfaceSelectionMode selectionMode,
+        bool autoLoad = true)
     {
         ArgumentNullException.ThrowIfNull(filter);
         ArgumentNullException.ThrowIfNull(trayPathProvider);
@@ -244,7 +250,13 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
         OnPropertyChanged(nameof(HasValidTrayPath));
         RefreshCommand.NotifyCanExecuteChanged();
 
-        _ = RefreshAsync();
+        _backgroundLoadingPaused = !autoLoad;
+        _refreshRequestedWhilePaused = !autoLoad;
+
+        if (autoLoad)
+        {
+            _ = RefreshAsync();
+        }
     }
 
     public void SetActionButtons(IEnumerable<PreviewSurfaceActionButtonViewModel> buttons)
@@ -271,7 +283,54 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
             _trayPreviewRunner.Invalidate(_trayPathProvider?.Invoke());
         }
 
+        if (_backgroundLoadingPaused)
+        {
+            _refreshRequestedWhilePaused = true;
+            return;
+        }
+
         _ = RefreshAsync();
+    }
+
+    public void PauseBackgroundLoading()
+    {
+        _backgroundLoadingPaused = true;
+
+        _autoReloadCts?.Cancel();
+        _autoReloadCts?.Dispose();
+        _autoReloadCts = null;
+
+        CancelThumbnailLoading();
+    }
+
+    public void ResetAfterCacheClear(string statusText = "Preview cache cleared. Return to Tray to reload.")
+    {
+        _autoReloadCts?.Cancel();
+        _autoReloadCts?.Dispose();
+        _autoReloadCts = null;
+
+        _trayPreviewRunner.Invalidate();
+        _trayThumbnailService.ResetMemoryCache();
+        _hasLoadedOnce = false;
+        ClearItems(statusText);
+    }
+
+    public Task EnsureLoadedAsync(bool forceReload = false)
+    {
+        if (!HasValidTrayPath || IsBusy)
+        {
+            return Task.CompletedTask;
+        }
+
+        var needsRefresh = forceReload || _refreshRequestedWhilePaused || !HasItems;
+        _backgroundLoadingPaused = false;
+        if (!needsRefresh)
+        {
+            return Task.CompletedTask;
+        }
+
+        _refreshRequestedWhilePaused = false;
+        return RefreshAsync();
     }
 
     public IReadOnlyList<TrayPreviewListItemViewModel> GetSelectedItems()
@@ -336,6 +395,9 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
         {
             return;
         }
+
+        _backgroundLoadingPaused = false;
+        _refreshRequestedWhilePaused = false;
 
         var trayPath = _trayPathProvider.Invoke();
         if (string.IsNullOrWhiteSpace(trayPath) || !Directory.Exists(trayPath))
@@ -512,6 +574,12 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
 
     private void QueueAutoReload()
     {
+        if (_backgroundLoadingPaused)
+        {
+            _refreshRequestedWhilePaused = true;
+            return;
+        }
+
         _autoReloadCts?.Cancel();
         _autoReloadCts?.Dispose();
         _autoReloadCts = new CancellationTokenSource();
@@ -659,10 +727,16 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
             return;
         }
 
+        if (_backgroundLoadingPaused)
+        {
+            _refreshRequestedWhilePaused = true;
+            return;
+        }
+
         _thumbnailBatchId++;
         _thumbnailCts = new CancellationTokenSource();
         var batchId = _thumbnailBatchId;
-        _ = LoadThumbnailBatchAsync(PreviewItems.ToArray(), batchId, _thumbnailCts, _thumbnailCts.Token);
+        _ = LoadThumbnailBatchAsync(BuildPrioritizedItems(PreviewItems), batchId, _thumbnailCts, _thumbnailCts.Token);
     }
 
     private async Task LoadThumbnailBatchAsync(
@@ -686,24 +760,45 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
             item.SetThumbnailLoading();
         }
 
-        foreach (var item in items)
+        var workerCount = Math.Min(MaxConcurrentThumbnailLoads, items.Count);
+        var nextItemIndex = new[] { -1 };
+        var workers = new Task[workerCount];
+        for (var workerIndex = 0; workerIndex < workerCount; workerIndex++)
+        {
+            workers[workerIndex] = Task.Run(
+                () => RunThumbnailWorkerAsync(items, nextItemIndex, batchId, batchCts, cancellationToken));
+        }
+
+        await Task.WhenAll(workers).ConfigureAwait(false);
+    }
+
+    private async Task RunThumbnailWorkerAsync(
+        IReadOnlyList<TrayPreviewListItemViewModel> items,
+        int[] nextItemIndex,
+        int batchId,
+        CancellationTokenSource batchCts,
+        CancellationToken cancellationToken)
+    {
+        while (true)
         {
             if (!IsActiveThumbnailBatch(batchId, batchCts))
             {
                 return;
             }
 
-            TrayThumbnailResult result;
-            Bitmap? bitmap = null;
-            try
-            {
-                (result, bitmap) = await Task.Run(
-                    () => ResolveThumbnailResult(item.Item, cancellationToken),
-                    cancellationToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
+            var itemIndex = Interlocked.Increment(ref nextItemIndex[0]);
+            if (itemIndex < 0 || itemIndex >= items.Count)
             {
                 return;
+            }
+
+            var item = items[itemIndex];
+            TrayThumbnailResult result;
+            Bitmap? bitmap = null;
+            var wasCancelled = false;
+            try
+            {
+                (wasCancelled, result, bitmap) = ResolveThumbnailResult(item.Item, cancellationToken);
             }
             catch
             {
@@ -712,6 +807,12 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
                     SourceKind = TrayThumbnailSourceKind.Placeholder,
                     Success = false
                 };
+            }
+
+            if (wasCancelled)
+            {
+                bitmap?.Dispose();
+                return;
             }
 
             if (!IsActiveThumbnailBatch(batchId, batchCts))
@@ -739,17 +840,28 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
         }
     }
 
-    private (TrayThumbnailResult Result, Bitmap? Bitmap) ResolveThumbnailResult(
+    private (bool WasCancelled, TrayThumbnailResult Result, Bitmap? Bitmap) ResolveThumbnailResult(
         SimsTrayPreviewItem item,
         CancellationToken cancellationToken)
     {
-        var result = _trayThumbnailService.GetThumbnailAsync(item, cancellationToken).GetAwaiter().GetResult();
-        if (result.Success && TryLoadBitmap(result.CacheFilePath, out var bitmap))
+        try
         {
-            return (result, bitmap);
-        }
+            var result = _trayThumbnailService.GetThumbnailAsync(item, cancellationToken).GetAwaiter().GetResult();
+            if (result.Success && TryLoadBitmap(result.CacheFilePath, out var bitmap))
+            {
+                return (false, result, bitmap);
+            }
 
-        return (result, null);
+            return (false, result, null);
+        }
+        catch (OperationCanceledException)
+        {
+            return (true, new TrayThumbnailResult
+            {
+                SourceKind = TrayThumbnailSourceKind.Placeholder,
+                Success = false
+            }, null);
+        }
     }
 
     private bool IsActiveThumbnailBatch(int batchId, CancellationTokenSource cts)
@@ -757,6 +869,29 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
         return batchId == _thumbnailBatchId &&
                !cts.IsCancellationRequested &&
                ReferenceEquals(_thumbnailCts, cts);
+    }
+
+    private static IReadOnlyList<TrayPreviewListItemViewModel> BuildPrioritizedItems(
+        IReadOnlyList<TrayPreviewListItemViewModel> items)
+    {
+        if (items.Count <= InitialPriorityThumbnailCount)
+        {
+            return items.ToArray();
+        }
+
+        var prioritized = new TrayPreviewListItemViewModel[items.Count];
+        var outputIndex = 0;
+        for (var i = 0; i < InitialPriorityThumbnailCount; i++)
+        {
+            prioritized[outputIndex++] = items[i];
+        }
+
+        for (var i = InitialPriorityThumbnailCount; i < items.Count; i++)
+        {
+            prioritized[outputIndex++] = items[i];
+        }
+
+        return prioritized;
     }
 
     private void CancelThumbnailLoading()

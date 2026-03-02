@@ -90,6 +90,44 @@ public sealed class MainShellViewModelTests
     }
 
     [Fact]
+    public async Task ClearCache_ResetsTrayPreviewAndReloadsWhenReturningToTray()
+    {
+        var cacheService = new FakeAppCacheMaintenanceService();
+        var trayThumbnailService = new FakeTrayThumbnailService();
+        var trayPreviewCoordinator = new FakeTrayPreviewCoordinator();
+        var vm = CreateShellViewModel(cacheService, trayPreviewCoordinator, trayThumbnailService);
+        using var trayRoot = new TempDirectory();
+
+        vm.TrayPath = trayRoot.Path;
+        await Task.Delay(50);
+        var baselineLoadCount = trayPreviewCoordinator.LoadCount;
+
+        vm.ClearCacheCommand.Execute(null);
+        await Task.Delay(50);
+
+        Assert.Equal(1, trayPreviewCoordinator.InvalidateCount);
+        Assert.Equal(1, trayThumbnailService.ResetCount);
+
+        vm.SelectSectionCommand.Execute(nameof(AppSection.Tray));
+        await Task.Delay(50);
+
+        Assert.True(trayPreviewCoordinator.LoadCount > baselineLoadCount);
+    }
+
+    [Fact]
+    public async Task InitializeAsync_IgnoresSavedSectionAndStartsInToolkit()
+    {
+        var settings = new AppSettings();
+        settings.Navigation.SelectedSection = AppSection.Tray;
+        var vm = CreateShellViewModel(initialSettings: settings);
+
+        await vm.InitializeAsync();
+
+        Assert.Equal(AppSection.Toolkit, vm.SelectedSection);
+        Assert.True(vm.IsToolkitSectionVisible);
+    }
+
+    [Fact]
     public void ModsPath_SyncsIntoModPreviewWorkspace()
     {
         var vm = CreateShellViewModel();
@@ -100,10 +138,16 @@ public sealed class MainShellViewModelTests
         Assert.Equal(modsRoot.Path, vm.WorkspaceVm.ModPreview.ModsRoot);
     }
 
-    private static MainShellViewModel CreateShellViewModel(FakeAppCacheMaintenanceService? cacheService = null)
+    private static MainShellViewModel CreateShellViewModel(
+        FakeAppCacheMaintenanceService? cacheService = null,
+        FakeTrayPreviewCoordinator? trayPreviewCoordinator = null,
+        FakeTrayThumbnailService? trayThumbnailService = null,
+        AppSettings? initialSettings = null)
     {
-        var settingsStore = new FakeSettingsStore(new AppSettings());
-        var workspaceVm = CreateWorkspaceViewModel(settingsStore);
+        var settingsStore = new FakeSettingsStore(initialSettings ?? new AppSettings());
+        trayPreviewCoordinator ??= new FakeTrayPreviewCoordinator();
+        trayThumbnailService ??= new FakeTrayThumbnailService();
+        var workspaceVm = CreateWorkspaceViewModel(settingsStore, trayPreviewCoordinator, trayThumbnailService);
         var fileDialog = new FakeFileDialogService();
         var navigation = new NavigationService();
         var savesVm = new SaveWorkspaceViewModel(
@@ -111,7 +155,7 @@ public sealed class MainShellViewModelTests
             fileDialog,
             new TrayDependenciesLauncher(workspaceVm, workspaceVm.TrayDependencies, navigation),
             new TrayPreviewRunner(new FakeTrayPreviewCoordinator()),
-            new FakeTrayThumbnailService());
+            trayThumbnailService);
         return new MainShellViewModel(
             workspaceVm,
             savesVm,
@@ -123,9 +167,13 @@ public sealed class MainShellViewModelTests
             cacheService ?? new FakeAppCacheMaintenanceService());
     }
 
-    private static MainWindowViewModel CreateWorkspaceViewModel(ISettingsStore settingsStore)
+    private static MainWindowViewModel CreateWorkspaceViewModel(
+        ISettingsStore settingsStore,
+        FakeTrayPreviewCoordinator trayPreviewCoordinator,
+        FakeTrayThumbnailService trayThumbnailService)
     {
         var organize = new OrganizePanelViewModel();
+        var textureCompress = new TextureCompressPanelViewModel();
         var flatten = new FlattenPanelViewModel();
         var normalize = new NormalizePanelViewModel();
         var merge = new MergePanelViewModel();
@@ -138,6 +186,7 @@ public sealed class MainShellViewModelTests
         var moduleRegistry = new ActionModuleRegistry(new IActionModule[]
         {
             new OrganizeActionModule(organize),
+            new TextureCompressActionModule(textureCompress),
             new FlattenActionModule(flatten),
             new NormalizeActionModule(normalize),
             new MergeActionModule(merge),
@@ -145,11 +194,11 @@ public sealed class MainShellViewModelTests
             new TrayDependenciesActionModule(trayDependencies),
             new TrayPreviewActionModule(trayPreview)
         });
-        var trayPreviewRunner = new TrayPreviewRunner(new FakeTrayPreviewCoordinator());
+        var trayPreviewRunner = new TrayPreviewRunner(trayPreviewCoordinator);
         var trayPreviewWorkspace = new TrayPreviewWorkspaceViewModel(
             trayPreview,
             trayPreviewRunner,
-            new FakeTrayThumbnailService(),
+            trayThumbnailService,
             new FakeFileDialogService(),
             new FakeTrayDependencyExportService(),
             trayDependencies);
@@ -172,6 +221,7 @@ public sealed class MainShellViewModelTests
             modPreviewWorkspace,
             trayPreviewWorkspace,
             organize,
+            textureCompress,
             flatten,
             normalize,
             merge,
@@ -180,7 +230,7 @@ public sealed class MainShellViewModelTests
             modPreview: modPreview,
             trayPreview: trayPreview,
             sharedFileOps: sharedFileOps,
-            trayThumbnailService: null);
+            trayThumbnailService: trayThumbnailService);
     }
 
     private sealed class FakeExecutionCoordinator : IExecutionCoordinator
@@ -202,6 +252,9 @@ public sealed class MainShellViewModelTests
 
     private sealed class FakeTrayPreviewCoordinator : ITrayPreviewCoordinator
     {
+        public int LoadCount { get; private set; }
+        public int InvalidateCount { get; private set; }
+
         public bool TryGetCached(TrayPreviewInput input, out TrayPreviewLoadResult result)
         {
             result = null!;
@@ -210,6 +263,7 @@ public sealed class MainShellViewModelTests
 
         public Task<TrayPreviewLoadResult> LoadAsync(TrayPreviewInput input, CancellationToken cancellationToken = default)
         {
+            LoadCount++;
             return Task.FromResult(new TrayPreviewLoadResult
             {
                 Summary = new SimsTrayPreviewSummary(),
@@ -244,6 +298,7 @@ public sealed class MainShellViewModelTests
 
         public void Invalidate(string? trayRootPath = null)
         {
+            InvalidateCount++;
         }
 
         public void Reset()
@@ -402,6 +457,8 @@ public sealed class MainShellViewModelTests
 
     private sealed class FakeTrayThumbnailService : ITrayThumbnailService
     {
+        public int ResetCount { get; private set; }
+
         public Task<TrayThumbnailResult> GetThumbnailAsync(SimsTrayPreviewItem item, CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new TrayThumbnailResult
@@ -414,6 +471,11 @@ public sealed class MainShellViewModelTests
         public Task CleanupStaleEntriesAsync(string trayRootPath, IReadOnlyCollection<string> liveItemKeys, CancellationToken cancellationToken = default)
         {
             return Task.CompletedTask;
+        }
+
+        public void ResetMemoryCache(string? trayRootPath = null)
+        {
+            ResetCount++;
         }
     }
 

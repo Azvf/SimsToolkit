@@ -2,6 +2,7 @@ namespace SimsModDesktop.Models;
 
 public enum SimsAction
 {
+    TextureCompress,
     Organize,
     Flatten,
     Normalize,

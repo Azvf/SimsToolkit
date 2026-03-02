@@ -37,12 +37,12 @@ public sealed class SavePreviewCacheBuilder : ISavePreviewCacheBuilder
     {
         return Task.Run(() =>
         {
-            cancellationToken.ThrowIfCancellationRequested();
             var normalizedSavePath = Path.GetFullPath(saveFilePath);
             var cacheRoot = _cacheStore.GetCacheRootPath(normalizedSavePath);
 
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var snapshot = _saveHouseholdReader.Load(normalizedSavePath);
                 Directory.CreateDirectory(cacheRoot);
                 ClearTrayFiles(cacheRoot);
@@ -166,7 +166,12 @@ public sealed class SavePreviewCacheBuilder : ISavePreviewCacheBuilder
             }
             catch (OperationCanceledException)
             {
-                throw;
+                _cacheStore.Clear(normalizedSavePath);
+                return new SavePreviewCacheBuildResult
+                {
+                    Succeeded = false,
+                    CacheRootPath = cacheRoot
+                };
             }
             catch (Exception ex)
             {
@@ -177,7 +182,7 @@ public sealed class SavePreviewCacheBuilder : ISavePreviewCacheBuilder
                     Error = ex.Message
                 };
             }
-        }, cancellationToken);
+        });
     }
 
     private static IReadOnlyDictionary<ulong, string> BuildPreviewNameLookup(IReadOnlyList<SaveHouseholdItem> households)

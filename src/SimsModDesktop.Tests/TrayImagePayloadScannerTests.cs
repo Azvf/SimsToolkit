@@ -38,4 +38,22 @@ public sealed class TrayImagePayloadScannerTests
         Assert.Equal((byte)0, bitmap!.GetPixel(1, 1).Alpha);
         Assert.Equal((byte)255, bitmap.GetPixel(6, 1).Alpha);
     }
+
+    [Fact]
+    public void TryExtractBestImage_UsesAlphaChannelWhenEmbeddedMaskStoresTransparencyInAlpha()
+    {
+        var jpegWithAlpha = ImageTestHelpers.CreateJpegWithEmbeddedAlphaSegment(
+            ImageTestHelpers.CreateJpegBytes(8, 4),
+            ImageTestHelpers.CreateAlphaChannelMaskPngBytes(8, 4));
+        var payload = ImageTestHelpers.CreateEncodedTrayImageBytes(jpegWithAlpha);
+
+        var image = TrayImagePayloadScanner.TryExtractBestImage(payload);
+
+        Assert.NotNull(image);
+
+        using var bitmap = SKBitmap.Decode(image!.Data);
+        Assert.NotNull(bitmap);
+        Assert.Equal((byte)0, bitmap!.GetPixel(1, 1).Alpha);
+        Assert.Equal((byte)255, bitmap.GetPixel(6, 1).Alpha);
+    }
 }

@@ -12,6 +12,8 @@ public interface ITrayThumbnailService
         string trayRootPath,
         IReadOnlyCollection<string> liveItemKeys,
         CancellationToken cancellationToken = default);
+
+    void ResetMemoryCache(string? trayRootPath = null);
 }
 
 internal sealed class NullTrayThumbnailService : ITrayThumbnailService
@@ -41,5 +43,9 @@ internal sealed class NullTrayThumbnailService : ITrayThumbnailService
         CancellationToken cancellationToken = default)
     {
         return Task.CompletedTask;
+    }
+
+    public void ResetMemoryCache(string? trayRootPath = null)
+    {
     }
 }

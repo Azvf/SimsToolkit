@@ -46,6 +46,24 @@ internal static class ImageTestHelpers
         return data.ToArray();
     }
 
+    public static byte[] CreateAlphaChannelMaskPngBytes(int width, int height)
+    {
+        using var bitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Unpremul));
+
+        for (var y = 0; y < height; y++)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                var alpha = x < width / 2 ? (byte)0 : (byte)255;
+                bitmap.SetPixel(x, y, new SKColor(0, 0, 0, alpha));
+            }
+        }
+
+        using var image = SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        return data.ToArray();
+    }
+
     public static byte[] CreateJpegWithEmbeddedAlphaSegment(byte[] jpegBytes, byte[] alphaMaskBytes)
     {
         ArgumentNullException.ThrowIfNull(jpegBytes);

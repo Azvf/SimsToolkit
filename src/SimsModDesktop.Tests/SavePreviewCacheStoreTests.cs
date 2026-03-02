@@ -38,7 +38,7 @@ public sealed class SavePreviewCacheStoreTests
 
         store.Save(saveFile.Path, manifest);
 
-        Assert.True(File.Exists(Path.Combine(cacheDir.Path, "cache.db")));
+        Assert.True(File.Exists(Path.Combine(cacheDir.Path, "app-cache.db")));
         Assert.False(File.Exists(Path.Combine(store.GetCacheRootPath(saveFile.Path), "manifest.json")));
 
         var loaded = store.TryLoad(saveFile.Path, out var reloaded);

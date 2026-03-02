@@ -1,5 +1,7 @@
 using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Requests;
+using SimsModDesktop.Application.TextureCompression;
+using SimsModDesktop.Infrastructure.TextureProcessing;
 using SimsModDesktop.Models;
 using System.Text.Json.Nodes;
 
@@ -160,6 +162,54 @@ public sealed class ActionModuleRegistryTests
         Assert.Equal("0x1", panel.TrayItemKey);
     }
 
+    [Fact]
+    public void TextureCompressModule_TryBuildPlan_ResolvesDefaultOutputAndParsesOptions()
+    {
+        var tempPath = Path.Combine(Path.GetTempPath(), "SimsToolkit_ActionModule_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempPath);
+
+        try
+        {
+            var sourcePath = Path.Combine(tempPath, "sample.png");
+            File.WriteAllBytes(sourcePath, ImageTestHelpers.CreatePngBytes(8, 8));
+            var panel = new TextureCompressPanelState
+            {
+                SourcePath = sourcePath,
+                TargetWidthText = "4",
+                TargetHeightText = "4",
+                PreferredFormat = "BC3",
+                GenerateMipMaps = false
+            };
+            var module = new TextureCompressActionModule(panel);
+
+            var ok = module.TryBuildPlan(
+                new GlobalExecutionOptions
+                {
+                    ScriptPath = string.Empty,
+                    WhatIf = true,
+                    Shared = new SharedFileOpsInput()
+                },
+                out var plan,
+                out var error);
+
+            Assert.True(ok, error);
+            var built = Assert.IsType<TextureCompressionExecutionPlan>(plan);
+            Assert.Equal(sourcePath, built.Request.SourcePath);
+            Assert.Equal(Path.Combine(tempPath, "sample.dds"), built.Request.OutputPath);
+            Assert.Equal(4, built.Request.TargetWidth);
+            Assert.Equal(4, built.Request.TargetHeight);
+            Assert.Equal(TextureTargetFormat.Bc3, built.Request.PreferredFormat);
+            Assert.True(built.Request.WhatIf);
+        }
+        finally
+        {
+            if (Directory.Exists(tempPath))
+            {
+                Directory.Delete(tempPath, recursive: true);
+            }
+        }
+    }
+
     private sealed class FakeModule : IActionModule
     {
         public FakeModule(SimsAction action, string moduleKey)
@@ -267,5 +317,18 @@ public sealed class ActionModuleRegistryTests
         public string UnusedOutputCsv { get; set; } = string.Empty;
         public string ExportTargetPath { get; set; } = string.Empty;
         public string ExportMinConfidence { get; set; } = "Low";
+    }
+
+    private sealed class TextureCompressPanelState : ITextureCompressModuleState
+    {
+        public string SourcePath { get; set; } = string.Empty;
+        public string OutputPath { get; set; } = string.Empty;
+        public string TargetWidthText { get; set; } = string.Empty;
+        public string TargetHeightText { get; set; } = string.Empty;
+        public bool HasAlphaHint { get; set; } = true;
+        public bool GenerateMipMaps { get; set; } = true;
+        public string PreferredFormat { get; set; } = "Auto";
+        public string LastOutputPath { get; set; } = string.Empty;
+        public string LastRunSummary { get; set; } = string.Empty;
     }
 }

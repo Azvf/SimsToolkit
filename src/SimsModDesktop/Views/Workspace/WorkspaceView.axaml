@@ -80,7 +80,7 @@
                     <StackPanel Spacing="2">
                         <TextBlock Classes="section-title" Text="Mod Workspace" />
                         <TextBlock Classes="helper-text"
-                                   Text="Scaffold for parsing package metadata and building an S4MM-style preview flow." />
+                                   Text="Browse indexed CAS and Build/Buy items like an in-game catalog." />
                     </StackPanel>
 
                     <Border Grid.Row="1" Classes="card-muted" Padding="10">
@@ -88,11 +88,11 @@
                               RowDefinitions="Auto,Auto"
                               ColumnSpacing="8"
                               RowSpacing="8">
-                            <TextBlock VerticalAlignment="Center" Text="Package Type" />
+                            <TextBlock VerticalAlignment="Center" Text="Item Type" />
                             <ComboBox Grid.Column="1"
                                       ItemsSource="{Binding ModPreviewPackageTypeFilterOptions}"
                                       SelectedItem="{Binding ModPreview.PackageTypeFilter}" />
-                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="Scope" />
+                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="Subtype" />
                             <ComboBox Grid.Column="3"
                                       ItemsSource="{Binding ModPreviewScopeFilterOptions}"
                                       SelectedItem="{Binding ModPreview.ScopeFilter}" />
@@ -105,13 +105,15 @@
                             <TextBox Grid.Row="1"
                                      Grid.Column="1"
                                      Grid.ColumnSpan="3"
-                                     Watermark="Package name or creator"
+                                     Watermark="Item name or source package"
                                      Text="{Binding ModPreview.SearchQuery}" />
-                            <CheckBox Grid.Row="1"
-                                      Grid.Column="4"
-                                      Grid.ColumnSpan="2"
-                                      Content="Overrides Only"
-                                      IsChecked="{Binding ModPreview.ShowOverridesOnly}" />
+                            <TextBlock Grid.Row="1"
+                                       Grid.Column="4"
+                                       Grid.ColumnSpan="2"
+                                       Classes="helper-text"
+                                       VerticalAlignment="Center"
+                                       Text="{Binding ModPreviewWorkspace.IndexingStatusText}"
+                                       TextWrapping="Wrap" />
                         </Grid>
                     </Border>
 
@@ -142,7 +144,7 @@
                                           RowSpacing="10"
                                           MinHeight="0">
                                         <StackPanel Spacing="2">
-                                            <TextBlock Classes="sub-title" Text="Preview Catalog" />
+                                            <TextBlock Classes="sub-title" Text="Item Catalog" />
                                             <TextBlock Classes="helper-text"
                                                        Text="{Binding ModPreviewWorkspace.StatusText}" />
                                         </StackPanel>
@@ -160,13 +162,13 @@
                                           RowSpacing="10"
                                           MinHeight="0">
                                         <StackPanel Spacing="2">
-                                            <TextBlock Classes="sub-title" Text="Preview Module" />
+                                            <TextBlock Classes="sub-title" Text="Item Inspect" />
                                             <TextBlock Classes="helper-text"
-                                                       Text="The right pane stays fixed and updates with the selected mod." />
+                                                       Text="The right pane stays fixed and updates with the selected catalog item." />
                                         </StackPanel>
 
                                         <preview:ModPreviewDetailSurfaceView Grid.Row="1"
-                                                                             DataContext="{Binding ModPreviewWorkspace}" />
+                                                                             DataContext="{Binding ModPreviewWorkspace.Inspect}" />
                                     </Grid>
                                 </Border>
                             </Grid>

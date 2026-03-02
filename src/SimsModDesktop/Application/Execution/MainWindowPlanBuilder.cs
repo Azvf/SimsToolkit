@@ -1,5 +1,6 @@
 using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Requests;
+using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Application.Validation;
 using SimsModDesktop.Models;
 
@@ -103,6 +104,36 @@ public sealed class MainWindowPlanBuilder : IMainWindowPlanBuilder
         }
 
         input = trayPreviewPlan.Input;
+        return true;
+    }
+
+    public bool TryBuildTextureCompressionPlan(
+        MainWindowPlanBuilderState state,
+        out TextureCompressionExecutionPlan plan,
+        out string error)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+
+        plan = null!;
+
+        if (!TryBuildGlobalExecutionOptions(state, requireScriptPath: false, includeShared: false, out var options, out error))
+        {
+            return false;
+        }
+
+        var module = _moduleRegistry.Get(SimsAction.TextureCompress);
+        if (!module.TryBuildPlan(options, out var builtPlan, out error))
+        {
+            return false;
+        }
+
+        if (builtPlan is not TextureCompressionExecutionPlan textureCompressionPlan)
+        {
+            error = "Texture compression module returned unsupported execution plan.";
+            return false;
+        }
+
+        plan = textureCompressionPlan;
         return true;
     }
 

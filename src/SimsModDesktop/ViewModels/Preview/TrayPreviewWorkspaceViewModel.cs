@@ -13,6 +13,8 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
     private readonly IFileDialogService _fileDialogService;
     private readonly ITrayDependencyExportService _trayDependencyExportService;
     private readonly TrayDependenciesPanelViewModel _trayDependencies;
+    private bool _isActive;
+    private bool _hasPendingRefresh = true;
     private string _logText = "Tray preview ready.";
 
     public TrayPreviewWorkspaceViewModel(
@@ -32,7 +34,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         OpenSelectedCommand = new RelayCommand(OpenSelected, () => Surface.HasSelection);
         ExportSelectedCommand = new AsyncRelayCommand(ExportSelectedAsync, () => Surface.HasSelection);
 
-        Surface.Configure(Filter, () => Filter.TrayRoot, PreviewSurfaceSelectionMode.Multiple);
+        Surface.Configure(Filter, () => Filter.TrayRoot, PreviewSurfaceSelectionMode.Multiple, autoLoad: false);
         Surface.SetActionButtons(
         [
             new PreviewSurfaceActionButtonViewModel { Label = "Refresh", Command = Surface.RefreshCommand },
@@ -52,6 +54,39 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
     public RelayCommand OpenSelectedCommand { get; }
     public AsyncRelayCommand ExportSelectedCommand { get; }
 
+    public void ResetAfterCacheClear()
+    {
+        Surface.ResetAfterCacheClear();
+    }
+
+    public Task EnsureLoadedAsync(bool forceReload = false)
+    {
+        return Surface.EnsureLoadedAsync(forceReload);
+    }
+
+    public void SetIsActive(bool isActive)
+    {
+        if (_isActive == isActive)
+        {
+            return;
+        }
+
+        _isActive = isActive;
+        if (!_isActive)
+        {
+            Surface.PauseBackgroundLoading();
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(Filter.TrayRoot) &&
+            Directory.Exists(Filter.TrayRoot))
+        {
+            var forceReload = _hasPendingRefresh;
+            _hasPendingRefresh = false;
+            _ = Surface.EnsureLoadedAsync(forceReload);
+        }
+    }
+
     public string LogText
     {
         get => _logText;
@@ -70,7 +105,12 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
     {
         if (string.Equals(e.PropertyName, nameof(TrayPreviewPanelViewModel.TrayRoot), StringComparison.Ordinal))
         {
-            Surface.NotifyTrayPathChanged();
+            _hasPendingRefresh = true;
+            if (_isActive)
+            {
+                _hasPendingRefresh = false;
+                Surface.NotifyTrayPathChanged();
+            }
         }
     }
 

@@ -140,11 +140,14 @@ internal static class TrayImageCodec
             var rgbPixels = rgbBitmap.Pixels;
             var alphaPixels = alphaBitmap.Pixels;
             var outputPixels = new SKColor[rgbPixels.Length];
+            var useAlphaChannel = alphaPixels.Any(pixel => pixel.Alpha != byte.MaxValue);
 
             for (var i = 0; i < outputPixels.Length; i++)
             {
                 var source = rgbPixels[i];
-                var alpha = alphaPixels[i].Blue;
+                var alpha = useAlphaChannel
+                    ? alphaPixels[i].Alpha
+                    : ResolveMaskLuminance(alphaPixels[i]);
                 outputPixels[i] = alpha == 0
                     ? new SKColor(0, 0, 0, 0)
                     : new SKColor(source.Red, source.Green, source.Blue, alpha);
@@ -170,5 +173,11 @@ internal static class TrayImageCodec
             height = 0;
             return false;
         }
+    }
+
+    private static byte ResolveMaskLuminance(SKColor pixel)
+    {
+        var weighted = (pixel.Red * 299) + (pixel.Green * 587) + (pixel.Blue * 114);
+        return (byte)(weighted / 1000);
     }
 }

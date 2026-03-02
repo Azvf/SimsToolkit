@@ -1,5 +1,6 @@
 using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Requests;
+using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Models;
 
 namespace SimsModDesktop.Application.Execution;
@@ -20,5 +21,10 @@ public interface IMainWindowPlanBuilder
     bool TryBuildTrayPreviewInput(
         MainWindowPlanBuilderState state,
         out TrayPreviewInput input,
+        out string error);
+
+    bool TryBuildTextureCompressionPlan(
+        MainWindowPlanBuilderState state,
+        out TextureCompressionExecutionPlan plan,
         out string error);
 }

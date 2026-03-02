@@ -4,10 +4,14 @@ using SimsModDesktop.Application.Cli;
 using SimsModDesktop.Application.Configuration;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Modules;
+using SimsModDesktop.Application.Mods;
+using SimsModDesktop.Application.Recovery;
 using SimsModDesktop.Application.Requests;
+using SimsModDesktop.Application.Results;
 using SimsModDesktop.Application.Saves;
 using SimsModDesktop.Application.Services;
 using SimsModDesktop.Application.Settings;
+using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Application.Validation;
 using SimsModDesktop.Infrastructure.Dialogs;
@@ -15,6 +19,7 @@ using SimsModDesktop.Infrastructure.Execution;
 using SimsModDesktop.Infrastructure.Localization;
 using SimsModDesktop.Infrastructure.Services;
 using SimsModDesktop.Infrastructure.Settings;
+using SimsModDesktop.Infrastructure.TextureProcessing;
 using SimsModDesktop.Infrastructure.Windowing;
 using SimsModDesktop.Models;
 using SimsModDesktop.PackageCore;
@@ -43,6 +48,7 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<IWindowHostService, WindowHostService>();
         services.AddSingleton<IFileDialogService, AvaloniaFileDialogService>();
         services.AddSingleton<IConfirmationDialogService, AvaloniaConfirmationDialogService>();
+        services.AddSingleton<IRecoveryPromptService, AvaloniaRecoveryPromptService>();
         services.AddSingleton<ILocalizationService, JsonLocalizationService>();
         services.AddSingleton<ISettingsStore, JsonSettingsStore>();
         services.AddSingleton<IMainWindowSettingsProjection, MainWindowSettingsProjection>();
@@ -60,6 +66,29 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<IFileOperationService, CrossPlatformFileOperationService>();
         services.AddSingleton<IHashComputationService, CrossPlatformHashComputationService>();
         services.AddSingleton<IFileTransformationEngine, UnifiedFileTransformationEngine>();
+        services.AddSingleton<ImageSharpPngDecoder>();
+        services.AddSingleton<PfimDdsDecoder>();
+        services.AddSingleton<ITextureDecodeService, CompositeTextureDecodeService>();
+        services.AddSingleton<ITextureDimensionProbe, TextureDimensionProbe>();
+        services.AddSingleton<ITextureResizeService, ImageSharpResizeService>();
+        services.AddSingleton<ITextureEncodeService, BcnTextureEncodeService>();
+        services.AddSingleton<ITextureTranscodePipeline, TextureTranscodePipeline>();
+        services.AddSingleton<ITextureCompressionService, TextureCompressionService>();
+        services.AddSingleton<IModPackageTextureAnalysisStore, SqliteModPackageTextureAnalysisStore>();
+        services.AddSingleton<IModPackageTextureAnalysisService, ModPackageTextureAnalysisService>();
+        services.AddSingleton<IModPackageTextureEditStore, SqliteModPackageTextureEditStore>();
+        services.AddSingleton<IModPackageTextureEditService, ModPackageTextureEditService>();
+        services.AddSingleton<IModPackageScanService, ModPackageScanService>();
+        services.AddSingleton<IModItemIndexStore, SqliteModItemIndexStore>();
+        services.AddSingleton<ISims4StblLookup, Sims4StblLookup>();
+        services.AddSingleton<ICasItemDescriptorService, CasItemDescriptorService>();
+        services.AddSingleton<IBuildBuyItemDescriptorService, BuildBuyPlaceholderDescriptorService>();
+        services.AddSingleton<IFastModItemIndexService, FastModItemIndexService>();
+        services.AddSingleton<IDeepModItemEnrichmentService, DeepModItemEnrichmentService>();
+        services.AddSingleton<IModItemIndexService, ModItemIndexService>();
+        services.AddSingleton<IModItemCatalogService, SqliteModItemCatalogService>();
+        services.AddSingleton<IModItemInspectService, SqliteModItemInspectService>();
+        services.AddSingleton<IModItemIndexScheduler, ModItemIndexScheduler>();
 
         
         // 原有服务
@@ -68,7 +97,6 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<IAppCacheMaintenanceService, AppCacheMaintenanceService>();
         services.AddSingleton<ITrayMetadataService, TrayMetadataService>();
         services.AddSingleton<TrayEmbeddedImageExtractor>();
-        services.AddSingleton<LocalthumbcacheThumbnailReader>();
         services.AddSingleton<ITrayThumbnailService, TrayThumbnailService>();
         services.AddSingleton<ISimsTrayPreviewService, SimsTrayPreviewService>();
         services.AddSingleton<IModPreviewCatalogService, ModPreviewCatalogService>();
@@ -86,6 +114,9 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<ISavePreviewCacheStore, SavePreviewCacheStore>();
         services.AddSingleton<ISavePreviewCacheBuilder, SavePreviewCacheBuilder>();
         services.AddSingleton<ISaveHouseholdCoordinator, SaveHouseholdCoordinator>();
+        services.AddSingleton<IActionResultRepository, ActionResultRepository>();
+        services.AddSingleton<IOperationRecoveryStore, SqliteOperationRecoveryStore>();
+        services.AddSingleton<IOperationRecoveryCoordinator, OperationRecoveryCoordinator>();
         services.AddSingleton<ITrayDependenciesLauncher, TrayDependenciesLauncher>();
         return services;
     }
@@ -125,6 +156,7 @@ internal static class ServiceCollectionExtensions
     public static IServiceCollection AddSimsDesktopModules(this IServiceCollection services)
     {
         services.AddSingleton<OrganizePanelViewModel>();
+        services.AddSingleton<TextureCompressPanelViewModel>();
         services.AddSingleton<FlattenPanelViewModel>();
         services.AddSingleton<NormalizePanelViewModel>();
         services.AddSingleton<MergePanelViewModel>();

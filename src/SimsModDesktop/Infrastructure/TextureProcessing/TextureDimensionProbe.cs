@@ -1,0 +1,62 @@
+using Pfim;
+using SixLabors.ImageSharp;
+
+namespace SimsModDesktop.Infrastructure.TextureProcessing;
+
+public sealed class TextureDimensionProbe : ITextureDimensionProbe
+{
+    public bool TryGetDimensions(
+        TextureContainerKind containerKind,
+        ReadOnlyMemory<byte> sourceBytes,
+        out int width,
+        out int height,
+        out string error)
+    {
+        width = 0;
+        height = 0;
+        error = string.Empty;
+
+        if (sourceBytes.IsEmpty)
+        {
+            error = "Source bytes are empty.";
+            return false;
+        }
+
+        try
+        {
+            switch (containerKind)
+            {
+                case TextureContainerKind.Png:
+                {
+                    var info = Image.Identify(sourceBytes.Span);
+                    if (info is null)
+                    {
+                        error = "Failed to identify PNG dimensions.";
+                        return false;
+                    }
+
+                    width = info.Width;
+                    height = info.Height;
+                    return width > 0 && height > 0;
+                }
+                case TextureContainerKind.Dds:
+                case TextureContainerKind.Tga:
+                {
+                    using var stream = new MemoryStream(sourceBytes.ToArray(), writable: false);
+                    using var image = Pfimage.FromStream(stream);
+                    width = image.Width;
+                    height = image.Height;
+                    return width > 0 && height > 0;
+                }
+                default:
+                    error = $"Unsupported container kind: {containerKind}.";
+                    return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            error = $"Failed to probe texture dimensions: {ex.Message}";
+            return false;
+        }
+    }
+}

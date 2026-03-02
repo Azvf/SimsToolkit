@@ -568,7 +568,7 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
                 var success = _coordinator.TryLoadHouseholds(selectedSave.FilePath, out var snapshot, out var error);
                 cts.Token.ThrowIfCancellationRequested();
                 return (Success: success, Snapshot: snapshot, Error: error);
-            }, cts.Token);
+            });
 
             if (cts.IsCancellationRequested ||
                 SelectedSave is null ||

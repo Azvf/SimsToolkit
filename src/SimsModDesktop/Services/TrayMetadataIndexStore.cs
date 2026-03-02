@@ -16,7 +16,7 @@ public sealed class TrayMetadataIndexStore
     };
 
     private readonly object _gate = new();
-    private readonly SqliteCacheDatabase _database;
+    private readonly AppCacheDatabase _database;
 
     private bool _manifestLoaded;
     private Dictionary<string, StoredMetadataEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
@@ -26,14 +26,13 @@ public sealed class TrayMetadataIndexStore
             Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "SimsModDesktop",
-                "Cache",
-                "TrayMetadataIndex"))
+                "Cache"))
     {
     }
 
     internal TrayMetadataIndexStore(string cacheRootPath)
     {
-        _database = new SqliteCacheDatabase(Path.Combine(cacheRootPath, "cache.db"));
+        _database = new AppCacheDatabase(cacheRootPath);
     }
 
     public IReadOnlyDictionary<string, TrayMetadataResult> GetMetadata(IReadOnlyCollection<string> trayItemPaths)

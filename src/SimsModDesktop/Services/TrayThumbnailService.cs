@@ -6,24 +6,20 @@ public sealed class TrayThumbnailService : ITrayThumbnailService
 {
     private readonly TrayThumbnailCacheStore _cacheStore;
     private readonly TrayEmbeddedImageExtractor _embeddedImageExtractor;
-    private readonly LocalthumbcacheThumbnailReader _localthumbcacheThumbnailReader;
 
     public TrayThumbnailService()
         : this(
             new TrayThumbnailCacheStore(),
-            new TrayEmbeddedImageExtractor(),
-            new LocalthumbcacheThumbnailReader())
+            new TrayEmbeddedImageExtractor())
     {
     }
 
     public TrayThumbnailService(
         TrayThumbnailCacheStore cacheStore,
-        TrayEmbeddedImageExtractor embeddedImageExtractor,
-        LocalthumbcacheThumbnailReader localthumbcacheThumbnailReader)
+        TrayEmbeddedImageExtractor embeddedImageExtractor)
     {
         _cacheStore = cacheStore;
         _embeddedImageExtractor = embeddedImageExtractor;
-        _localthumbcacheThumbnailReader = localthumbcacheThumbnailReader;
     }
 
     public async Task<TrayThumbnailResult> GetThumbnailAsync(
@@ -45,17 +41,8 @@ public sealed class TrayThumbnailService : ITrayThumbnailService
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        var localthumbcacheImage = _localthumbcacheThumbnailReader.TryExtractBestImage(
-            item.TrayRootPath,
-            item.TrayInstanceId,
-            cancellationToken);
-        var embeddedImage = localthumbcacheImage is null
-            ? _embeddedImageExtractor.TryExtractBestImage(item, cancellationToken)
-            : null;
-
-        var sourceKind = TrayThumbnailSourceKind.Placeholder;
-        var selectedImage = SelectBestImage(embeddedImage, localthumbcacheImage, ref sourceKind);
-        if (selectedImage is null)
+        var embeddedImage = _embeddedImageExtractor.TryExtractBestImage(item, cancellationToken);
+        if (embeddedImage is null)
         {
             return new TrayThumbnailResult
             {
@@ -66,8 +53,8 @@ public sealed class TrayThumbnailService : ITrayThumbnailService
 
         var stored = await _cacheStore.StoreAsync(
             item,
-            selectedImage.Data,
-            sourceKind,
+            embeddedImage.Data,
+            TrayThumbnailSourceKind.Embedded,
             cancellationToken);
 
         if (stored is null)
@@ -83,7 +70,7 @@ public sealed class TrayThumbnailService : ITrayThumbnailService
         {
             CacheFilePath = stored.CacheFilePath,
             FromCache = false,
-            SourceKind = sourceKind,
+            SourceKind = TrayThumbnailSourceKind.Embedded,
             Success = true
         };
     }
@@ -96,31 +83,8 @@ public sealed class TrayThumbnailService : ITrayThumbnailService
         return _cacheStore.CleanupStaleEntriesAsync(trayRootPath, liveItemKeys, cancellationToken);
     }
 
-    private static ExtractedTrayImage? SelectBestImage(
-        ExtractedTrayImage? embeddedImage,
-        ExtractedTrayImage? localthumbcacheImage,
-        ref TrayThumbnailSourceKind sourceKind)
+    public void ResetMemoryCache(string? trayRootPath = null)
     {
-        if (embeddedImage is null && localthumbcacheImage is null)
-        {
-            sourceKind = TrayThumbnailSourceKind.Placeholder;
-            return null;
-        }
-
-        if (localthumbcacheImage is null)
-        {
-            sourceKind = TrayThumbnailSourceKind.Embedded;
-            return embeddedImage;
-        }
-
-        if (embeddedImage is null)
-        {
-            sourceKind = TrayThumbnailSourceKind.Localthumbcache;
-            return localthumbcacheImage;
-        }
-
-        // Prefer the game's own localthumbcache preview when available.
-        sourceKind = TrayThumbnailSourceKind.Localthumbcache;
-        return localthumbcacheImage;
+        _cacheStore.ResetMemoryCache(trayRootPath);
     }
 }

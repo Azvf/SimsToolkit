@@ -132,6 +132,33 @@ public sealed class MainWindowViewModelInteractionTests
     }
 
     [Fact]
+    public async Task RunToolkitAsync_TextureCompress_CompressesLoosePngToDds()
+    {
+        var vm = CreateViewModel(new FakeExecutionCoordinator(), new FakeConfirmationDialogService());
+        await vm.InitializeAsync();
+
+        using var temp = new TempDirectory();
+        var sourcePath = Path.Combine(temp.Path, "sample.png");
+        var outputPath = Path.Combine(temp.Path, "sample.dds");
+        await File.WriteAllBytesAsync(sourcePath, ImageTestHelpers.CreatePngBytes(8, 8));
+
+        vm.SelectedAction = SimsAction.TextureCompress;
+        vm.TextureCompress.SourcePath = sourcePath;
+        vm.TextureCompress.OutputPath = outputPath;
+        vm.TextureCompress.PreferredFormat = "BC3";
+        vm.TextureCompress.GenerateMipMaps = false;
+
+        await InvokePrivateAsync(vm, "RunToolkitAsync");
+
+        Assert.True(File.Exists(outputPath));
+        var bytes = await File.ReadAllBytesAsync(outputPath);
+        Assert.True(bytes.Length > 4);
+        Assert.Equal("DDS ", System.Text.Encoding.ASCII.GetString(bytes, 0, 4));
+        Assert.Contains("Texture compression completed", vm.StatusMessage, StringComparison.Ordinal);
+        Assert.Equal(outputPath, vm.TextureCompress.LastOutputPath);
+    }
+
+    [Fact]
     public async Task PersistSettings_RoundTripsUiState()
     {
         var settingsStore = new FakeSettingsStore(new AppSettings());
@@ -720,6 +747,7 @@ public sealed class MainWindowViewModelInteractionTests
         FakeFileDialogService? fileDialogService = null)
     {
         var organize = new OrganizePanelViewModel();
+        var textureCompress = new TextureCompressPanelViewModel();
         var flatten = new FlattenPanelViewModel();
         var normalize = new NormalizePanelViewModel();
         var merge = new MergePanelViewModel();
@@ -732,6 +760,7 @@ public sealed class MainWindowViewModelInteractionTests
         var moduleRegistry = new ActionModuleRegistry(new IActionModule[]
         {
             new OrganizeActionModule(organize),
+            new TextureCompressActionModule(textureCompress),
             new FlattenActionModule(flatten),
             new NormalizeActionModule(normalize),
             new MergeActionModule(merge),
@@ -767,6 +796,7 @@ public sealed class MainWindowViewModelInteractionTests
             modPreviewWorkspace,
             trayPreviewWorkspace,
             organize,
+            textureCompress,
             flatten,
             normalize,
             merge,
@@ -1053,6 +1083,10 @@ public sealed class MainWindowViewModelInteractionTests
             CancellationToken cancellationToken = default)
         {
             return Task.CompletedTask;
+        }
+
+        public void ResetMemoryCache(string? trayRootPath = null)
+        {
         }
     }
 

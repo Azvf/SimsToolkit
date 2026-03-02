@@ -7,6 +7,7 @@ public sealed class AppSettings
     public AppWorkspace SelectedWorkspace { get; set; } = AppWorkspace.Toolkit;
     public SimsAction SelectedAction { get; set; } = SimsAction.Organize;
     public bool WhatIf { get; set; }
+    public TextureCompressSettings TextureCompress { get; set; } = new();
     public OrganizeSettings Organize { get; set; } = new();
     public FlattenSettings Flatten { get; set; } = new();
     public NormalizeSettings Normalize { get; set; } = new();
@@ -31,6 +32,17 @@ public sealed class AppSettings
         public string UnifiedModsFolder { get; set; } = string.Empty;
         public string TrayRoot { get; set; } = string.Empty;
         public bool KeepZip { get; set; }
+    }
+
+    public sealed class TextureCompressSettings
+    {
+        public string SourcePath { get; set; } = string.Empty;
+        public string OutputPath { get; set; } = string.Empty;
+        public string TargetWidthText { get; set; } = string.Empty;
+        public string TargetHeightText { get; set; } = string.Empty;
+        public bool HasAlphaHint { get; set; } = true;
+        public bool GenerateMipMaps { get; set; } = true;
+        public string PreferredFormat { get; set; } = "Auto";
     }
 
     public sealed class FlattenSettings

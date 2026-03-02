@@ -14,7 +14,7 @@ public sealed class TrayThumbnailCacheStore
 
     private readonly object _gate = new();
     private readonly string _cacheRootPath;
-    private readonly SqliteCacheDatabase _database;
+    private readonly AppCacheDatabase _database;
     private readonly int _targetWidth;
     private readonly int _targetHeight;
     private readonly string _cacheProfile;
@@ -24,11 +24,7 @@ public sealed class TrayThumbnailCacheStore
 
     public TrayThumbnailCacheStore()
         : this(
-            Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "SimsModDesktop",
-                "Cache",
-                "TrayPreviewThumbnails"),
+            GetDefaultCacheBasePath(),
             DefaultTargetWidth,
             DefaultTargetHeight)
     {
@@ -39,8 +35,8 @@ public sealed class TrayThumbnailCacheStore
         int targetWidth = DefaultTargetWidth,
         int targetHeight = DefaultTargetHeight)
     {
-        _cacheRootPath = cacheRootPath;
-        _database = new SqliteCacheDatabase(Path.Combine(_cacheRootPath, "cache.db"));
+        _cacheRootPath = Path.Combine(cacheRootPath, "TrayPreviewThumbnails");
+        _database = new AppCacheDatabase(cacheRootPath);
         _targetWidth = Math.Max(targetWidth, 1);
         _targetHeight = Math.Max(targetHeight, 1);
         _cacheProfile = BuildCacheProfile(_targetWidth, _targetHeight);
@@ -134,7 +130,7 @@ public sealed class TrayThumbnailCacheStore
             };
 
             _entries[entryKey] = stored;
-            PersistManifestLocked();
+            UpsertEntryLocked(stored);
             return Task.FromResult<TrayThumbnailCacheEntry?>(ToCacheEntry(stored));
         }
     }
@@ -167,10 +163,39 @@ public sealed class TrayThumbnailCacheStore
             }
 
             CleanupOrphanFilesLocked(normalizedTrayRoot);
-            PersistManifestLocked();
+            DeleteEntriesLocked(staleEntries);
         }
 
         return Task.CompletedTask;
+    }
+
+    public void ResetMemoryCache(string? trayRootPath = null)
+    {
+        lock (_gate)
+        {
+            if (!_manifestLoaded)
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(trayRootPath))
+            {
+                _entries.Clear();
+                _manifestLoaded = false;
+                return;
+            }
+
+            var normalizedTrayRoot = NormalizeTrayRoot(trayRootPath);
+            var staleKeys = _entries
+                .Where(pair => pair.Value.TrayRootPath.Equals(normalizedTrayRoot, StringComparison.OrdinalIgnoreCase))
+                .Select(pair => pair.Key)
+                .ToArray();
+
+            foreach (var key in staleKeys)
+            {
+                _entries.Remove(key);
+            }
+        }
     }
 
     private void CleanupOrphanFilesLocked(string normalizedTrayRoot)
@@ -321,6 +346,88 @@ public sealed class TrayThumbnailCacheStore
         transaction.Commit();
     }
 
+    private void UpsertEntryLocked(TrayThumbnailManifestEntry entry)
+    {
+        using var connection = OpenConnection();
+        connection.Execute(
+            """
+            INSERT INTO TrayThumbnailCache (
+                TrayRootPath,
+                TrayRootHash,
+                TrayItemKey,
+                TrayInstanceId,
+                ContentFingerprint,
+                CacheFilePath,
+                SourceKind,
+                Width,
+                Height,
+                CacheProfile,
+                LastSeenUtcTicks
+            )
+            VALUES (
+                @TrayRootPath,
+                @TrayRootHash,
+                @TrayItemKey,
+                @TrayInstanceId,
+                @ContentFingerprint,
+                @CacheFilePath,
+                @SourceKind,
+                @Width,
+                @Height,
+                @CacheProfile,
+                @LastSeenUtcTicks
+            )
+            ON CONFLICT(TrayRootPath, TrayItemKey) DO UPDATE SET
+                TrayRootHash = excluded.TrayRootHash,
+                TrayInstanceId = excluded.TrayInstanceId,
+                ContentFingerprint = excluded.ContentFingerprint,
+                CacheFilePath = excluded.CacheFilePath,
+                SourceKind = excluded.SourceKind,
+                Width = excluded.Width,
+                Height = excluded.Height,
+                CacheProfile = excluded.CacheProfile,
+                LastSeenUtcTicks = excluded.LastSeenUtcTicks;
+            """,
+            new TrayThumbnailRow
+            {
+                TrayRootPath = entry.TrayRootPath,
+                TrayRootHash = entry.TrayRootHash,
+                TrayItemKey = entry.TrayItemKey,
+                TrayInstanceId = entry.TrayInstanceId,
+                ContentFingerprint = entry.ContentFingerprint,
+                CacheFilePath = entry.CacheFilePath,
+                SourceKind = entry.SourceKind,
+                Width = entry.Width,
+                Height = entry.Height,
+                CacheProfile = entry.CacheProfile,
+                LastSeenUtcTicks = entry.LastSeenUtc.ToUniversalTime().Ticks
+            });
+    }
+
+    private void DeleteEntriesLocked(IReadOnlyList<TrayThumbnailManifestEntry> entries)
+    {
+        if (entries.Count == 0)
+        {
+            return;
+        }
+
+        using var connection = OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        connection.Execute(
+            """
+            DELETE FROM TrayThumbnailCache
+            WHERE TrayRootPath = @TrayRootPath
+              AND TrayItemKey = @TrayItemKey;
+            """,
+            entries.Select(entry => new
+            {
+                entry.TrayRootPath,
+                entry.TrayItemKey
+            }),
+            transaction: transaction);
+        transaction.Commit();
+    }
+
     private static TrayThumbnailCacheEntry ToCacheEntry(TrayThumbnailManifestEntry entry)
     {
         return new TrayThumbnailCacheEntry
@@ -380,6 +487,14 @@ public sealed class TrayThumbnailCacheStore
     private static string BuildCacheProfile(int targetWidth, int targetHeight)
     {
         return $"{CacheTransformVersion}-{targetWidth}x{targetHeight}";
+    }
+
+    private static string GetDefaultCacheBasePath()
+    {
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "SimsModDesktop",
+            "Cache");
     }
 
     private static void TryDeleteFile(string filePath)

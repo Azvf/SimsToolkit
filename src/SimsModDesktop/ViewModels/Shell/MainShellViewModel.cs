@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using Avalonia;
 using Avalonia.Styling;
+using SimsModDesktop.Application.Recovery;
 using SimsModDesktop.Infrastructure.Dialogs;
 using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Models;
@@ -20,6 +21,7 @@ public sealed class MainShellViewModel : ObservableObject
     private readonly ITS4PathDiscoveryService _pathDiscovery;
     private readonly IGameLaunchService _gameLaunchService;
     private readonly IAppCacheMaintenanceService _appCacheMaintenanceService;
+    private readonly IOperationRecoveryCoordinator? _operationRecoveryCoordinator;
 
     private AppSection _selectedSection = AppSection.Toolkit;
     private bool _enableLaunchGame = true;
@@ -47,7 +49,8 @@ public sealed class MainShellViewModel : ObservableObject
         ISettingsStore settingsStore,
         ITS4PathDiscoveryService pathDiscovery,
         IGameLaunchService gameLaunchService,
-        IAppCacheMaintenanceService appCacheMaintenanceService)
+        IAppCacheMaintenanceService appCacheMaintenanceService,
+        IOperationRecoveryCoordinator? operationRecoveryCoordinator = null)
     {
         _workspaceVm = workspaceVm;
         _savesVm = savesVm;
@@ -57,6 +60,7 @@ public sealed class MainShellViewModel : ObservableObject
         _pathDiscovery = pathDiscovery;
         _gameLaunchService = gameLaunchService;
         _appCacheMaintenanceService = appCacheMaintenanceService;
+        _operationRecoveryCoordinator = operationRecoveryCoordinator;
 
         SelectSectionCommand = new RelayCommand<string>(SelectSection);
         LaunchGameCommand = new AsyncRelayCommand(LaunchGameAsync, () => CanLaunchGame);
@@ -107,6 +111,7 @@ public sealed class MainShellViewModel : ObservableObject
             OnPropertyChanged(nameof(IsSettingsSectionSelected));
             OnPropertyChanged(nameof(IsWorkspaceSectionVisible));
             _workspaceVm.ModPreviewWorkspace.SetIsActive(_selectedSection == AppSection.Mods);
+            _workspaceVm.TrayPreviewWorkspace.SetIsActive(_selectedSection == AppSection.Tray);
             _savesVm.SetIsActive(_selectedSection == AppSection.Saves);
         }
     }
@@ -327,6 +332,11 @@ public sealed class MainShellViewModel : ObservableObject
         ApplyTheme();
         ApplyNavigationToWorkspace();
         SyncWorkspacePaths();
+        if (_operationRecoveryCoordinator is not null)
+        {
+            await _operationRecoveryCoordinator.InitializeAndPromptAsync(_workspaceVm.ResumeRecoverableOperationAsync);
+        }
+
         _isInitialized = true;
     }
 
@@ -374,7 +384,7 @@ public sealed class MainShellViewModel : ObservableObject
         SavesPath = settings.GameLaunch.SavesPath;
         Ts4RootPath = settings.GameLaunch.Ts4RootPath;
 
-        _navigation.SelectSection(settings.Navigation.SelectedSection);
+        _navigation.SelectSection(AppSection.Toolkit);
 
         SelectedSection = _navigation.SelectedSection;
     }
@@ -480,6 +490,15 @@ public sealed class MainShellViewModel : ObservableObject
     {
         CacheMaintenanceStatus = "Clearing disk cache...";
         var result = await _appCacheMaintenanceService.ClearAsync();
+        if (result.Success)
+        {
+            _workspaceVm.TrayPreviewWorkspace.ResetAfterCacheClear();
+            if (SelectedSection == AppSection.Tray)
+            {
+                await _workspaceVm.TrayPreviewWorkspace.EnsureLoadedAsync(forceReload: true);
+            }
+        }
+
         CacheMaintenanceStatus = result.Message;
     }
 

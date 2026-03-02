@@ -7,7 +7,7 @@ public sealed class ModPreviewPanelViewModel : ObservableObject
     private string _modsRoot = string.Empty;
     private string _packageTypeFilter = "All";
     private string _scopeFilter = "All";
-    private string _sortBy = "Last Updated";
+    private string _sortBy = "Last Indexed";
     private string _searchQuery = string.Empty;
     private bool _showOverridesOnly;
 

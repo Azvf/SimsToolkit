@@ -11,6 +11,19 @@ public interface IOrganizeModuleState
     bool KeepZip { get; set; }
 }
 
+public interface ITextureCompressModuleState
+{
+    string SourcePath { get; set; }
+    string OutputPath { get; set; }
+    string TargetWidthText { get; set; }
+    string TargetHeightText { get; set; }
+    bool HasAlphaHint { get; set; }
+    bool GenerateMipMaps { get; set; }
+    string PreferredFormat { get; set; }
+    string LastOutputPath { get; set; }
+    string LastRunSummary { get; set; }
+}
+
 public interface IFlattenModuleState
 {
     string RootPath { get; set; }

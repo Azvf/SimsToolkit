@@ -501,6 +501,10 @@ public sealed class SimsTrayPreviewServiceTests
             LastLiveKeys = liveItemKeys.ToArray();
             return Task.CompletedTask;
         }
+
+        public void ResetMemoryCache(string? trayRootPath = null)
+        {
+        }
     }
 
     private sealed class FakeTrayMetadataService : ITrayMetadataService
@@ -568,6 +572,10 @@ public sealed class SimsTrayPreviewServiceTests
             LastLiveKeys = liveItemKeys.ToArray();
             _cleanupStarted.TrySetResult();
             return _cleanupRelease.Task;
+        }
+
+        public void ResetMemoryCache(string? trayRootPath = null)
+        {
         }
 
         public void ReleaseCleanup()

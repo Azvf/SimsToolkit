@@ -1,8 +1,8 @@
-using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.Diagnostics;
 using Avalonia.Threading;
-using SimsModDesktop.Models;
+using SimsModDesktop.Application.Mods;
+using SimsModDesktop.Application.TextureCompression;
+using SimsModDesktop.Infrastructure.Dialogs;
 using SimsModDesktop.Services;
 using SimsModDesktop.ViewModels.Infrastructure;
 using SimsModDesktop.ViewModels.Panels;
@@ -12,39 +12,74 @@ namespace SimsModDesktop.ViewModels.Preview;
 public sealed class ModPreviewWorkspaceViewModel : ObservableObject
 {
     private readonly ModPreviewPanelViewModel _filter;
-    private readonly IModPreviewCatalogService _catalogService;
+    private readonly IModPackageScanService _scanService;
+    private readonly IModItemCatalogService _catalogService;
+    private readonly IModItemIndexScheduler _indexScheduler;
+    private readonly object _eventLock = new();
 
-    private CancellationTokenSource? _refreshDebounceCts;
-    private CancellationTokenSource? _refreshWorkCts;
+    private CancellationTokenSource? _refreshCts;
+    private CancellationTokenSource? _fastEventCts;
+    private CancellationTokenSource? _deepEventCts;
+    private HashSet<string> _pendingDeepKeys = new(StringComparer.OrdinalIgnoreCase);
     private bool _isBusy;
     private bool _isActive;
     private bool _hasPendingRefresh = true;
-    private string _statusText = "Set a valid Mods path to scan packages.";
-    private string _summaryText = "No preview data loaded.";
-    private ModPreviewListItemViewModel? _selectedItem;
-    private ModPreviewDetailModel? _selectedDetail;
+    private bool _hasLoadedStablePage;
+    private bool _inspectHasNewerSnapshot;
+    private string _statusText = "Set a valid Mods path to build the item catalog.";
+    private string _summaryText = "No indexed items loaded.";
+    private string _pageText = "Page 0/0";
+    private string _jumpPageText = string.Empty;
+    private string _indexingStatusText = "No package indexing has started yet.";
+    private int _currentPage = 1;
+    private int _totalPages = 1;
+    private ModItemListItemViewModel? _selectedItem;
 
     public ModPreviewWorkspaceViewModel(
         ModPreviewPanelViewModel filter,
-        IModPreviewCatalogService catalogService)
+        IModPreviewCatalogService? legacyCatalogService = null,
+        IModItemCatalogService? catalogService = null,
+        IModItemIndexScheduler? indexScheduler = null,
+        IModPackageScanService? scanService = null,
+        IModItemInspectService? inspectService = null,
+        IModPackageTextureEditService? textureEditService = null,
+        IFileDialogService? fileDialogService = null)
     {
         _filter = filter;
-        _catalogService = catalogService;
-        CatalogItems = new BulkObservableCollection<ModPreviewListItemViewModel>();
+        _scanService = scanService ?? new ModPackageScanService();
 
-        RefreshCommand = new AsyncRelayCommand(() => RefreshAsync(bypassCache: true), () => !IsBusy);
-        SelectItemCommand = new RelayCommand<ModPreviewListItemViewModel>(SelectItem);
-        OpenSelectedFolderCommand = new RelayCommand(OpenSelectedFolder, () => SelectedItem is not null);
-        OpenSelectedFileCommand = new RelayCommand(OpenSelectedFile, () => SelectedItem is not null);
+        var store = new SqliteModItemIndexStore();
+        _catalogService = catalogService ?? new SqliteModItemCatalogService(store);
+        _indexScheduler = indexScheduler ?? new ModItemIndexScheduler(
+            store,
+            new FastModItemIndexService(),
+            new DeepModItemEnrichmentService(new ModPackageTextureAnalysisService(new SqliteModPackageTextureAnalysisStore())));
+
+        var resolvedInspectService = inspectService ?? new SqliteModItemInspectService(store);
+        var resolvedTextureEditService = textureEditService ?? NullModPackageTextureEditService.Instance;
+        var resolvedFileDialog = fileDialogService ?? new NullFileDialogService();
+        Inspect = new ModItemInspectViewModel(resolvedInspectService, resolvedTextureEditService, resolvedFileDialog);
+
+        CatalogItems = new PatchableObservableCollection<ModItemListItemViewModel>();
+        RefreshCommand = new AsyncRelayCommand(RefreshAsync, () => HasValidModsPath && !IsBusy);
+        PrevPageCommand = new AsyncRelayCommand(LoadPreviousPageAsync, () => CanGoPrevPage);
+        NextPageCommand = new AsyncRelayCommand(LoadNextPageAsync, () => CanGoNextPage);
+        JumpPageCommand = new AsyncRelayCommand(JumpPageAsync, () => CanJumpPage);
+        SelectItemCommand = new RelayCommand<ModItemListItemViewModel>(SelectItem);
 
         _filter.PropertyChanged += OnFilterPropertyChanged;
+        _indexScheduler.FastBatchApplied += OnFastBatchApplied;
+        _indexScheduler.EnrichmentApplied += OnEnrichmentApplied;
+        _indexScheduler.AllWorkCompleted += OnAllWorkCompleted;
     }
 
-    public BulkObservableCollection<ModPreviewListItemViewModel> CatalogItems { get; }
+    public PatchableObservableCollection<ModItemListItemViewModel> CatalogItems { get; }
+    public ModItemInspectViewModel Inspect { get; }
     public AsyncRelayCommand RefreshCommand { get; }
-    public RelayCommand<ModPreviewListItemViewModel> SelectItemCommand { get; }
-    public RelayCommand OpenSelectedFolderCommand { get; }
-    public RelayCommand OpenSelectedFileCommand { get; }
+    public AsyncRelayCommand PrevPageCommand { get; }
+    public AsyncRelayCommand NextPageCommand { get; }
+    public AsyncRelayCommand JumpPageCommand { get; }
+    public RelayCommand<ModItemListItemViewModel> SelectItemCommand { get; }
 
     public bool IsBusy
     {
@@ -56,9 +91,15 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
                 return;
             }
 
-            OnPropertyChanged(nameof(IsLoadingStateVisible));
             OnPropertyChanged(nameof(IsEmptyStateVisible));
+            OnPropertyChanged(nameof(IsLoadingStateVisible));
+            OnPropertyChanged(nameof(CanGoPrevPage));
+            OnPropertyChanged(nameof(CanGoNextPage));
+            OnPropertyChanged(nameof(CanJumpPage));
             RefreshCommand.NotifyCanExecuteChanged();
+            PrevPageCommand.NotifyCanExecuteChanged();
+            NextPageCommand.NotifyCanExecuteChanged();
+            JumpPageCommand.NotifyCanExecuteChanged();
         }
     }
 
@@ -66,10 +107,11 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
         !string.IsNullOrWhiteSpace(_filter.ModsRoot) && Directory.Exists(_filter.ModsRoot);
 
     public bool HasItems => CatalogItems.Count > 0;
-    public bool IsLoadingStateVisible => IsBusy && !HasItems;
     public bool IsEmptyStateVisible => !IsBusy && !HasItems;
-    public bool HasSelectedItem => SelectedItem is not null;
-    public bool IsDetailPlaceholderVisible => !HasSelectedItem;
+    public bool IsLoadingStateVisible => IsBusy && !HasItems;
+    public bool CanGoPrevPage => !IsBusy && _currentPage > 1;
+    public bool CanGoNextPage => !IsBusy && _currentPage < _totalPages;
+    public bool CanJumpPage => !IsBusy && int.TryParse(JumpPageText, out var page) && page >= 1 && page <= _totalPages;
 
     public string StatusText
     {
@@ -83,12 +125,39 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
         private set => SetProperty(ref _summaryText, value);
     }
 
-    public ModPreviewListItemViewModel? SelectedItem
+    public string PageText
+    {
+        get => _pageText;
+        private set => SetProperty(ref _pageText, value);
+    }
+
+    public string JumpPageText
+    {
+        get => _jumpPageText;
+        set
+        {
+            if (!SetProperty(ref _jumpPageText, value ?? string.Empty))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(CanJumpPage));
+            JumpPageCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    public string IndexingStatusText
+    {
+        get => _indexingStatusText;
+        private set => SetProperty(ref _indexingStatusText, value);
+    }
+
+    public ModItemListItemViewModel? SelectedItem
     {
         get => _selectedItem;
         set
         {
-            if (value is not null && !CatalogItems.Contains(value))
+            if (value is not null && (!CatalogItems.Contains(value) || value.IsPlaceholder))
             {
                 return;
             }
@@ -104,23 +173,13 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
                 previous.IsSelected = false;
             }
 
-            if (value is not null && !value.IsSelected)
+            if (value is not null)
             {
                 value.IsSelected = true;
+                _inspectHasNewerSnapshot = false;
+                _ = Inspect.LoadAsync(value.ItemKey);
             }
-
-            SelectedDetail = value is null ? null : BuildDetail(value.Item);
-            OnPropertyChanged(nameof(HasSelectedItem));
-            OnPropertyChanged(nameof(IsDetailPlaceholderVisible));
-            OpenSelectedFolderCommand.NotifyCanExecuteChanged();
-            OpenSelectedFileCommand.NotifyCanExecuteChanged();
         }
-    }
-
-    public ModPreviewDetailModel? SelectedDetail
-    {
-        get => _selectedDetail;
-        private set => SetProperty(ref _selectedDetail, value);
     }
 
     public void SetIsActive(bool isActive)
@@ -133,110 +192,91 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
         _isActive = isActive;
         if (!_isActive)
         {
-            CancelScheduledRefresh();
+            _refreshCts?.Cancel();
             return;
         }
 
         if (_hasPendingRefresh || (HasValidModsPath && CatalogItems.Count == 0))
         {
-            ScheduleRefresh(immediate: true);
+            _ = RefreshAsync();
         }
     }
 
     public Task RefreshAsync()
     {
-        return RefreshAsync(bypassCache: true);
+        return RefreshAsync(forcePageReset: true);
     }
 
-    private async Task RefreshAsync(bool bypassCache)
+    private async Task RefreshAsync(bool forcePageReset)
     {
         _hasPendingRefresh = false;
+        CancelEventThrottles();
+        _refreshCts?.Cancel();
+        _refreshCts?.Dispose();
+        _refreshCts = new CancellationTokenSource();
+        var cancellationToken = _refreshCts.Token;
 
         if (!HasValidModsPath)
         {
             await ExecuteOnUiAsync(() =>
             {
-                CatalogItems.ReplaceAll(Array.Empty<ModPreviewListItemViewModel>());
+                CatalogItems.ReplaceAllStable(Array.Empty<ModItemListItemViewModel>());
                 SelectedItem = null;
-                SummaryText = "No preview data loaded.";
-                StatusText = "Set a valid Mods path to scan packages.";
+                SummaryText = "No indexed items loaded.";
+                StatusText = "Set a valid Mods path to build the item catalog.";
+                IndexingStatusText = "No package indexing has started yet.";
+                PageText = "Page 0/0";
                 OnPropertyChanged(nameof(HasItems));
-                OnPropertyChanged(nameof(IsLoadingStateVisible));
                 OnPropertyChanged(nameof(IsEmptyStateVisible));
-                OnPropertyChanged(nameof(HasValidModsPath));
+                OnPropertyChanged(nameof(IsLoadingStateVisible));
             }).ConfigureAwait(false);
             return;
         }
 
-        var previousSelectionKey = SelectedItem?.Item.Key;
-        await ExecuteOnUiAsync(() => IsBusy = true).ConfigureAwait(false);
-        var cancellationToken = BeginRefreshWork();
+        if (forcePageReset)
+        {
+            _currentPage = 1;
+        }
+
+        await ExecuteOnUiAsync(() =>
+        {
+            IsBusy = true;
+            StatusText = "Loading cached item catalog rows...";
+        }).ConfigureAwait(false);
 
         try
         {
-            var query = new ModPreviewCatalogQuery
+            var packageScan = await _scanService.ScanAsync(_filter.ModsRoot, cancellationToken).ConfigureAwait(false);
+            await LoadPageShellAsync(cancellationToken, allowSkeletonWhenEmpty: packageScan.Count > 0).ConfigureAwait(false);
+
+            if (packageScan.Count == 0)
             {
-                ModsRoot = _filter.ModsRoot,
-                PackageTypeFilter = _filter.PackageTypeFilter,
-                ScopeFilter = _filter.ScopeFilter,
-                SortBy = _filter.SortBy,
-                SearchQuery = _filter.SearchQuery,
-                ShowOverridesOnly = _filter.ShowOverridesOnly,
-                BypassCache = bypassCache
-            };
+                await ExecuteOnUiAsync(() =>
+                {
+                    IndexingStatusText = "No packages were found under the configured Mods path.";
+                    Inspect.SetBackgroundSyncActive(false);
+                }).ConfigureAwait(false);
+                return;
+            }
 
             await ExecuteOnUiAsync(() =>
             {
-                CatalogItems.ReplaceAll(Array.Empty<ModPreviewListItemViewModel>());
-                SelectedItem = null;
-                SummaryText = "Scanning Mods folder...";
-                StatusText = "Loading initial results...";
-                OnPropertyChanged(nameof(HasItems));
-                OnPropertyChanged(nameof(IsLoadingStateVisible));
-                OnPropertyChanged(nameof(IsEmptyStateVisible));
+                IndexingStatusText = "Fast parsing package metadata in the background...";
+                Inspect.SetBackgroundSyncActive(true);
             }).ConfigureAwait(false);
 
-            await foreach (var page in _catalogService.StreamCatalogAsync(query, cancellationToken).ConfigureAwait(false))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var viewModels = page.Items
-                    .Select(item => new ModPreviewListItemViewModel(item))
-                    .ToArray();
-
-                await ExecuteOnUiAsync(() =>
+            _ = Task.Run(
+                async () =>
                 {
-                    if (page.ReplaceExisting)
+                    try
                     {
-                        CatalogItems.ReplaceAll(viewModels);
+                        await _indexScheduler.QueueRefreshAsync(packageScan.Select(result => result.PackagePath).ToArray(), cancellationToken).ConfigureAwait(false);
                     }
-                    else
+                    catch (OperationCanceledException)
                     {
-                        CatalogItems.AddRange(viewModels);
                     }
-
-                    ApplySelection(previousSelectionKey);
-
-                    if (page.ReplaceExisting)
-                    {
-                        SummaryText = CatalogItems.Count == 0
-                            ? "No matching mods."
-                            : $"Mods: {page.MatchedCount} | Packages: {page.PackageCount} | Scripts: {page.ScriptCount}";
-                        StatusText = CatalogItems.Count == 0
-                            ? "No mods matched the current filters."
-                            : "Catalog refreshed from the current Mods path.";
-                    }
-                    else
-                    {
-                        SummaryText = $"Loading mods: {page.MatchedCount} matched";
-                        StatusText = $"Scanned {page.ScannedCount} files | Packages {page.PackageCount} | Scripts {page.ScriptCount}";
-                    }
-
-                    OnPropertyChanged(nameof(HasItems));
-                    OnPropertyChanged(nameof(IsLoadingStateVisible));
-                    OnPropertyChanged(nameof(IsEmptyStateVisible));
-                }).ConfigureAwait(false);
-            }
+                },
+                cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -245,76 +285,231 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
         {
             await ExecuteOnUiAsync(() =>
             {
-                CatalogItems.ReplaceAll(Array.Empty<ModPreviewListItemViewModel>());
+                CatalogItems.ReplaceAllStable(Array.Empty<ModItemListItemViewModel>());
                 SelectedItem = null;
-                SummaryText = "Preview load failed.";
+                SummaryText = "Item catalog load failed.";
                 StatusText = ex.Message;
+                IndexingStatusText = "Background indexing did not start.";
+                PageText = "Page 0/0";
                 OnPropertyChanged(nameof(HasItems));
-                OnPropertyChanged(nameof(IsLoadingStateVisible));
                 OnPropertyChanged(nameof(IsEmptyStateVisible));
+                OnPropertyChanged(nameof(IsLoadingStateVisible));
             }).ConfigureAwait(false);
         }
         finally
         {
-            if (IsCurrentRefresh(cancellationToken))
-            {
-                CompleteRefreshWork(cancellationToken);
-                await ExecuteOnUiAsync(() => IsBusy = false).ConfigureAwait(false);
-            }
+            await ExecuteOnUiAsync(() => IsBusy = false).ConfigureAwait(false);
         }
     }
 
-    private void OnFilterPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    private async Task LoadPageShellAsync(CancellationToken cancellationToken, bool allowSkeletonWhenEmpty)
     {
-        OnPropertyChanged(nameof(HasValidModsPath));
+        var page = await QueryCurrentPageAsync(cancellationToken).ConfigureAwait(false);
+        var rows = page.Items.Select(item => new ModItemListItemViewModel(item)).ToArray();
 
-        _hasPendingRefresh = true;
-        if (_isActive)
+        await ExecuteOnUiAsync(() =>
         {
-            ScheduleRefresh(immediate: false);
-        }
+            _currentPage = page.PageIndex;
+            _totalPages = page.TotalPages;
+            PageText = $"Page {page.PageIndex}/{page.TotalPages}";
+
+            if (rows.Length > 0)
+            {
+                ApplyStableRows(rows, page.TotalItems, page.PageSize, "Item catalog loaded from the local database.");
+                _hasLoadedStablePage = true;
+                IndexingStatusText = "Deep enrichment will continue in the background if packages changed.";
+                return;
+            }
+
+            if (allowSkeletonWhenEmpty)
+            {
+                CatalogItems.ReplaceAllStable(BuildSkeletonRows(page.PageSize).Select(row => new ModItemListItemViewModel(row)));
+                SelectedItem = null;
+                _hasLoadedStablePage = false;
+                SummaryText = $"Items: {page.TotalItems} | Page Size: {page.PageSize}";
+                StatusText = "Loading basic catalog rows...";
+                OnPropertyChanged(nameof(HasItems));
+                OnPropertyChanged(nameof(IsEmptyStateVisible));
+                OnPropertyChanged(nameof(IsLoadingStateVisible));
+                return;
+            }
+
+            CatalogItems.ReplaceAllStable(Array.Empty<ModItemListItemViewModel>());
+            SelectedItem = null;
+            _hasLoadedStablePage = false;
+            SummaryText = "No indexed items loaded.";
+            StatusText = "No indexed items matched the current filters.";
+            OnPropertyChanged(nameof(HasItems));
+            OnPropertyChanged(nameof(IsEmptyStateVisible));
+            OnPropertyChanged(nameof(IsLoadingStateVisible));
+        }).ConfigureAwait(false);
     }
 
-    private void ScheduleRefresh(bool immediate)
+    private async Task ApplyFastRowsToCurrentPageAsync()
     {
-        CancelScheduledRefresh();
-        if (!_isActive)
+        var page = await QueryCurrentPageAsync(CancellationToken.None).ConfigureAwait(false);
+        var rows = page.Items.Select(item => new ModItemListItemViewModel(item)).ToArray();
+        if (rows.Length == 0)
         {
             return;
         }
 
-        var cts = new CancellationTokenSource();
-        _refreshDebounceCts = cts;
-        _ = Task.Run(async () =>
+        await ExecuteOnUiAsync(() =>
         {
-            try
-            {
-                if (!immediate)
-                {
-                    await Task.Delay(180, cts.Token).ConfigureAwait(false);
-                }
-
-                if (!cts.IsCancellationRequested)
-                {
-                    await RefreshAsync(bypassCache: false).ConfigureAwait(false);
-                }
-            }
-            catch (OperationCanceledException)
-            {
-            }
-        }, cts.Token);
+            _currentPage = page.PageIndex;
+            _totalPages = page.TotalPages;
+            PageText = $"Page {page.PageIndex}/{page.TotalPages}";
+            ApplyStableRows(rows, page.TotalItems, page.PageSize, "Basic metadata loaded. Deep enrichment continues in the background.");
+            _hasLoadedStablePage = true;
+            IndexingStatusText = "Deep enriching names, textures, and previews in the background...";
+        }).ConfigureAwait(false);
     }
 
-    private void CancelScheduledRefresh()
+    private async Task PatchCurrentPageRowsAsync()
     {
-        _refreshDebounceCts?.Cancel();
-        _refreshDebounceCts?.Dispose();
-        _refreshDebounceCts = null;
+        var page = await QueryCurrentPageAsync(CancellationToken.None).ConfigureAwait(false);
+        if (page.Items.Count == 0)
+        {
+            return;
+        }
+
+        await ExecuteOnUiAsync(() =>
+        {
+            if (!_hasLoadedStablePage || CatalogItems.Any(item => item.IsPlaceholder))
+            {
+                var replacementRows = page.Items.Select(item => new ModItemListItemViewModel(item)).ToArray();
+                ApplyStableRows(replacementRows, page.TotalItems, page.PageSize, "Basic metadata loaded. Deep enrichment continues in the background.");
+                _hasLoadedStablePage = true;
+                return;
+            }
+
+            CatalogItems.PatchByKey(
+                page.Items,
+                existing => existing.ItemKey,
+                update => update.ItemKey,
+                (existing, update) => existing.UpdateFrom(update));
+            SummaryText = $"Items: {page.TotalItems} | Page Size: {page.PageSize}";
+            OnPropertyChanged(nameof(HasItems));
+        }).ConfigureAwait(false);
     }
 
-    private void SelectItem(ModPreviewListItemViewModel? item)
+    private Task<ModItemCatalogPage> QueryCurrentPageAsync(CancellationToken cancellationToken)
     {
-        if (item is null || !CatalogItems.Contains(item))
+        return _catalogService.QueryPageAsync(
+            new ModItemCatalogQuery
+            {
+                ModsRoot = _filter.ModsRoot,
+                SearchQuery = _filter.SearchQuery,
+                EntityKindFilter = _filter.PackageTypeFilter,
+                SubTypeFilter = _filter.ScopeFilter,
+                SortBy = _filter.SortBy,
+                PageIndex = _currentPage,
+                PageSize = 50
+            },
+            cancellationToken);
+    }
+
+    private void ApplyStableRows(
+        IReadOnlyList<ModItemListItemViewModel> rows,
+        int totalItems,
+        int pageSize,
+        string statusText)
+    {
+        var selectedKey = SelectedItem?.ItemKey;
+        CatalogItems.ReplaceAllStable(rows);
+        SummaryText = $"Items: {totalItems} | Page Size: {pageSize}";
+        StatusText = statusText;
+        OnPropertyChanged(nameof(HasItems));
+        OnPropertyChanged(nameof(IsEmptyStateVisible));
+        OnPropertyChanged(nameof(IsLoadingStateVisible));
+
+        var resolvedSelection = rows.FirstOrDefault(item =>
+            string.Equals(item.ItemKey, selectedKey, StringComparison.OrdinalIgnoreCase))
+            ?? rows.FirstOrDefault(item => !item.IsPlaceholder);
+
+        if (_selectedItem is not null &&
+            resolvedSelection is not null &&
+            string.Equals(_selectedItem.ItemKey, resolvedSelection.ItemKey, StringComparison.OrdinalIgnoreCase))
+        {
+            _selectedItem = resolvedSelection;
+            resolvedSelection.IsSelected = true;
+            OnPropertyChanged(nameof(SelectedItem));
+            return;
+        }
+
+        SelectedItem = resolvedSelection;
+    }
+
+    private static IReadOnlyList<ModItemListRow> BuildSkeletonRows(int count)
+    {
+        var safeCount = Math.Max(1, count);
+        var rows = new List<ModItemListRow>(safeCount);
+        for (var index = 0; index < safeCount; index++)
+        {
+            rows.Add(new ModItemListRow
+            {
+                ItemKey = $"__skeleton__:{index}",
+                DisplayName = "Loading item metadata...",
+                EntityKind = "Pending",
+                EntitySubType = "Pending",
+                PackagePath = string.Empty,
+                PackageName = string.Empty,
+                ScopeText = "Pending",
+                ThumbnailStatus = "Placeholder",
+                TextureCount = 0,
+                EditableTextureCount = 0,
+                TextureSummaryText = "Basic metadata loaded",
+                IsPlaceholder = true,
+                DisplayStage = ModItemDisplayStage.Fast,
+                ThumbnailStage = ModItemThumbnailStage.None,
+                TextureStage = ModItemTextureStage.Pending,
+                ShowThumbnailPlaceholder = true,
+                ShowMetadataPlaceholder = true,
+                StableSubtitleText = "Basic metadata loaded",
+                SortKeyStable = $"__skeleton__:{index}",
+                UpdatedUtcTicks = 0
+            });
+        }
+
+        return rows;
+    }
+
+    private async Task LoadPreviousPageAsync()
+    {
+        if (!CanGoPrevPage)
+        {
+            return;
+        }
+
+        _currentPage--;
+        await RefreshAsync(forcePageReset: false).ConfigureAwait(false);
+    }
+
+    private async Task LoadNextPageAsync()
+    {
+        if (!CanGoNextPage)
+        {
+            return;
+        }
+
+        _currentPage++;
+        await RefreshAsync(forcePageReset: false).ConfigureAwait(false);
+    }
+
+    private async Task JumpPageAsync()
+    {
+        if (!int.TryParse(JumpPageText, out var page) || page < 1 || page > _totalPages)
+        {
+            return;
+        }
+
+        _currentPage = page;
+        await RefreshAsync(forcePageReset: false).ConfigureAwait(false);
+    }
+
+    private void SelectItem(ModItemListItemViewModel? item)
+    {
+        if (item is null || item.IsPlaceholder || !CatalogItems.Contains(item))
         {
             return;
         }
@@ -322,133 +517,153 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
         SelectedItem = item;
     }
 
-    private CancellationToken BeginRefreshWork()
+    private void OnFilterPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        _refreshWorkCts?.Cancel();
-        _refreshWorkCts?.Dispose();
-        _refreshWorkCts = new CancellationTokenSource();
-        return _refreshWorkCts.Token;
+        OnPropertyChanged(nameof(HasValidModsPath));
+        _hasPendingRefresh = true;
+        if (_isActive)
+        {
+            _ = RefreshAsync();
+        }
     }
 
-    private void CompleteRefreshWork(CancellationToken token)
+    private void OnFastBatchApplied(object? sender, ModFastBatchAppliedEventArgs e)
     {
-        if (_refreshWorkCts is null || _refreshWorkCts.Token != token)
+        if (!_isActive || !HasValidModsPath)
         {
             return;
         }
 
-        _refreshWorkCts.Dispose();
-        _refreshWorkCts = null;
+        ScheduleFastUpdate();
     }
 
-    private bool IsCurrentRefresh(CancellationToken token)
+    private void OnEnrichmentApplied(object? sender, ModEnrichmentAppliedEventArgs e)
     {
-        return _refreshWorkCts is not null && _refreshWorkCts.Token == token;
-    }
-
-    private void ApplySelection(string? preferredKey)
-    {
-        var selected = CatalogItems.FirstOrDefault(item =>
-                           string.Equals(item.Item.Key, preferredKey, StringComparison.OrdinalIgnoreCase))
-                       ?? CatalogItems.FirstOrDefault();
-        SelectedItem = selected;
-    }
-
-    private static ModPreviewDetailModel BuildDetail(ModPreviewCatalogItem item)
-    {
-        var overviewRows = new[]
+        if (!_isActive || !HasValidModsPath)
         {
-            new ModPreviewDetailRow { Label = "Classification", Value = item.Classification },
-            new ModPreviewDetailRow { Label = "File Size", Value = item.FileSizeText },
-            new ModPreviewDetailRow { Label = "Last Updated", Value = item.LastUpdatedText },
-            new ModPreviewDetailRow { Label = "Extension", Value = item.FileExtension },
-            new ModPreviewDetailRow { Label = "Type", Value = item.PackageType }
-        };
+            return;
+        }
 
-        var resourceRows = new[]
+        lock (_eventLock)
         {
-            new ModPreviewDetailRow
+            foreach (var itemKey in e.AffectedItemKeys)
             {
-                Label = "Preview",
-                Value = string.Equals(item.PackageType, "Script Mod", StringComparison.OrdinalIgnoreCase)
-                    ? "No embedded preview. Script packages usually surface metadata only."
-                    : "Thumbnail slot reserved. Package parser can bind swatches or texture previews here."
-            },
-            new ModPreviewDetailRow { Label = "Scope", Value = item.Scope },
-            new ModPreviewDetailRow { Label = "Path Group", Value = item.DisplaySubtitle }
-        };
-
-        var conflictRows = new[]
-        {
-            new ModPreviewDetailRow { Label = "Status", Value = item.ConflictHintText },
-            new ModPreviewDetailRow
-            {
-                Label = "Override",
-                Value = item.IsOverride ? "This file is likely replacing existing resources." : "No obvious override signal detected."
+                _pendingDeepKeys.Add(itemKey);
             }
-        };
+        }
 
-        var fileRows = new[]
+        if (_selectedItem is not null &&
+            e.AffectedItemKeys.Any(itemKey => string.Equals(itemKey, _selectedItem.ItemKey, StringComparison.OrdinalIgnoreCase)))
         {
-            new ModPreviewDetailRow { Label = "Relative", Value = item.RelativePath },
-            new ModPreviewDetailRow { Label = "Absolute", Value = item.FullPath }
-        };
+            _inspectHasNewerSnapshot = true;
+            _ = ExecuteOnUiAsync(() => Inspect.MarkPendingRefresh());
+        }
 
-        return new ModPreviewDetailModel
-        {
-            DisplayTitle = item.DisplayTitle,
-            DisplaySubtitle = item.DisplaySubtitle,
-            PackageType = item.PackageType,
-            Scope = item.Scope,
-            RelativePath = item.RelativePath,
-            FullPath = item.FullPath,
-            PreviewStatusText = "Parser-ready surface. Real package metadata can replace these placeholders later.",
-            OverviewRows = overviewRows,
-            ResourceRows = resourceRows,
-            ConflictRows = conflictRows,
-            FileRows = fileRows
-        };
+        ScheduleDeepUpdate();
     }
 
-    private void OpenSelectedFolder()
+    private void OnAllWorkCompleted(object? sender, EventArgs e)
     {
-        if (SelectedItem is null)
+        if (!_isActive)
         {
             return;
         }
 
-        var directory = Path.GetDirectoryName(SelectedItem.Item.FullPath);
-        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+        _ = Task.Run(async () =>
         {
-            return;
-        }
+            await ExecuteOnUiAsync(() =>
+            {
+                IndexingStatusText = "Indexed item catalog is up to date.";
+                Inspect.SetBackgroundSyncActive(false);
+            }).ConfigureAwait(false);
 
-        OpenExplorer(directory, selectFile: false);
-    }
-
-    private void OpenSelectedFile()
-    {
-        if (SelectedItem is null || !File.Exists(SelectedItem.Item.FullPath))
-        {
-            return;
-        }
-
-        OpenExplorer(SelectedItem.Item.FullPath, selectFile: true);
-    }
-
-    private static void OpenExplorer(string path, bool selectFile)
-    {
-        var arguments = selectFile ? $"/select,\"{path}\"" : $"\"{path}\"";
-        Process.Start(new ProcessStartInfo
-        {
-            FileName = "explorer.exe",
-            Arguments = arguments,
-            UseShellExecute = true
+            if (_inspectHasNewerSnapshot && SelectedItem is not null)
+            {
+                _inspectHasNewerSnapshot = false;
+                await Inspect.RefreshCurrentAsync().ConfigureAwait(false);
+            }
         });
+    }
+
+    private void ScheduleFastUpdate()
+    {
+        _fastEventCts?.Cancel();
+        _fastEventCts?.Dispose();
+        _fastEventCts = new CancellationTokenSource();
+        var token = _fastEventCts.Token;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(300), token).ConfigureAwait(false);
+                await ApplyFastRowsToCurrentPageAsync().ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }, token);
+    }
+
+    private void ScheduleDeepUpdate()
+    {
+        _deepEventCts?.Cancel();
+        _deepEventCts?.Dispose();
+        _deepEventCts = new CancellationTokenSource();
+        var token = _deepEventCts.Token;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(400), token).ConfigureAwait(false);
+                lock (_eventLock)
+                {
+                    _pendingDeepKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                }
+
+                await PatchCurrentPageRowsAsync().ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }, token);
+    }
+
+    private void CancelEventThrottles()
+    {
+        _fastEventCts?.Cancel();
+        _fastEventCts?.Dispose();
+        _fastEventCts = null;
+        _deepEventCts?.Cancel();
+        _deepEventCts?.Dispose();
+        _deepEventCts = null;
+        lock (_eventLock)
+        {
+            _pendingDeepKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
     }
 
     private static Task ExecuteOnUiAsync(Action action)
     {
         return Dispatcher.UIThread.InvokeAsync(action).GetTask();
+    }
+
+    private sealed class NullFileDialogService : IFileDialogService
+    {
+        public Task<IReadOnlyList<string>> PickFolderPathsAsync(string title, bool allowMultiple)
+        {
+            return Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
+        }
+
+        public Task<string?> PickFilePathAsync(string title, string fileTypeName, IReadOnlyList<string> patterns)
+        {
+            return Task.FromResult<string?>(null);
+        }
+
+        public Task<string?> PickCsvSavePathAsync(string title, string suggestedFileName)
+        {
+            return Task.FromResult<string?>(null);
+        }
     }
 }

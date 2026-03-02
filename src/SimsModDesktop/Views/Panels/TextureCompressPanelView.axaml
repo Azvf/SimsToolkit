@@ -1,0 +1,75 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:SimsModDesktop.ViewModels"
+             x:Class="SimsModDesktop.Views.Panels.TextureCompressPanelView"
+             x:DataType="vm:MainWindowViewModel">
+    <Border Classes="card-muted" Padding="10" IsVisible="{Binding IsTextureCompressVisible}">
+        <StackPanel Spacing="10">
+            <TextBlock Classes="section-title" Text="Texture Compress" />
+            <TextBlock Classes="helper-text"
+                       Text="Compress a loose PNG, DDS, or TGA file into a DDS BC texture. This validates the new in-app texture pipeline before package writeback is added." />
+
+            <Grid ColumnDefinitions="180,*,Auto"
+                  RowDefinitions="Auto,Auto,Auto,Auto"
+                  RowSpacing="8"
+                  ColumnSpacing="8">
+                <TextBlock VerticalAlignment="Center" Text="Source File" />
+                <TextBox Grid.Column="1" Classes="path-field" Text="{Binding TextureCompress.SourcePath}" />
+                <TextBlock Grid.Column="2"
+                           VerticalAlignment="Center"
+                           Classes="helper-text"
+                           Text=".png / .dds / .tga" />
+
+                <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="Output DDS" />
+                <TextBox Grid.Row="1" Grid.Column="1" Classes="path-field" Text="{Binding TextureCompress.OutputPath}" />
+                <TextBlock Grid.Row="1"
+                           Grid.Column="2"
+                           VerticalAlignment="Center"
+                           Classes="helper-text"
+                           Text="Blank = auto" />
+
+                <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="Target Width" />
+                <TextBox Grid.Row="2" Grid.Column="1" Width="140" HorizontalAlignment="Left" Text="{Binding TextureCompress.TargetWidthText}" />
+
+                <TextBlock Grid.Row="3" VerticalAlignment="Center" Text="Target Height" />
+                <TextBox Grid.Row="3" Grid.Column="1" Width="140" HorizontalAlignment="Left" Text="{Binding TextureCompress.TargetHeightText}" />
+            </Grid>
+
+            <Border Classes="card" Padding="10">
+                <Grid ColumnDefinitions="220,*"
+                      RowDefinitions="Auto,Auto,Auto"
+                      ColumnSpacing="8"
+                      RowSpacing="8">
+                    <TextBlock VerticalAlignment="Center" Text="Target Format" />
+                    <ComboBox Grid.Column="1"
+                              Width="160"
+                              HorizontalAlignment="Left"
+                              ItemsSource="{Binding TextureCompress.AvailablePreferredFormats}"
+                              SelectedItem="{Binding TextureCompress.PreferredFormat}" />
+
+                    <CheckBox Grid.Row="1"
+                              Grid.Column="1"
+                              Content="Source likely has alpha"
+                              IsChecked="{Binding TextureCompress.HasAlphaHint}" />
+
+                    <CheckBox Grid.Row="2"
+                              Grid.Column="1"
+                              Content="Generate mipmaps"
+                              IsChecked="{Binding TextureCompress.GenerateMipMaps}" />
+                </Grid>
+            </Border>
+
+            <Border Classes="card"
+                    Padding="10"
+                    IsVisible="{Binding TextureCompress.HasLastRunSummary}">
+                <StackPanel Spacing="4">
+                    <TextBlock Classes="sub-title" Text="Last Run" />
+                    <TextBlock Text="{Binding TextureCompress.LastRunSummary}" TextWrapping="Wrap" />
+                    <TextBlock Classes="helper-text"
+                               IsVisible="{Binding TextureCompress.HasLastOutputPath}"
+                               Text="{Binding TextureCompress.LastOutputPath}" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </Border>
+</UserControl>

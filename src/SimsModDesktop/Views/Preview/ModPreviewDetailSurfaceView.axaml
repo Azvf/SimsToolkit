@@ -6,107 +6,131 @@
              xmlns:models="clr-namespace:SimsModDesktop.Models"
              mc:Ignorable="d"
              x:Class="SimsModDesktop.Views.Preview.ModPreviewDetailSurfaceView"
-             x:DataType="vm:ModPreviewWorkspaceViewModel">
+             x:DataType="vm:ModItemInspectViewModel">
     <Grid MinHeight="0">
         <Border Classes="tray-preview-empty-state"
-                IsVisible="{Binding IsDetailPlaceholderVisible}">
+                IsVisible="{Binding IsPlaceholderVisible}">
             <StackPanel HorizontalAlignment="Center"
                         VerticalAlignment="Center"
                         Spacing="8">
                 <TextBlock Classes="tray-preview-empty-title"
-                           Text="Select a mod to inspect details." />
+                           Text="Select an indexed item." />
                 <TextBlock Classes="tray-preview-empty-description"
-                           Text="The right pane will show overview, resource placeholders, and conflict notes." />
+                           Text="The right pane shows item inspect details, linked textures, and edit actions." />
             </StackPanel>
         </Border>
 
-        <ScrollViewer IsVisible="{Binding HasSelectedItem}"
+        <ScrollViewer IsVisible="{Binding HasSelection}"
                       VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Disabled"
                       ClipToBounds="True">
             <StackPanel Spacing="10">
-                <StackPanel Spacing="4">
-                    <Grid ColumnDefinitions="*,Auto,Auto"
+                <Border Classes="card-muted"
+                        Padding="10"
+                        IsVisible="{Binding IsBackgroundSyncVisible}">
+                    <Grid ColumnDefinitions="*,Auto"
                           ColumnSpacing="8">
-                        <StackPanel Spacing="2">
-                            <TextBlock Classes="section-title"
-                                       Text="{Binding SelectedDetail.DisplayTitle}" />
-                            <TextBlock Classes="helper-text"
-                                       Text="{Binding SelectedDetail.DisplaySubtitle}" />
-                        </StackPanel>
-                        <TextBlock Grid.Column="1"
-                                   Classes="helper-text"
-                                   VerticalAlignment="Top"
-                                   Text="{Binding SelectedDetail.PackageType}" />
-                        <TextBlock Grid.Column="2"
-                                   Classes="helper-text"
-                                   VerticalAlignment="Top"
-                                   Text="{Binding SelectedDetail.Scope}" />
+                        <TextBlock Classes="helper-text"
+                                   VerticalAlignment="Center"
+                                   Text="{Binding BackgroundSyncText}"
+                                   TextWrapping="Wrap" />
+                        <Button Grid.Column="1"
+                                Classes="secondary"
+                                Content="Refresh Details"
+                                Command="{Binding RefreshDetailsCommand}" />
                     </Grid>
+                </Border>
+
+                <StackPanel Spacing="4">
+                    <TextBlock Classes="section-title"
+                               Text="{Binding DisplayName}" />
                     <TextBlock Classes="helper-text"
-                               Text="{Binding SelectedDetail.RelativePath}"
-                               TextTrimming="CharacterEllipsis" />
+                               Text="{Binding Subtitle}" />
                     <TextBlock Classes="helper-text"
-                               Text="{Binding SelectedDetail.FullPath}"
+                               Text="{Binding PackagePath}"
                                TextWrapping="Wrap" />
                 </StackPanel>
 
-                <StackPanel Orientation="Horizontal"
-                            Spacing="8">
-                    <Button Classes="secondary"
-                            Content="Open Folder"
-                            Command="{Binding OpenSelectedFolderCommand}" />
-                    <Button Classes="secondary"
-                            Content="Show File"
-                            Command="{Binding OpenSelectedFileCommand}" />
-                </StackPanel>
-
                 <Border Classes="card-muted"
                         Padding="12">
                     <StackPanel Spacing="6">
                         <TextBlock FontWeight="SemiBold"
-                                   Text="Package Overview" />
-                        <ItemsControl ItemsSource="{Binding SelectedDetail.OverviewRows}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate x:DataType="models:ModPreviewDetailRow">
-                                    <Grid ColumnDefinitions="120,*"
-                                          ColumnSpacing="8"
-                                          Margin="0,0,0,6">
-                                        <TextBlock Classes="helper-text"
-                                                   Text="{Binding Label}" />
-                                        <TextBlock Grid.Column="1"
-                                                   Text="{Binding Value}"
-                                                   TextWrapping="Wrap" />
-                                    </Grid>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </StackPanel>
-                </Border>
-
-                <Border Classes="card-muted"
-                        Padding="12">
-                    <StackPanel Spacing="6">
-                        <TextBlock FontWeight="SemiBold"
-                                   Text="Preview / Resources" />
+                                   Text="Item Inspect" />
                         <TextBlock Classes="helper-text"
-                                   Text="{Binding SelectedDetail.PreviewStatusText}"
+                                   Text="{Binding StatusText}"
                                    TextWrapping="Wrap" />
-                        <ItemsControl ItemsSource="{Binding SelectedDetail.ResourceRows}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate x:DataType="models:ModPreviewDetailRow">
-                                    <Grid ColumnDefinitions="120,*"
-                                          ColumnSpacing="8"
-                                          Margin="0,0,0,6">
-                                        <TextBlock Classes="helper-text"
-                                                   Text="{Binding Label}" />
-                                        <TextBlock Grid.Column="1"
-                                                   Text="{Binding Value}"
-                                                   TextWrapping="Wrap" />
-                                    </Grid>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
+                        <Grid ColumnDefinitions="120,*"
+                              ColumnSpacing="8">
+                            <TextBlock Classes="helper-text"
+                                       Text="Item Key" />
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding SourceResourceKey}"
+                                       TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="120,*"
+                              ColumnSpacing="8">
+                            <TextBlock Classes="helper-text"
+                                       Text="Indexed" />
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding IndexedText}" />
+                        </Grid>
+                        <Grid ColumnDefinitions="120,*"
+                              ColumnSpacing="8">
+                            <TextBlock Classes="helper-text"
+                                       Text="Name Source" />
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding DisplayNameSourceText}" />
+                        </Grid>
+                        <Grid ColumnDefinitions="120,*"
+                              ColumnSpacing="8">
+                            <TextBlock Classes="helper-text"
+                                       Text="Body Type" />
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding BodyTypeText}" />
+                        </Grid>
+                        <Grid ColumnDefinitions="120,*"
+                              ColumnSpacing="8">
+                            <TextBlock Classes="helper-text"
+                                       Text="Age / Gender" />
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding AgeGenderText}" />
+                        </Grid>
+                        <Grid ColumnDefinitions="120,*"
+                              ColumnSpacing="8">
+                            <TextBlock Classes="helper-text"
+                                       Text="Species" />
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding SpeciesText}" />
+                        </Grid>
+                        <Grid ColumnDefinitions="120,*"
+                              ColumnSpacing="8">
+                            <TextBlock Classes="helper-text"
+                                       Text="Outfit ID" />
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding OutfitIdText}" />
+                        </Grid>
+                        <Grid ColumnDefinitions="120,*"
+                              ColumnSpacing="8">
+                            <TextBlock Classes="helper-text"
+                                       Text="Title Key" />
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding TitleKeyText}" />
+                        </Grid>
+                        <Grid ColumnDefinitions="120,*"
+                              ColumnSpacing="8">
+                            <TextBlock Classes="helper-text"
+                                       Text="Desc Key" />
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding PartDescriptionKeyText}" />
+                        </Grid>
+                        <Grid ColumnDefinitions="120,*"
+                              ColumnSpacing="8">
+                            <TextBlock Classes="helper-text"
+                                       Text="Part Name" />
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding PartNameRawText}"
+                                       TextWrapping="Wrap" />
+                        </Grid>
                     </StackPanel>
                 </Border>
 
@@ -114,22 +138,16 @@
                         Padding="12">
                     <StackPanel Spacing="6">
                         <TextBlock FontWeight="SemiBold"
-                                   Text="Conflict / Override Notes" />
-                        <ItemsControl ItemsSource="{Binding SelectedDetail.ConflictRows}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate x:DataType="models:ModPreviewDetailRow">
-                                    <Grid ColumnDefinitions="120,*"
-                                          ColumnSpacing="8"
-                                          Margin="0,0,0,6">
-                                        <TextBlock Classes="helper-text"
-                                                   Text="{Binding Label}" />
-                                        <TextBlock Grid.Column="1"
-                                                   Text="{Binding Value}"
-                                                   TextWrapping="Wrap" />
-                                    </Grid>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
+                                   Text="Primary Preview" />
+                        <TextBlock Classes="helper-text"
+                                   Text="{Binding PreviewStatusText}" />
+                        <Border Classes="card"
+                                Padding="8"
+                                IsVisible="{Binding HasPreview}">
+                            <Image Source="{Binding PreviewBitmap}"
+                                   Stretch="Uniform"
+                                   MaxHeight="240" />
+                        </Border>
                     </StackPanel>
                 </Border>
 
@@ -137,22 +155,86 @@
                         Padding="12">
                     <StackPanel Spacing="6">
                         <TextBlock FontWeight="SemiBold"
-                                   Text="File Inventory" />
-                        <ItemsControl ItemsSource="{Binding SelectedDetail.FileRows}">
+                                   Text="Texture Candidates" />
+                        <ItemsControl ItemsSource="{Binding TextureCandidates}">
                             <ItemsControl.ItemTemplate>
-                                <DataTemplate x:DataType="models:ModPreviewDetailRow">
-                                    <Grid ColumnDefinitions="120,*"
-                                          ColumnSpacing="8"
-                                          Margin="0,0,0,6">
-                                        <TextBlock Classes="helper-text"
-                                                   Text="{Binding Label}" />
-                                        <TextBlock Grid.Column="1"
-                                                   Text="{Binding Value}"
-                                                   TextWrapping="Wrap" />
-                                    </Grid>
+                                <DataTemplate x:DataType="models:ModPreviewTextureCandidateModel">
+                                    <Border Classes="card-muted"
+                                            Padding="8"
+                                            Margin="0,0,0,6">
+                                        <Grid ColumnDefinitions="*,Auto"
+                                              RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto"
+                                              ColumnSpacing="8"
+                                              RowSpacing="4">
+                                            <TextBlock Text="{Binding ResourceKey}"
+                                                       FontFamily="Consolas, Cascadia Mono, monospace"
+                                                       TextWrapping="Wrap" />
+                                            <TextBlock Grid.Column="1"
+                                                       Classes="helper-text"
+                                                       Text="{Binding Format}" />
+                                            <TextBlock Grid.Row="1"
+                                                       Classes="helper-text"
+                                                       Text="{Binding Resolution}" />
+                                            <TextBlock Grid.Row="1"
+                                                       Grid.Column="1"
+                                                       Text="{Binding SuggestedAction}" />
+                                            <TextBlock Grid.Row="2"
+                                                       Classes="helper-text"
+                                                       Text="LinkedBy" />
+                                            <TextBlock Grid.Row="3"
+                                                       Grid.ColumnSpan="2"
+                                                       Classes="helper-text"
+                                                       Text="{Binding LinkRole}" />
+                                            <TextBlock Grid.Row="4"
+                                                       Grid.ColumnSpan="2"
+                                                       Classes="helper-text"
+                                                       Text="{Binding Notes}"
+                                                       TextWrapping="Wrap" />
+                                            <StackPanel Grid.Row="5"
+                                                        Grid.ColumnSpan="2"
+                                                        Orientation="Horizontal"
+                                                        Spacing="8">
+                                                <Button Classes="secondary"
+                                                        Content="Select"
+                                                        Command="{Binding $parent[UserControl].DataContext.SelectTextureCandidateCommand}"
+                                                        CommandParameter="{Binding ResourceKey}" />
+                                                <Button Classes="secondary"
+                                                        Content="Preview"
+                                                        Command="{Binding $parent[UserControl].DataContext.PreviewTextureCandidateCommand}"
+                                                        CommandParameter="{Binding ResourceKey}" />
+                                                <Button Classes="secondary"
+                                                        Content="Edit"
+                                                        IsEnabled="{Binding CanEdit}"
+                                                        Command="{Binding $parent[UserControl].DataContext.EditTextureCandidateCommand}"
+                                                        CommandParameter="{Binding ResourceKey}" />
+                                                <Button Classes="secondary"
+                                                        Content="Import Replace"
+                                                        Command="{Binding $parent[UserControl].DataContext.ImportTextureCandidateCommand}"
+                                                        CommandParameter="{Binding ResourceKey}" />
+                                                <TextBlock Classes="helper-text"
+                                                           VerticalAlignment="Center"
+                                                           IsVisible="{Binding IsSelected}"
+                                                           Text="Selected" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
+                        <Button Classes="secondary"
+                                Content="Rollback Latest"
+                                Command="{Binding RollbackSelectedTextureCommand}" />
+                    </StackPanel>
+                </Border>
+
+                <Border Classes="card-muted"
+                        Padding="12">
+                    <StackPanel Spacing="6">
+                        <TextBlock FontWeight="SemiBold"
+                                   Text="Local Edit History" />
+                        <TextBlock Classes="helper-text"
+                                   Text="{Binding HistoryText}"
+                                   TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
             </StackPanel>

@@ -3,16 +3,21 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Text.Json;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Modules;
+using SimsModDesktop.Application.Recovery;
 using SimsModDesktop.Application.Requests;
+using SimsModDesktop.Application.Results;
 using SimsModDesktop.Application.Settings;
+using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Application.Validation;
 using SimsModDesktop.Infrastructure.Dialogs;
 using SimsModDesktop.Infrastructure.Localization;
 using SimsModDesktop.Infrastructure.Settings;
+using SimsModDesktop.Infrastructure.TextureProcessing;
 using SimsModDesktop.Models;
 using SimsModDesktop.Services;
 using SimsModDesktop.TrayDependencyEngine;
@@ -25,6 +30,10 @@ namespace SimsModDesktop.ViewModels;
 public sealed class MainWindowViewModel : ObservableObject
 {
     private const string DefaultLanguageCode = "en-US";
+    private static readonly JsonSerializerOptions RecoveryJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
 
     private readonly IToolkitExecutionRunner _toolkitExecutionRunner;
     private readonly ITrayPreviewRunner _trayPreviewRunner;
@@ -38,6 +47,10 @@ public sealed class MainWindowViewModel : ObservableObject
     private readonly IMainWindowSettingsProjection _settingsProjection;
     private readonly IActionModuleRegistry _moduleRegistry;
     private readonly IMainWindowPlanBuilder _planBuilder;
+    private readonly IOperationRecoveryCoordinator? _operationRecoveryCoordinator;
+    private readonly IActionResultRepository? _actionResultRepository;
+    private readonly ITextureCompressionService _textureCompressionService;
+    private readonly ITextureDimensionProbe _textureDimensionProbe;
     private readonly Stack<TrayPreviewListItemViewModel> _trayPreviewDetailHistory = new();
     private readonly HashSet<string> _selectedTrayPreviewKeys = new(StringComparer.OrdinalIgnoreCase);
 
@@ -95,6 +108,7 @@ public sealed class MainWindowViewModel : ObservableObject
         ModPreviewWorkspaceViewModel modPreviewWorkspace,
         TrayPreviewWorkspaceViewModel trayPreviewWorkspace,
         OrganizePanelViewModel organize,
+        TextureCompressPanelViewModel textureCompress,
         FlattenPanelViewModel flatten,
         NormalizePanelViewModel normalize,
         MergePanelViewModel merge,
@@ -103,7 +117,11 @@ public sealed class MainWindowViewModel : ObservableObject
         ModPreviewPanelViewModel modPreview,
         TrayPreviewPanelViewModel trayPreview,
         SharedFileOpsPanelViewModel sharedFileOps,
-        ITrayThumbnailService? trayThumbnailService = null)
+        ITrayThumbnailService? trayThumbnailService = null,
+        IOperationRecoveryCoordinator? operationRecoveryCoordinator = null,
+        IActionResultRepository? actionResultRepository = null,
+        ITextureCompressionService? textureCompressionService = null,
+        ITextureDimensionProbe? textureDimensionProbe = null)
     {
         _toolkitExecutionRunner = toolkitExecutionRunner;
         _trayPreviewRunner = trayPreviewRunner;
@@ -117,10 +135,15 @@ public sealed class MainWindowViewModel : ObservableObject
         _settingsProjection = settingsProjection;
         _moduleRegistry = moduleRegistry;
         _planBuilder = planBuilder;
+        _operationRecoveryCoordinator = operationRecoveryCoordinator;
+        _actionResultRepository = actionResultRepository;
+        _textureCompressionService = textureCompressionService ?? CreateDefaultTextureCompressionService();
+        _textureDimensionProbe = textureDimensionProbe ?? new TextureDimensionProbe();
         ModPreviewWorkspace = modPreviewWorkspace;
         TrayPreviewWorkspace = trayPreviewWorkspace;
 
         Organize = organize;
+        TextureCompress = textureCompress;
         Flatten = flatten;
         Normalize = normalize;
         Merge = merge;
@@ -191,6 +214,7 @@ public sealed class MainWindowViewModel : ObservableObject
     }
 
     public OrganizePanelViewModel Organize { get; }
+    public TextureCompressPanelViewModel TextureCompress { get; }
     public FlattenPanelViewModel Flatten { get; }
     public NormalizePanelViewModel Normalize { get; }
     public MergePanelViewModel Merge { get; }
@@ -228,9 +252,9 @@ public sealed class MainWindowViewModel : ObservableObject
     public IReadOnlyList<string> TrayPreviewHouseholdSizeFilterOptions => ["All", "1", "2", "3", "4", "5", "6", "7", "8"];
     public IReadOnlyList<string> TrayPreviewTimeFilterOptions => ["All", "Last24h", "Last7d", "Last30d", "Last90d"];
     public IReadOnlyList<string> TrayPreviewLayoutModeOptions => ["Entry", "Grid"];
-    public IReadOnlyList<string> ModPreviewPackageTypeFilterOptions => ["All", ".package", ".ts4script", "Override", "Script Mod"];
-    public IReadOnlyList<string> ModPreviewScopeFilterOptions => ["All", "Build/Buy", "CAS", "Gameplay"];
-    public IReadOnlyList<string> ModPreviewSortOptions => ["Last Updated", "Name", "Size"];
+    public IReadOnlyList<string> ModPreviewPackageTypeFilterOptions => ["All", "Cas", "BuildBuy"];
+    public IReadOnlyList<string> ModPreviewScopeFilterOptions => ["All", "CAS Part", "Object"];
+    public IReadOnlyList<string> ModPreviewSortOptions => ["Last Indexed", "Name", "Package"];
 
     public AsyncRelayCommand<string> BrowseFolderCommand { get; }
     public AsyncRelayCommand<string> BrowseCsvPathCommand { get; }
@@ -334,6 +358,7 @@ public sealed class MainWindowViewModel : ObservableObject
             }
 
             OnPropertyChanged(nameof(IsOrganizeVisible));
+            OnPropertyChanged(nameof(IsTextureCompressVisible));
             OnPropertyChanged(nameof(IsFlattenVisible));
             OnPropertyChanged(nameof(IsNormalizeVisible));
             OnPropertyChanged(nameof(IsMergeVisible));
@@ -545,6 +570,7 @@ public sealed class MainWindowViewModel : ObservableObject
     }
 
     public bool IsOrganizeVisible => SelectedAction == SimsAction.Organize;
+    public bool IsTextureCompressVisible => SelectedAction == SimsAction.TextureCompress;
     public bool IsFlattenVisible => SelectedAction == SimsAction.Flatten;
     public bool IsNormalizeVisible => SelectedAction == SimsAction.Normalize;
     public bool IsMergeVisible => SelectedAction == SimsAction.Merge;
@@ -696,6 +722,11 @@ public sealed class MainWindowViewModel : ObservableObject
             return;
         }
 
+        if (_actionResultRepository is not null)
+        {
+            await _actionResultRepository.InitializeAsync();
+        }
+
         var settings = await _settingsStore.LoadAsync();
         var resolved = _settingsProjection.Resolve(settings, AvailableToolkitActions);
 
@@ -745,6 +776,50 @@ public sealed class MainWindowViewModel : ObservableObject
         _settingsPersistDebounceCts?.Cancel();
         CancelTrayPreviewThumbnailLoading();
         await SaveCurrentSettingsAsync();
+    }
+
+    public async Task ResumeRecoverableOperationAsync(RecoverableOperationRecord record, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        try
+        {
+            switch (record.Payload.PayloadKind)
+            {
+                case "ToolkitCli":
+                    await RunToolkitPlanAsync(BuildToolkitCliPlan(record.Payload), record.OperationId);
+                    break;
+                case "TrayDependencies":
+                    await RunTrayDependenciesPlanAsync(
+                        new TrayDependenciesExecutionPlan(BuildTrayDependenciesRequest(record.Payload)),
+                        record.OperationId);
+                    break;
+                case "TrayPreview":
+                    await RunTrayPreviewCoreAsync(BuildTrayPreviewInput(record.Payload), record.OperationId);
+                    break;
+                default:
+                    throw new InvalidOperationException($"Unsupported recovery payload kind: {record.Payload.PayloadKind}");
+            }
+        }
+        catch (Exception ex)
+        {
+            if (_operationRecoveryCoordinator is not null)
+            {
+                await _operationRecoveryCoordinator.MarkCompletedAsync(
+                    record.OperationId,
+                    new RecoverableOperationCompletion
+                    {
+                        Status = OperationRecoveryStatus.Failed,
+                        FailureMessage = ex.Message
+                    },
+                    cancellationToken);
+            }
+
+            AppendLog("[recovery] " + ex.Message);
+            StatusMessage = "Failed to resume the previous task.";
+            await ShowErrorPopupAsync("Failed to resume the previous task.");
+        }
     }
 
     private void HookValidationTracking()
@@ -1003,6 +1078,15 @@ public sealed class MainWindowViewModel : ObservableObject
                         return;
                     }
                 }
+                else if (SelectedAction == SimsAction.TextureCompress)
+                {
+                    if (!_planBuilder.TryBuildTextureCompressionPlan(CreatePlanBuilderState(), out _, out var textureCompressError))
+                    {
+                        HasValidationErrors = true;
+                        ValidationSummaryText = LF("validation.failed", textureCompressError);
+                        return;
+                    }
+                }
                 else if (!_planBuilder.TryBuildToolkitCliPlan(CreatePlanBuilderState(), out _, out _, out var error))
                 {
                     HasValidationErrors = true;
@@ -1234,15 +1318,15 @@ public sealed class MainWindowViewModel : ObservableObject
 
     private async Task RunToolkitAsync()
     {
-        if (_executionCts is not null)
-        {
-            StatusMessage = L("status.executionAlreadyRunning");
-            return;
-        }
-
         if (SelectedAction == SimsAction.TrayDependencies)
         {
             await RunTrayDependenciesAsync();
+            return;
+        }
+
+        if (SelectedAction == SimsAction.TextureCompress)
+        {
+            await RunTextureCompressionAsync();
             return;
         }
 
@@ -1259,11 +1343,24 @@ public sealed class MainWindowViewModel : ObservableObject
             return;
         }
 
+        await RunToolkitPlanAsync(cliPlan, existingOperationId: null);
+    }
+
+    private async Task RunToolkitPlanAsync(CliExecutionPlan cliPlan, string? existingOperationId)
+    {
+        if (_executionCts is not null)
+        {
+            StatusMessage = L("status.executionAlreadyRunning");
+            return;
+        }
+
         var input = cliPlan.Input;
+        var operationId = existingOperationId ?? await RegisterRecoveryAsync(BuildToolkitRecoveryPayload(cliPlan));
 
         _executionCts = new CancellationTokenSource();
         var startedAt = DateTimeOffset.Now;
         var stopwatch = Stopwatch.StartNew();
+        var recoveryCompleted = false;
 
         ClearLog();
         IsBusy = true;
@@ -1274,6 +1371,7 @@ public sealed class MainWindowViewModel : ObservableObject
 
         try
         {
+            await MarkRecoveryStartedAsync(operationId);
             var runResult = await _toolkitExecutionRunner.RunAsync(
                 cliPlan,
                 onOutput: AppendLog,
@@ -1295,7 +1393,37 @@ public sealed class MainWindowViewModel : ObservableObject
 
                 if (result.ExitCode != 0)
                 {
+                    await MarkRecoveryCompletedAsync(
+                        operationId,
+                        new RecoverableOperationCompletion
+                        {
+                            Status = OperationRecoveryStatus.Failed,
+                            FailureMessage = $"Process exited with code {result.ExitCode}.",
+                            ResultSummaryJson = JsonSerializer.Serialize(new
+                            {
+                                result.ExitCode,
+                                Elapsed = stopwatch.Elapsed.ToString("mm\\:ss")
+                            })
+                        });
+                    await SaveResultHistoryAsync(input.Action, "Toolkit", $"Exit code {result.ExitCode}", operationId);
+                    recoveryCompleted = true;
                     await ShowErrorPopupAsync(L("status.executionFailed"));
+                }
+                else
+                {
+                    await MarkRecoveryCompletedAsync(
+                        operationId,
+                        new RecoverableOperationCompletion
+                        {
+                            Status = OperationRecoveryStatus.Succeeded,
+                            ResultSummaryJson = JsonSerializer.Serialize(new
+                            {
+                                result.ExitCode,
+                                Elapsed = stopwatch.Elapsed.ToString("mm\\:ss")
+                            })
+                        });
+                    await SaveResultHistoryAsync(input.Action, "Toolkit", "Completed", operationId);
+                    recoveryCompleted = true;
                 }
             }
             else if (runResult.Status == ExecutionRunStatus.Cancelled)
@@ -1303,6 +1431,14 @@ public sealed class MainWindowViewModel : ObservableObject
                 AppendLog("[cancelled]");
                 StatusMessage = L("status.executionCancelled");
                 SetProgress(isIndeterminate: false, percent: 0, message: L("progress.cancelled"));
+                await MarkRecoveryCompletedAsync(
+                    operationId,
+                    new RecoverableOperationCompletion
+                    {
+                        Status = OperationRecoveryStatus.Cancelled
+                    });
+                await SaveResultHistoryAsync(input.Action, "Toolkit", "Cancelled", operationId);
+                recoveryCompleted = true;
             }
             else
             {
@@ -1312,8 +1448,146 @@ public sealed class MainWindowViewModel : ObservableObject
                 AppendLog("[error] " + errorMessage);
                 StatusMessage = L("status.executionFailed");
                 SetProgress(isIndeterminate: false, percent: 0, message: L("progress.executionFailed"));
+                await MarkRecoveryCompletedAsync(
+                    operationId,
+                    new RecoverableOperationCompletion
+                    {
+                        Status = OperationRecoveryStatus.Failed,
+                        FailureMessage = errorMessage
+                    });
+                await SaveResultHistoryAsync(input.Action, "Toolkit", errorMessage, operationId);
+                recoveryCompleted = true;
                 await ShowErrorPopupAsync(L("status.executionFailed"));
             }
+        }
+        catch (Exception ex)
+        {
+            if (!recoveryCompleted)
+            {
+                await MarkRecoveryCompletedAsync(
+                    operationId,
+                    new RecoverableOperationCompletion
+                    {
+                        Status = OperationRecoveryStatus.Failed,
+                        FailureMessage = ex.Message
+                    });
+            }
+
+            throw;
+        }
+        finally
+        {
+            _executionCts.Dispose();
+            _executionCts = null;
+            IsBusy = false;
+            RefreshValidationNow();
+        }
+    }
+
+    private async Task RunTextureCompressionAsync()
+    {
+        if (!_planBuilder.TryBuildTextureCompressionPlan(CreatePlanBuilderState(), out var plan, out var error))
+        {
+            StatusMessage = error;
+            AppendLog("[validation] " + error);
+            await ShowErrorPopupAsync(L("status.validationFailed"));
+            return;
+        }
+
+        await RunTextureCompressionAsync(plan);
+    }
+
+    private async Task RunTextureCompressionAsync(TextureCompressionExecutionPlan plan)
+    {
+        if (_executionCts is not null)
+        {
+            StatusMessage = L("status.executionAlreadyRunning");
+            return;
+        }
+
+        _executionCts = new CancellationTokenSource();
+        IsBusy = true;
+        SetProgress(isIndeterminate: true, percent: 0, message: "Compressing texture...");
+        StatusMessage = L("status.running");
+        AppendLog("[action] texturecompress");
+
+        try
+        {
+            var request = plan.Request;
+            if (request.WhatIf)
+            {
+                TextureCompress.LastOutputPath = request.OutputPath;
+                TextureCompress.LastRunSummary = $"WhatIf: would compress '{Path.GetFileName(request.SourcePath)}' to '{Path.GetFileName(request.OutputPath)}'.";
+                AppendLog("[whatif] source=" + request.SourcePath);
+                AppendLog("[whatif] output=" + request.OutputPath);
+                SetProgress(isIndeterminate: false, percent: 100, message: "Texture compression preview completed.");
+                StatusMessage = "Texture compression preview completed.";
+                return;
+            }
+
+            var sourceBytes = await File.ReadAllBytesAsync(request.SourcePath, _executionCts.Token);
+            if (!TryResolveTextureContainerKind(request.SourcePath, out var containerKind, out var containerError))
+            {
+                throw new InvalidOperationException(containerError);
+            }
+
+            if (!_textureDimensionProbe.TryGetDimensions(containerKind, sourceBytes, out var sourceWidth, out var sourceHeight, out var probeError))
+            {
+                throw new InvalidOperationException(probeError);
+            }
+
+            var result = _textureCompressionService.Compress(new TextureCompressionRequest
+            {
+                Source = new TextureSourceDescriptor
+                {
+                    ResourceKey = default,
+                    ContainerKind = containerKind,
+                    SourcePixelFormat = containerKind == TextureContainerKind.Png ? TexturePixelFormatKind.Rgba32 : TexturePixelFormatKind.Rgba32,
+                    Width = sourceWidth,
+                    Height = sourceHeight,
+                    HasAlpha = request.HasAlphaHint,
+                    MipMapCount = 1
+                },
+                SourceBytes = sourceBytes,
+                TargetWidth = request.TargetWidth,
+                TargetHeight = request.TargetHeight,
+                GenerateMipMaps = request.GenerateMipMaps,
+                PreferredFormat = request.PreferredFormat
+            });
+
+            if (!result.Success || result.TranscodeResult is null || !result.TranscodeResult.Success)
+            {
+                throw new InvalidOperationException(result.Error ?? result.TranscodeResult?.Error ?? "Texture compression failed.");
+            }
+
+            var outputDirectory = Path.GetDirectoryName(request.OutputPath);
+            if (!string.IsNullOrWhiteSpace(outputDirectory))
+            {
+                Directory.CreateDirectory(outputDirectory);
+            }
+
+            await File.WriteAllBytesAsync(request.OutputPath, result.TranscodeResult.EncodedBytes, _executionCts.Token);
+
+            TextureCompress.LastOutputPath = request.OutputPath;
+            TextureCompress.LastRunSummary =
+                $"Compressed {Path.GetFileName(request.SourcePath)} to {result.SelectedFormat} {result.TranscodeResult.OutputWidth}x{result.TranscodeResult.OutputHeight}.";
+
+            AppendLog("[output] " + request.OutputPath);
+            SetProgress(isIndeterminate: false, percent: 100, message: "Texture compression completed.");
+            StatusMessage = "Texture compression completed.";
+        }
+        catch (OperationCanceledException)
+        {
+            AppendLog("[cancelled]");
+            StatusMessage = L("status.executionCancelled");
+            SetProgress(isIndeterminate: false, percent: 0, message: L("progress.cancelled"));
+        }
+        catch (Exception ex)
+        {
+            AppendLog("[error] " + ex.Message);
+            StatusMessage = "Texture compression failed.";
+            SetProgress(isIndeterminate: false, percent: 0, message: "Texture compression failed.");
+            await ShowErrorPopupAsync("Texture compression failed.");
         }
         finally
         {
@@ -1326,12 +1600,6 @@ public sealed class MainWindowViewModel : ObservableObject
 
     private async Task RunTrayDependenciesAsync()
     {
-        if (_executionCts is not null)
-        {
-            StatusMessage = L("status.executionAlreadyRunning");
-            return;
-        }
-
         if (!_planBuilder.TryBuildTrayDependenciesPlan(CreatePlanBuilderState(), out var plan, out var error))
         {
             StatusMessage = error;
@@ -1340,9 +1608,23 @@ public sealed class MainWindowViewModel : ObservableObject
             return;
         }
 
+        await RunTrayDependenciesPlanAsync(plan, existingOperationId: null);
+    }
+
+    private async Task RunTrayDependenciesPlanAsync(TrayDependenciesExecutionPlan plan, string? existingOperationId)
+    {
+        if (_executionCts is not null)
+        {
+            StatusMessage = L("status.executionAlreadyRunning");
+            return;
+        }
+
+        var operationId = existingOperationId ?? await RegisterRecoveryAsync(BuildTrayDependenciesRecoveryPayload(plan));
+
         _executionCts = new CancellationTokenSource();
         var startedAt = DateTimeOffset.Now;
         var stopwatch = Stopwatch.StartNew();
+        var recoveryCompleted = false;
 
         ClearLog();
         IsBusy = true;
@@ -1353,6 +1635,7 @@ public sealed class MainWindowViewModel : ObservableObject
 
         try
         {
+            await MarkRecoveryStartedAsync(operationId);
             var result = await _trayDependencyAnalysisService.AnalyzeAsync(
                 plan.Request,
                 new Progress<TrayDependencyAnalysisProgress>(HandleTrayDependencyAnalysisProgress),
@@ -1404,11 +1687,34 @@ public sealed class MainWindowViewModel : ObservableObject
                     isIndeterminate: false,
                     percent: 100,
                     message: hasWarnings ? "Tray dependency analysis completed with warnings." : "Tray dependency analysis completed.");
+                await MarkRecoveryCompletedAsync(
+                    operationId,
+                    new RecoverableOperationCompletion
+                    {
+                        Status = OperationRecoveryStatus.Succeeded,
+                        ResultSummaryJson = JsonSerializer.Serialize(new
+                        {
+                            result.MatchedPackageCount,
+                            result.UnusedPackageCount,
+                            HasWarnings = hasWarnings
+                        })
+                    });
+                await SaveResultHistoryAsync(SimsAction.TrayDependencies, "TrayDependencies", "Completed", operationId);
+                recoveryCompleted = true;
                 return;
             }
 
             StatusMessage = "Tray dependency analysis failed.";
             SetProgress(isIndeterminate: false, percent: 0, message: "Tray dependency analysis failed.");
+            await MarkRecoveryCompletedAsync(
+                operationId,
+                new RecoverableOperationCompletion
+                {
+                    Status = OperationRecoveryStatus.Failed,
+                    FailureMessage = "Tray dependency analysis failed."
+                });
+            await SaveResultHistoryAsync(SimsAction.TrayDependencies, "TrayDependencies", "Failed", operationId);
+            recoveryCompleted = true;
             await ShowErrorPopupAsync("Tray dependency analysis failed.");
         }
         catch (OperationCanceledException)
@@ -1417,6 +1723,14 @@ public sealed class MainWindowViewModel : ObservableObject
             AppendLog("[cancelled]");
             StatusMessage = L("status.executionCancelled");
             SetProgress(isIndeterminate: false, percent: 0, message: L("progress.cancelled"));
+            await MarkRecoveryCompletedAsync(
+                operationId,
+                new RecoverableOperationCompletion
+                {
+                    Status = OperationRecoveryStatus.Cancelled
+                });
+            await SaveResultHistoryAsync(SimsAction.TrayDependencies, "TrayDependencies", "Cancelled", operationId);
+            recoveryCompleted = true;
         }
         catch (Exception ex)
         {
@@ -1424,6 +1738,17 @@ public sealed class MainWindowViewModel : ObservableObject
             AppendLog("[error] " + ex.Message);
             StatusMessage = "Tray dependency analysis failed.";
             SetProgress(isIndeterminate: false, percent: 0, message: "Tray dependency analysis failed.");
+            if (!recoveryCompleted)
+            {
+                await MarkRecoveryCompletedAsync(
+                    operationId,
+                    new RecoverableOperationCompletion
+                    {
+                        Status = OperationRecoveryStatus.Failed,
+                        FailureMessage = ex.Message
+                    });
+                await SaveResultHistoryAsync(SimsAction.TrayDependencies, "TrayDependencies", ex.Message, operationId);
+            }
             await ShowErrorPopupAsync("Tray dependency analysis failed.");
         }
         finally
@@ -1454,7 +1779,12 @@ public sealed class MainWindowViewModel : ObservableObject
         await RunTrayDependenciesAsync();
     }
 
-    private async Task RunTrayPreviewAsync(TrayPreviewInput? explicitInput = null)
+    private Task RunTrayPreviewAsync(TrayPreviewInput? explicitInput = null)
+    {
+        return RunTrayPreviewCoreAsync(explicitInput, existingOperationId: null);
+    }
+
+    private async Task RunTrayPreviewCoreAsync(TrayPreviewInput? explicitInput = null, string? existingOperationId = null)
     {
         if (_executionCts is not null)
         {
@@ -1480,9 +1810,12 @@ public sealed class MainWindowViewModel : ObservableObject
             input = explicitInput;
         }
 
+        var operationId = existingOperationId ?? await RegisterRecoveryAsync(BuildTrayPreviewRecoveryPayload(input));
+
         _executionCts = new CancellationTokenSource();
         var startedAt = DateTimeOffset.Now;
         var stopwatch = Stopwatch.StartNew();
+        var recoveryCompleted = false;
 
         _trayPreviewRunner.Reset();
         ClearLog();
@@ -1496,6 +1829,7 @@ public sealed class MainWindowViewModel : ObservableObject
 
         try
         {
+            await MarkRecoveryStartedAsync(operationId);
             var runResult = await _trayPreviewRunner.LoadPreviewAsync(input, _executionCts.Token);
             stopwatch.Stop();
 
@@ -1524,12 +1858,33 @@ public sealed class MainWindowViewModel : ObservableObject
                 StatusMessage =
                     LF("status.trayPreviewLoaded", result.Summary.TotalItems, result.Page.TotalPages, stopwatch.Elapsed.ToString("mm\\:ss"));
                 SetProgress(isIndeterminate: false, percent: 100, message: L("progress.trayLoaded"));
+                await MarkRecoveryCompletedAsync(
+                    operationId,
+                    new RecoverableOperationCompletion
+                    {
+                        Status = OperationRecoveryStatus.Succeeded,
+                        ResultSummaryJson = JsonSerializer.Serialize(new
+                        {
+                            result.Summary.TotalItems,
+                            result.Page.TotalPages
+                        })
+                    });
+                await SaveResultHistoryAsync(SimsAction.TrayPreview, "TrayPreview", $"Loaded {result.Summary.TotalItems} items", operationId);
+                recoveryCompleted = true;
             }
             else if (runResult.Status == ExecutionRunStatus.Cancelled)
             {
                 AppendLog("[cancelled]");
                 StatusMessage = L("status.trayPreviewCancelled");
                 SetProgress(isIndeterminate: false, percent: 0, message: L("progress.cancelled"));
+                await MarkRecoveryCompletedAsync(
+                    operationId,
+                    new RecoverableOperationCompletion
+                    {
+                        Status = OperationRecoveryStatus.Cancelled
+                    });
+                await SaveResultHistoryAsync(SimsAction.TrayPreview, "TrayPreview", "Cancelled", operationId);
+                recoveryCompleted = true;
             }
             else
             {
@@ -1539,8 +1894,32 @@ public sealed class MainWindowViewModel : ObservableObject
                 AppendLog("[error] " + errorMessage);
                 StatusMessage = L("status.trayPreviewFailed");
                 SetProgress(isIndeterminate: false, percent: 0, message: L("progress.trayFailed"));
+                await MarkRecoveryCompletedAsync(
+                    operationId,
+                    new RecoverableOperationCompletion
+                    {
+                        Status = OperationRecoveryStatus.Failed,
+                        FailureMessage = errorMessage
+                    });
+                await SaveResultHistoryAsync(SimsAction.TrayPreview, "TrayPreview", errorMessage, operationId);
+                recoveryCompleted = true;
                 await ShowErrorPopupAsync(L("status.trayPreviewFailed"));
             }
+        }
+        catch (Exception ex)
+        {
+            if (!recoveryCompleted)
+            {
+                await MarkRecoveryCompletedAsync(
+                    operationId,
+                    new RecoverableOperationCompletion
+                    {
+                        Status = OperationRecoveryStatus.Failed,
+                        FailureMessage = ex.Message
+                    });
+            }
+
+            throw;
         }
         finally
         {
@@ -1550,6 +1929,165 @@ public sealed class MainWindowViewModel : ObservableObject
             IsBusy = false;
             RefreshValidationNow();
         }
+    }
+
+    private async Task<string?> RegisterRecoveryAsync(RecoverableOperationPayload payload)
+    {
+        if (_operationRecoveryCoordinator is null)
+        {
+            return null;
+        }
+
+        return await _operationRecoveryCoordinator.RegisterPendingAsync(payload);
+    }
+
+    private async Task MarkRecoveryStartedAsync(string? operationId)
+    {
+        if (_operationRecoveryCoordinator is null || string.IsNullOrWhiteSpace(operationId))
+        {
+            return;
+        }
+
+        await _operationRecoveryCoordinator.MarkStartedAsync(operationId);
+    }
+
+    private async Task MarkRecoveryCompletedAsync(string? operationId, RecoverableOperationCompletion completion)
+    {
+        if (_operationRecoveryCoordinator is null || string.IsNullOrWhiteSpace(operationId))
+        {
+            return;
+        }
+
+        await _operationRecoveryCoordinator.MarkCompletedAsync(operationId, completion);
+    }
+
+    private async Task SaveResultHistoryAsync(SimsAction action, string source, string summary, string? relatedOperationId)
+    {
+        if (_actionResultRepository is null)
+        {
+            return;
+        }
+
+        await _actionResultRepository.SaveAsync(
+            new ActionResultEnvelope
+            {
+                Action = action,
+                Source = source,
+                GeneratedAtLocal = DateTime.Now,
+                Rows =
+                [
+                    new ActionResultRow
+                    {
+                        Name = action.ToString(),
+                        Status = summary,
+                        RawSummary = summary
+                    }
+                ]
+            },
+            relatedOperationId);
+    }
+
+    private static RecoverableOperationPayload BuildToolkitRecoveryPayload(CliExecutionPlan plan)
+    {
+        var input = plan.Input;
+        return new RecoverableOperationPayload
+        {
+            Workspace = AppWorkspace.Toolkit,
+            Action = input.Action,
+            DisplayTitle = BuildRecoveryTitle(RecoverableOperationLaunchSource.Toolkit, input.Action),
+            PayloadKind = "ToolkitCli",
+            PayloadJson = JsonSerializer.Serialize(
+                new ToolkitCliRecoveryPayload
+                {
+                    InputType = GetToolkitRecoveryInputType(input),
+                    InputJson = JsonSerializer.Serialize(input, input.GetType(), RecoveryJsonOptions)
+                },
+                RecoveryJsonOptions),
+            LaunchSource = RecoverableOperationLaunchSource.Toolkit
+        };
+    }
+
+    private static RecoverableOperationPayload BuildTrayDependenciesRecoveryPayload(TrayDependenciesExecutionPlan plan)
+    {
+        return new RecoverableOperationPayload
+        {
+            Workspace = AppWorkspace.Toolkit,
+            Action = SimsAction.TrayDependencies,
+            DisplayTitle = BuildRecoveryTitle(RecoverableOperationLaunchSource.TrayDependencies, SimsAction.TrayDependencies),
+            PayloadKind = "TrayDependencies",
+            PayloadJson = JsonSerializer.Serialize(plan.Request, RecoveryJsonOptions),
+            LaunchSource = RecoverableOperationLaunchSource.TrayDependencies
+        };
+    }
+
+    private static RecoverableOperationPayload BuildTrayPreviewRecoveryPayload(TrayPreviewInput input)
+    {
+        return new RecoverableOperationPayload
+        {
+            Workspace = AppWorkspace.TrayPreview,
+            Action = SimsAction.TrayPreview,
+            DisplayTitle = BuildRecoveryTitle(RecoverableOperationLaunchSource.TrayPreview, SimsAction.TrayPreview),
+            PayloadKind = "TrayPreview",
+            PayloadJson = JsonSerializer.Serialize(input, RecoveryJsonOptions),
+            LaunchSource = RecoverableOperationLaunchSource.TrayPreview
+        };
+    }
+
+    private static CliExecutionPlan BuildToolkitCliPlan(RecoverableOperationPayload payload)
+    {
+        var recovery = JsonSerializer.Deserialize<ToolkitCliRecoveryPayload>(payload.PayloadJson, RecoveryJsonOptions)
+            ?? throw new InvalidOperationException("Invalid toolkit recovery payload.");
+
+        ISimsExecutionInput input = recovery.InputType switch
+        {
+            nameof(OrganizeInput) => JsonSerializer.Deserialize<OrganizeInput>(recovery.InputJson, RecoveryJsonOptions)
+                ?? throw new InvalidOperationException("Invalid organize recovery payload."),
+            nameof(FlattenInput) => JsonSerializer.Deserialize<FlattenInput>(recovery.InputJson, RecoveryJsonOptions)
+                ?? throw new InvalidOperationException("Invalid flatten recovery payload."),
+            nameof(NormalizeInput) => JsonSerializer.Deserialize<NormalizeInput>(recovery.InputJson, RecoveryJsonOptions)
+                ?? throw new InvalidOperationException("Invalid normalize recovery payload."),
+            nameof(MergeInput) => JsonSerializer.Deserialize<MergeInput>(recovery.InputJson, RecoveryJsonOptions)
+                ?? throw new InvalidOperationException("Invalid merge recovery payload."),
+            nameof(FindDupInput) => JsonSerializer.Deserialize<FindDupInput>(recovery.InputJson, RecoveryJsonOptions)
+                ?? throw new InvalidOperationException("Invalid find-duplicates recovery payload."),
+            _ => throw new InvalidOperationException($"Unsupported toolkit recovery input type: {recovery.InputType}")
+        };
+
+        return new CliExecutionPlan(input);
+    }
+
+    private static TrayDependencyAnalysisRequest BuildTrayDependenciesRequest(RecoverableOperationPayload payload)
+    {
+        return JsonSerializer.Deserialize<TrayDependencyAnalysisRequest>(payload.PayloadJson, RecoveryJsonOptions)
+               ?? throw new InvalidOperationException("Invalid tray dependencies recovery payload.");
+    }
+
+    private static TrayPreviewInput BuildTrayPreviewInput(RecoverableOperationPayload payload)
+    {
+        return JsonSerializer.Deserialize<TrayPreviewInput>(payload.PayloadJson, RecoveryJsonOptions)
+               ?? throw new InvalidOperationException("Invalid tray preview recovery payload.");
+    }
+
+    private static string BuildRecoveryTitle(RecoverableOperationLaunchSource launchSource, SimsAction action)
+    {
+        return launchSource switch
+        {
+            RecoverableOperationLaunchSource.Toolkit => $"Resume previous {action} task",
+            RecoverableOperationLaunchSource.TrayDependencies => "Resume previous tray dependency analysis",
+            RecoverableOperationLaunchSource.TrayPreview => "Resume previous tray preview load",
+            _ => "Resume previous task"
+        };
+    }
+
+    private static string GetToolkitRecoveryInputType(ISimsExecutionInput input)
+    {
+        return input.GetType().Name;
+    }
+
+    private sealed record ToolkitCliRecoveryPayload
+    {
+        public string InputType { get; init; } = string.Empty;
+        public string InputJson { get; init; } = "{}";
     }
 
     private void HandleTrayDependencyAnalysisProgress(TrayDependencyAnalysisProgress progress)
@@ -3028,6 +3566,37 @@ public sealed class MainWindowViewModel : ObservableObject
         _isTrayExportQueueExpanded = expanded;
         OnPropertyChanged(nameof(IsTrayExportQueueVisible));
         OnPropertyChanged(nameof(TrayExportQueueToggleText));
+    }
+
+    private static ITextureCompressionService CreateDefaultTextureCompressionService()
+    {
+        var decodeService = new CompositeTextureDecodeService(new ImageSharpPngDecoder(), new PfimDdsDecoder());
+        var pipeline = new TextureTranscodePipeline(
+            decodeService,
+            new ImageSharpResizeService(),
+            new BcnTextureEncodeService());
+        return new TextureCompressionService(decodeService, pipeline);
+    }
+
+    private static bool TryResolveTextureContainerKind(string sourcePath, out TextureContainerKind containerKind, out string error)
+    {
+        error = string.Empty;
+        switch (Path.GetExtension(sourcePath).Trim().ToLowerInvariant())
+        {
+            case ".png":
+                containerKind = TextureContainerKind.Png;
+                return true;
+            case ".dds":
+                containerKind = TextureContainerKind.Dds;
+                return true;
+            case ".tga":
+                containerKind = TextureContainerKind.Tga;
+                return true;
+            default:
+                containerKind = default;
+                error = "Source file must be a .png, .dds, or .tga file.";
+                return false;
+        }
     }
 
     private string L(string key) => _localization[key];
