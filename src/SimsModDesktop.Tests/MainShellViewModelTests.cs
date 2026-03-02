@@ -153,6 +153,9 @@ public sealed class MainShellViewModelTests
             new FakeFileDialogService(),
             new FakeTrayDependencyExportService(),
             trayDependencies);
+        var modPreviewWorkspace = new ModPreviewWorkspaceViewModel(
+            modPreview,
+            new ModPreviewCatalogService());
 
         return new MainWindowViewModel(
             new ToolkitExecutionRunner(new FakeExecutionCoordinator()),
@@ -166,6 +169,7 @@ public sealed class MainShellViewModelTests
             new MainWindowSettingsProjection(),
             moduleRegistry,
             new MainWindowPlanBuilder(moduleRegistry),
+            modPreviewWorkspace,
             trayPreviewWorkspace,
             organize,
             flatten,

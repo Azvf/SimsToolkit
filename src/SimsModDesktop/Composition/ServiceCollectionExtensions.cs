@@ -1,14 +1,19 @@
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using SimsModDesktop.Application.Cli;
+using SimsModDesktop.Application.Configuration;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Saves;
+using SimsModDesktop.Application.Services;
 using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Application.Validation;
 using SimsModDesktop.Infrastructure.Dialogs;
+using SimsModDesktop.Infrastructure.Execution;
 using SimsModDesktop.Infrastructure.Localization;
+using SimsModDesktop.Infrastructure.Services;
 using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Infrastructure.Windowing;
 using SimsModDesktop.Models;
@@ -29,6 +34,12 @@ internal static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddSimsDesktopInfrastructure(this IServiceCollection services)
     {
+        services.AddLogging(builder =>
+        {
+            builder.AddConsole();
+            builder.SetMinimumLevel(LogLevel.Information);
+        });
+
         services.AddSingleton<IWindowHostService, WindowHostService>();
         services.AddSingleton<IFileDialogService, AvaloniaFileDialogService>();
         services.AddSingleton<IConfirmationDialogService, AvaloniaConfirmationDialogService>();
@@ -36,7 +47,22 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<ISettingsStore, JsonSettingsStore>();
         services.AddSingleton<IMainWindowSettingsProjection, MainWindowSettingsProjection>();
 
+        // 跨平台配置管理
+        services.AddSingleton<IConfigurationProvider, CrossPlatformConfigurationProvider>();
+
+        
+        // 跨平台执行引擎
+        services.AddSingleton<IExecutionEngine, PowerShellExecutionEngine>();
+        services.AddSingleton<IExecutionEngineRoutingPolicy, ExecutionEngineRoutingPolicy>();
         services.AddSingleton<ISimsPowerShellRunner, SimsPowerShellRunner>();
+        
+        // 跨平台文件操作服务
+        services.AddSingleton<IFileOperationService, CrossPlatformFileOperationService>();
+        services.AddSingleton<IHashComputationService, CrossPlatformHashComputationService>();
+        services.AddSingleton<IFileTransformationEngine, UnifiedFileTransformationEngine>();
+
+        
+        // 原有服务
         services.AddSingleton<TrayThumbnailCacheStore>();
         services.AddSingleton<TrayMetadataIndexStore>();
         services.AddSingleton<IAppCacheMaintenanceService, AppCacheMaintenanceService>();
