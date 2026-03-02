@@ -1,0 +1,6 @@
+<Project>
+  <ItemGroup>
+    <!-- Prevent generated temporary sources under artifacts from being compiled -->
+    <Compile Remove="**/artifacts/**/*.cs" />
+  </ItemGroup>
+</Project>

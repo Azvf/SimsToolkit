@@ -4,6 +4,7 @@
 # Build output
 **/bin/
 **/obj/
+**/artifacts/
 
 # Rider / JetBrains
 .idea/
