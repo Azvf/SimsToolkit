@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using SimsModDesktop.PackageCore;
 using SimsModDesktop.TrayDependencyEngine;
 
 namespace SimsModDesktop.Tests;
@@ -63,6 +64,27 @@ public sealed class TrayDependencyEngineTests
 
         Assert.Single(snapshot.Packages);
         Assert.Equal(2, snapshot.Packages[0].Entries.Length);
+    }
+
+    [Fact]
+    public async Task PackageIndexCache_ReusesPersistedSnapshot_AcrossInstances()
+    {
+        using var modsRoot = new TempDirectory("mods-persisted");
+        using var cacheRoot = new TempDirectory("pkg-cache");
+        var packagePath = Path.Combine(modsRoot.Path, "sample.package");
+        WritePackage(packagePath, KnownInstance, KnownResourceType, group: 0, resourceData: [1, 2, 3, 4]);
+
+        var catalog = new CountingPackageCatalog();
+        var firstCache = new PackageIndexCache(cacheRoot.Path, catalog);
+        var secondCache = new PackageIndexCache(cacheRoot.Path, catalog);
+
+        var first = await firstCache.GetSnapshotAsync(modsRoot.Path);
+        var second = await secondCache.GetSnapshotAsync(modsRoot.Path);
+
+        Assert.Equal(1, catalog.CallCount);
+        Assert.Single(first.Packages);
+        Assert.Single(second.Packages);
+        Assert.True(File.Exists(Path.Combine(cacheRoot.Path, "cache.db")));
     }
 
     [Fact]
@@ -444,6 +466,22 @@ public sealed class TrayDependencyEngineTests
             CancellationToken cancellationToken = default)
         {
             return _snapshotTask;
+        }
+    }
+
+    private sealed class CountingPackageCatalog : IDbpfPackageCatalog
+    {
+        private readonly DbpfPackageCatalog _inner = new();
+
+        public int CallCount { get; private set; }
+
+        public Task<DbpfCatalogSnapshot> BuildSnapshotAsync(
+            string rootPath,
+            DbpfCatalogBuildOptions? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            return _inner.BuildSnapshotAsync(rootPath, options, cancellationToken);
         }
     }
 }

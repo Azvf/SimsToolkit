@@ -1,4 +1,3 @@
-using System.Text.Json.Serialization;
 using SimsModDesktop.SaveData.Models;
 
 namespace SimsModDesktop.Application.Saves;
@@ -47,41 +46,3 @@ public sealed class SavePreviewCacheBuildProgress
     public string Detail { get; init; } = string.Empty;
 }
 
-internal sealed class SavePreviewCacheManifestPayload
-{
-    [JsonPropertyName("sourceSavePath")]
-    public string SourceSavePath { get; init; } = string.Empty;
-
-    [JsonPropertyName("sourceLength")]
-    public long SourceLength { get; init; }
-
-    [JsonPropertyName("sourceLastWriteTimeUtc")]
-    public DateTime SourceLastWriteTimeUtc { get; init; }
-
-    [JsonPropertyName("cacheSchemaVersion")]
-    public string CacheSchemaVersion { get; init; } = string.Empty;
-
-    [JsonPropertyName("buildStartedUtc")]
-    public DateTime BuildStartedUtc { get; init; }
-
-    [JsonPropertyName("buildCompletedUtc")]
-    public DateTime BuildCompletedUtc { get; init; }
-
-    [JsonPropertyName("totalHouseholdCount")]
-    public int TotalHouseholdCount { get; init; }
-
-    [JsonPropertyName("exportableHouseholdCount")]
-    public int ExportableHouseholdCount { get; init; }
-
-    [JsonPropertyName("readyHouseholdCount")]
-    public int ReadyHouseholdCount { get; init; }
-
-    [JsonPropertyName("failedHouseholdCount")]
-    public int FailedHouseholdCount { get; init; }
-
-    [JsonPropertyName("blockedHouseholdCount")]
-    public int BlockedHouseholdCount { get; init; }
-
-    [JsonPropertyName("entries")]
-    public List<SavePreviewCacheHouseholdEntry> Entries { get; init; } = new();
-}

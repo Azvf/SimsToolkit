@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Dapper;
+using SimsModDesktop.Infrastructure.Persistence;
 
 namespace SimsModDesktop.Application.Saves;
 
@@ -15,6 +17,7 @@ public sealed class SavePreviewCacheStore : ISavePreviewCacheStore
     };
 
     private readonly string _cacheRootPath;
+    private readonly SqliteCacheDatabase _database;
 
     public SavePreviewCacheStore()
         : this(
@@ -29,6 +32,7 @@ public sealed class SavePreviewCacheStore : ISavePreviewCacheStore
     internal SavePreviewCacheStore(string cacheRootPath)
     {
         _cacheRootPath = cacheRootPath;
+        _database = new SqliteCacheDatabase(Path.Combine(_cacheRootPath, "cache.db"));
     }
 
     public string GetCacheRootPath(string saveFilePath)
@@ -62,41 +66,55 @@ public sealed class SavePreviewCacheStore : ISavePreviewCacheStore
     public bool TryLoad(string saveFilePath, out SavePreviewCacheManifest manifest)
     {
         manifest = null!;
-        var cacheRoot = GetCacheRootPath(saveFilePath);
-        if (string.IsNullOrWhiteSpace(cacheRoot))
-        {
-            return false;
-        }
-
-        var manifestPath = Path.Combine(cacheRoot, "manifest.json");
-        if (!File.Exists(manifestPath))
+        var normalizedSavePath = NormalizePath(saveFilePath);
+        if (string.IsNullOrWhiteSpace(normalizedSavePath))
         {
             return false;
         }
 
         try
         {
-            using var stream = File.OpenRead(manifestPath);
-            var payload = JsonSerializer.Deserialize<SavePreviewCacheManifestPayload>(stream, JsonOptions);
-            if (payload is null)
+            using var connection = OpenConnection();
+            var record = connection.QuerySingleOrDefault<SavePreviewCacheRecord>(
+                """
+                SELECT
+                    SourceSavePath,
+                    SourceLength,
+                    SourceLastWriteUtcTicks,
+                    CacheSchemaVersion,
+                    BuildStartedUtcTicks,
+                    BuildCompletedUtcTicks,
+                    TotalHouseholdCount,
+                    ExportableHouseholdCount,
+                    ReadyHouseholdCount,
+                    FailedHouseholdCount,
+                    BlockedHouseholdCount,
+                    EntriesJson
+                FROM SavePreviewCache
+                WHERE SourceSavePath = @SourceSavePath;
+                """,
+                new { SourceSavePath = normalizedSavePath });
+
+            if (record is null)
             {
                 return false;
             }
 
             manifest = new SavePreviewCacheManifest
             {
-                SourceSavePath = payload.SourceSavePath,
-                SourceLength = payload.SourceLength,
-                SourceLastWriteTimeUtc = payload.SourceLastWriteTimeUtc,
-                CacheSchemaVersion = payload.CacheSchemaVersion,
-                BuildStartedUtc = payload.BuildStartedUtc,
-                BuildCompletedUtc = payload.BuildCompletedUtc,
-                TotalHouseholdCount = payload.TotalHouseholdCount,
-                ExportableHouseholdCount = payload.ExportableHouseholdCount,
-                ReadyHouseholdCount = payload.ReadyHouseholdCount,
-                FailedHouseholdCount = payload.FailedHouseholdCount,
-                BlockedHouseholdCount = payload.BlockedHouseholdCount,
-                Entries = payload.Entries
+                SourceSavePath = record.SourceSavePath,
+                SourceLength = record.SourceLength,
+                SourceLastWriteTimeUtc = new DateTime(record.SourceLastWriteUtcTicks, DateTimeKind.Utc),
+                CacheSchemaVersion = record.CacheSchemaVersion,
+                BuildStartedUtc = new DateTime(record.BuildStartedUtcTicks, DateTimeKind.Utc),
+                BuildCompletedUtc = new DateTime(record.BuildCompletedUtcTicks, DateTimeKind.Utc),
+                TotalHouseholdCount = record.TotalHouseholdCount,
+                ExportableHouseholdCount = record.ExportableHouseholdCount,
+                ReadyHouseholdCount = record.ReadyHouseholdCount,
+                FailedHouseholdCount = record.FailedHouseholdCount,
+                BlockedHouseholdCount = record.BlockedHouseholdCount,
+                Entries = JsonSerializer.Deserialize<List<SavePreviewCacheHouseholdEntry>>(record.EntriesJson, JsonOptions)
+                    ?? new List<SavePreviewCacheHouseholdEntry>()
             };
             return true;
         }
@@ -113,30 +131,90 @@ public sealed class SavePreviewCacheStore : ISavePreviewCacheStore
 
         var cacheRoot = GetCacheRootPath(saveFilePath);
         Directory.CreateDirectory(cacheRoot);
-        var manifestPath = Path.Combine(cacheRoot, "manifest.json");
-
-        var payload = new SavePreviewCacheManifestPayload
+        var normalizedSavePath = NormalizePath(manifest.SourceSavePath);
+        if (string.IsNullOrWhiteSpace(normalizedSavePath))
         {
-            SourceSavePath = manifest.SourceSavePath,
-            SourceLength = manifest.SourceLength,
-            SourceLastWriteTimeUtc = manifest.SourceLastWriteTimeUtc,
-            CacheSchemaVersion = CacheSchemaVersion,
-            BuildStartedUtc = manifest.BuildStartedUtc,
-            BuildCompletedUtc = manifest.BuildCompletedUtc,
-            TotalHouseholdCount = manifest.TotalHouseholdCount,
-            ExportableHouseholdCount = manifest.ExportableHouseholdCount,
-            ReadyHouseholdCount = manifest.ReadyHouseholdCount,
-            FailedHouseholdCount = manifest.FailedHouseholdCount,
-            BlockedHouseholdCount = manifest.BlockedHouseholdCount,
-            Entries = manifest.Entries.ToList()
-        };
+            normalizedSavePath = NormalizePath(saveFilePath);
+        }
 
-        using var stream = new FileStream(manifestPath, FileMode.Create, FileAccess.Write, FileShare.None);
-        JsonSerializer.Serialize(stream, payload, JsonOptions);
+        using var connection = OpenConnection();
+        connection.Execute(
+            """
+            INSERT INTO SavePreviewCache (
+                SourceSavePath,
+                SourceLength,
+                SourceLastWriteUtcTicks,
+                CacheSchemaVersion,
+                BuildStartedUtcTicks,
+                BuildCompletedUtcTicks,
+                TotalHouseholdCount,
+                ExportableHouseholdCount,
+                ReadyHouseholdCount,
+                FailedHouseholdCount,
+                BlockedHouseholdCount,
+                EntriesJson
+            )
+            VALUES (
+                @SourceSavePath,
+                @SourceLength,
+                @SourceLastWriteUtcTicks,
+                @CacheSchemaVersion,
+                @BuildStartedUtcTicks,
+                @BuildCompletedUtcTicks,
+                @TotalHouseholdCount,
+                @ExportableHouseholdCount,
+                @ReadyHouseholdCount,
+                @FailedHouseholdCount,
+                @BlockedHouseholdCount,
+                @EntriesJson
+            )
+            ON CONFLICT(SourceSavePath) DO UPDATE SET
+                SourceLength = excluded.SourceLength,
+                SourceLastWriteUtcTicks = excluded.SourceLastWriteUtcTicks,
+                CacheSchemaVersion = excluded.CacheSchemaVersion,
+                BuildStartedUtcTicks = excluded.BuildStartedUtcTicks,
+                BuildCompletedUtcTicks = excluded.BuildCompletedUtcTicks,
+                TotalHouseholdCount = excluded.TotalHouseholdCount,
+                ExportableHouseholdCount = excluded.ExportableHouseholdCount,
+                ReadyHouseholdCount = excluded.ReadyHouseholdCount,
+                FailedHouseholdCount = excluded.FailedHouseholdCount,
+                BlockedHouseholdCount = excluded.BlockedHouseholdCount,
+                EntriesJson = excluded.EntriesJson;
+            """,
+            new SavePreviewCacheRecord
+            {
+                SourceSavePath = normalizedSavePath,
+                SourceLength = manifest.SourceLength,
+                SourceLastWriteUtcTicks = manifest.SourceLastWriteTimeUtc.ToUniversalTime().Ticks,
+                CacheSchemaVersion = CacheSchemaVersion,
+                BuildStartedUtcTicks = manifest.BuildStartedUtc.ToUniversalTime().Ticks,
+                BuildCompletedUtcTicks = manifest.BuildCompletedUtc.ToUniversalTime().Ticks,
+                TotalHouseholdCount = manifest.TotalHouseholdCount,
+                ExportableHouseholdCount = manifest.ExportableHouseholdCount,
+                ReadyHouseholdCount = manifest.ReadyHouseholdCount,
+                FailedHouseholdCount = manifest.FailedHouseholdCount,
+                BlockedHouseholdCount = manifest.BlockedHouseholdCount,
+                EntriesJson = JsonSerializer.Serialize(manifest.Entries, JsonOptions)
+            });
     }
 
     public void Clear(string saveFilePath)
     {
+        var normalizedSavePath = NormalizePath(saveFilePath);
+        if (!string.IsNullOrWhiteSpace(normalizedSavePath))
+        {
+            try
+            {
+                using var connection = OpenConnection();
+                connection.Execute(
+                    "DELETE FROM SavePreviewCache WHERE SourceSavePath = @SourceSavePath;",
+                    new { SourceSavePath = normalizedSavePath });
+            }
+            catch
+            {
+            }
+        }
+
         var cacheRoot = GetCacheRootPath(saveFilePath);
         if (string.IsNullOrWhiteSpace(cacheRoot) || !Directory.Exists(cacheRoot))
         {
@@ -163,5 +241,44 @@ public sealed class SavePreviewCacheStore : ISavePreviewCacheStore
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value));
         return Convert.ToHexString(bytes)[..16];
+    }
+
+    private System.Data.IDbConnection OpenConnection()
+    {
+        var connection = _database.OpenConnection();
+        connection.Execute(
+            """
+            CREATE TABLE IF NOT EXISTS SavePreviewCache (
+                SourceSavePath TEXT PRIMARY KEY,
+                SourceLength INTEGER NOT NULL,
+                SourceLastWriteUtcTicks INTEGER NOT NULL,
+                CacheSchemaVersion TEXT NOT NULL,
+                BuildStartedUtcTicks INTEGER NOT NULL,
+                BuildCompletedUtcTicks INTEGER NOT NULL,
+                TotalHouseholdCount INTEGER NOT NULL,
+                ExportableHouseholdCount INTEGER NOT NULL,
+                ReadyHouseholdCount INTEGER NOT NULL,
+                FailedHouseholdCount INTEGER NOT NULL,
+                BlockedHouseholdCount INTEGER NOT NULL,
+                EntriesJson TEXT NOT NULL
+            );
+            """);
+        return connection;
+    }
+
+    private sealed class SavePreviewCacheRecord
+    {
+        public string SourceSavePath { get; set; } = string.Empty;
+        public long SourceLength { get; set; }
+        public long SourceLastWriteUtcTicks { get; set; }
+        public string CacheSchemaVersion { get; set; } = string.Empty;
+        public long BuildStartedUtcTicks { get; set; }
+        public long BuildCompletedUtcTicks { get; set; }
+        public int TotalHouseholdCount { get; set; }
+        public int ExportableHouseholdCount { get; set; }
+        public int ReadyHouseholdCount { get; set; }
+        public int FailedHouseholdCount { get; set; }
+        public int BlockedHouseholdCount { get; set; }
+        public string EntriesJson { get; set; } = "[]";
     }
 }

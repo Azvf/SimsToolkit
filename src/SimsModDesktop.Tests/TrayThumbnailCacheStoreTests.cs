@@ -24,6 +24,8 @@ public sealed class TrayThumbnailCacheStoreTests
         Assert.True(TrayImageCodec.TryMeasure(File.ReadAllBytes(cacheEntry.CacheFilePath), out var width, out var height));
         Assert.Equal(768, width);
         Assert.Equal(576, height);
+        Assert.True(File.Exists(Path.Combine(cacheDir.Path, "cache.db")));
+        Assert.False(File.Exists(Path.Combine(cacheDir.Path, "manifest.json")));
     }
 
     [Fact]

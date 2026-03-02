@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
+using Dapper;
+using SimsModDesktop.Infrastructure.Persistence;
 using SimsModDesktop.Models;
 
 namespace SimsModDesktop.Services;
@@ -11,15 +12,9 @@ public sealed class TrayThumbnailCacheStore
     private const int DefaultTargetHeight = 576;
     private const string CacheTransformVersion = "canvas-fit-v5";
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = true,
-        PropertyNameCaseInsensitive = true
-    };
-
     private readonly object _gate = new();
     private readonly string _cacheRootPath;
-    private readonly string _manifestPath;
+    private readonly SqliteCacheDatabase _database;
     private readonly int _targetWidth;
     private readonly int _targetHeight;
     private readonly string _cacheProfile;
@@ -45,7 +40,7 @@ public sealed class TrayThumbnailCacheStore
         int targetHeight = DefaultTargetHeight)
     {
         _cacheRootPath = cacheRootPath;
-        _manifestPath = Path.Combine(_cacheRootPath, "manifest.json");
+        _database = new SqliteCacheDatabase(Path.Combine(_cacheRootPath, "cache.db"));
         _targetWidth = Math.Max(targetWidth, 1);
         _targetHeight = Math.Max(targetHeight, 1);
         _cacheProfile = BuildCacheProfile(_targetWidth, _targetHeight);
@@ -225,50 +220,105 @@ public sealed class TrayThumbnailCacheStore
         _manifestLoaded = true;
         _entries = new Dictionary<string, TrayThumbnailManifestEntry>(StringComparer.OrdinalIgnoreCase);
 
-        if (!File.Exists(_manifestPath))
-        {
-            return;
-        }
-
         try
         {
-            using var stream = File.OpenRead(_manifestPath);
-            var payload = JsonSerializer.Deserialize<TrayThumbnailManifestPayload>(stream, JsonOptions);
-            if (payload?.Entries is null)
-            {
-                return;
-            }
+            using var connection = OpenConnection();
+            var rows = connection.Query<TrayThumbnailRow>(
+                """
+                SELECT
+                    TrayRootPath,
+                    TrayRootHash,
+                    TrayItemKey,
+                    TrayInstanceId,
+                    ContentFingerprint,
+                    CacheFilePath,
+                    SourceKind,
+                    Width,
+                    Height,
+                    CacheProfile,
+                    LastSeenUtcTicks
+                FROM TrayThumbnailCache;
+                """);
 
-            foreach (var entry in payload.Entries)
+            foreach (var row in rows)
             {
+                var entry = new TrayThumbnailManifestEntry
+                {
+                    TrayRootPath = row.TrayRootPath,
+                    TrayRootHash = row.TrayRootHash,
+                    TrayItemKey = row.TrayItemKey,
+                    TrayInstanceId = row.TrayInstanceId,
+                    ContentFingerprint = row.ContentFingerprint,
+                    CacheFilePath = row.CacheFilePath,
+                    SourceKind = row.SourceKind,
+                    Width = row.Width,
+                    Height = row.Height,
+                    CacheProfile = row.CacheProfile,
+                    LastSeenUtc = new DateTime(row.LastSeenUtcTicks, DateTimeKind.Utc)
+                };
                 _entries[BuildEntryKey(entry.TrayRootPath, entry.TrayItemKey)] = entry;
             }
         }
-        catch (IOException)
-        {
-        }
-        catch (UnauthorizedAccessException)
-        {
-        }
-        catch (JsonException)
+        catch
         {
         }
     }
 
     private void PersistManifestLocked()
     {
-        Directory.CreateDirectory(_cacheRootPath);
+        using var connection = OpenConnection();
+        using var transaction = connection.BeginTransaction();
 
-        var payload = new TrayThumbnailManifestPayload
-        {
-            Entries = _entries.Values
+        connection.Execute("DELETE FROM TrayThumbnailCache;", transaction: transaction);
+        connection.Execute(
+            """
+            INSERT INTO TrayThumbnailCache (
+                TrayRootPath,
+                TrayRootHash,
+                TrayItemKey,
+                TrayInstanceId,
+                ContentFingerprint,
+                CacheFilePath,
+                SourceKind,
+                Width,
+                Height,
+                CacheProfile,
+                LastSeenUtcTicks
+            )
+            VALUES (
+                @TrayRootPath,
+                @TrayRootHash,
+                @TrayItemKey,
+                @TrayInstanceId,
+                @ContentFingerprint,
+                @CacheFilePath,
+                @SourceKind,
+                @Width,
+                @Height,
+                @CacheProfile,
+                @LastSeenUtcTicks
+            );
+            """,
+            _entries.Values
                 .OrderBy(entry => entry.TrayRootPath, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(entry => entry.TrayItemKey, StringComparer.OrdinalIgnoreCase)
-                .ToList()
-        };
+                .Select(entry => new TrayThumbnailRow
+                {
+                    TrayRootPath = entry.TrayRootPath,
+                    TrayRootHash = entry.TrayRootHash,
+                    TrayItemKey = entry.TrayItemKey,
+                    TrayInstanceId = entry.TrayInstanceId,
+                    ContentFingerprint = entry.ContentFingerprint,
+                    CacheFilePath = entry.CacheFilePath,
+                    SourceKind = entry.SourceKind,
+                    Width = entry.Width,
+                    Height = entry.Height,
+                    CacheProfile = entry.CacheProfile,
+                    LastSeenUtcTicks = entry.LastSeenUtc.ToUniversalTime().Ticks
+                }),
+            transaction: transaction);
 
-        using var stream = new FileStream(_manifestPath, FileMode.Create, FileAccess.Write, FileShare.None);
-        JsonSerializer.Serialize(stream, payload, JsonOptions);
+        transaction.Commit();
     }
 
     private static TrayThumbnailCacheEntry ToCacheEntry(TrayThumbnailManifestEntry entry)
@@ -357,9 +407,27 @@ public sealed class TrayThumbnailCacheStore
         public int Height { get; init; }
     }
 
-    private sealed class TrayThumbnailManifestPayload
+    private System.Data.IDbConnection OpenConnection()
     {
-        public List<TrayThumbnailManifestEntry> Entries { get; init; } = new();
+        var connection = _database.OpenConnection();
+        connection.Execute(
+            """
+            CREATE TABLE IF NOT EXISTS TrayThumbnailCache (
+                TrayRootPath TEXT NOT NULL,
+                TrayRootHash TEXT NOT NULL,
+                TrayItemKey TEXT NOT NULL,
+                TrayInstanceId TEXT NOT NULL,
+                ContentFingerprint TEXT NOT NULL,
+                CacheFilePath TEXT NOT NULL,
+                SourceKind INTEGER NOT NULL,
+                Width INTEGER NOT NULL,
+                Height INTEGER NOT NULL,
+                CacheProfile TEXT NOT NULL,
+                LastSeenUtcTicks INTEGER NOT NULL,
+                PRIMARY KEY (TrayRootPath, TrayItemKey)
+            );
+            """);
+        return connection;
     }
 
     private sealed class TrayThumbnailManifestEntry
@@ -375,5 +443,20 @@ public sealed class TrayThumbnailCacheStore
         public int Height { get; init; }
         public string CacheProfile { get; init; } = string.Empty;
         public DateTime LastSeenUtc { get; set; }
+    }
+
+    private sealed class TrayThumbnailRow
+    {
+        public string TrayRootPath { get; set; } = string.Empty;
+        public string TrayRootHash { get; set; } = string.Empty;
+        public string TrayItemKey { get; set; } = string.Empty;
+        public string TrayInstanceId { get; set; } = string.Empty;
+        public string ContentFingerprint { get; set; } = string.Empty;
+        public string CacheFilePath { get; set; } = string.Empty;
+        public TrayThumbnailSourceKind SourceKind { get; set; }
+        public int Width { get; set; }
+        public int Height { get; set; }
+        public string CacheProfile { get; set; } = string.Empty;
+        public long LastSeenUtcTicks { get; set; }
     }
 }

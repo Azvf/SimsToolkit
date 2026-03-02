@@ -47,6 +47,8 @@ public sealed class TrayMetadataIndexStoreTests
 
         var reader = new TrayMetadataIndexStore(cacheDir.Path);
         var loaded = reader.GetMetadata([trayItemPath]);
+        Assert.True(File.Exists(Path.Combine(cacheDir.Path, "cache.db")));
+        Assert.False(File.Exists(Path.Combine(cacheDir.Path, "manifest.json")));
 
         var result = Assert.Single(loaded);
         Assert.Equal("12345", result.Value.TrayMetadataId);

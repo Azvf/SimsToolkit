@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Dapper;
+using SimsModDesktop.Infrastructure.Persistence;
 using SimsModDesktop.Models;
 
 namespace SimsModDesktop.Services;
@@ -14,8 +16,7 @@ public sealed class TrayMetadataIndexStore
     };
 
     private readonly object _gate = new();
-    private readonly string _cacheRootPath;
-    private readonly string _manifestPath;
+    private readonly SqliteCacheDatabase _database;
 
     private bool _manifestLoaded;
     private Dictionary<string, StoredMetadataEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
@@ -32,8 +33,7 @@ public sealed class TrayMetadataIndexStore
 
     internal TrayMetadataIndexStore(string cacheRootPath)
     {
-        _cacheRootPath = cacheRootPath;
-        _manifestPath = Path.Combine(_cacheRootPath, "manifest.json");
+        _database = new SqliteCacheDatabase(Path.Combine(cacheRootPath, "cache.db"));
     }
 
     public IReadOnlyDictionary<string, TrayMetadataResult> GetMetadata(IReadOnlyCollection<string> trayItemPaths)
@@ -137,56 +137,79 @@ public sealed class TrayMetadataIndexStore
         _manifestLoaded = true;
         _entries = new Dictionary<string, StoredMetadataEntry>(StringComparer.OrdinalIgnoreCase);
 
-        if (!File.Exists(_manifestPath))
-        {
-            return;
-        }
-
         try
         {
-            using var stream = File.OpenRead(_manifestPath);
-            var payload = JsonSerializer.Deserialize<TrayMetadataIndexPayload>(stream, JsonOptions);
-            if (payload?.Entries is null ||
-                !string.Equals(payload.FormatVersion, CacheFormatVersion, StringComparison.Ordinal))
-            {
-                return;
-            }
+            using var connection = OpenConnection();
+            var rows = connection.Query<TrayMetadataRow>(
+                """
+                SELECT
+                    TrayItemPath,
+                    Length,
+                    LastWriteUtcTicks,
+                    MetadataJson
+                FROM TrayMetadataIndex
+                WHERE FormatVersion = @FormatVersion;
+                """,
+                new { FormatVersion = CacheFormatVersion });
 
-            foreach (var entry in payload.Entries)
+            foreach (var row in rows)
             {
-                if (string.IsNullOrWhiteSpace(entry.TrayItemPath))
+                if (string.IsNullOrWhiteSpace(row.TrayItemPath))
                 {
                     continue;
                 }
 
-                _entries[Path.GetFullPath(entry.TrayItemPath)] = entry;
+                var metadata = JsonSerializer.Deserialize<TrayMetadataResult>(row.MetadataJson, JsonOptions);
+                _entries[Path.GetFullPath(row.TrayItemPath)] = new StoredMetadataEntry
+                {
+                    TrayItemPath = Path.GetFullPath(row.TrayItemPath),
+                    Length = row.Length,
+                    LastWriteTimeUtc = new DateTime(row.LastWriteUtcTicks, DateTimeKind.Utc),
+                    Metadata = metadata
+                };
             }
         }
-        catch (IOException)
-        {
-        }
-        catch (UnauthorizedAccessException)
-        {
-        }
-        catch (JsonException)
+        catch
         {
         }
     }
 
     private void PersistManifestLocked()
     {
-        Directory.CreateDirectory(_cacheRootPath);
+        using var connection = OpenConnection();
+        using var transaction = connection.BeginTransaction();
 
-        var payload = new TrayMetadataIndexPayload
-        {
-            FormatVersion = CacheFormatVersion,
-            Entries = _entries.Values
+        connection.Execute("DELETE FROM TrayMetadataIndex;", transaction: transaction);
+        connection.Execute(
+            """
+            INSERT INTO TrayMetadataIndex (
+                TrayItemPath,
+                Length,
+                LastWriteUtcTicks,
+                FormatVersion,
+                MetadataJson
+            )
+            VALUES (
+                @TrayItemPath,
+                @Length,
+                @LastWriteUtcTicks,
+                @FormatVersion,
+                @MetadataJson
+            );
+            """,
+            _entries.Values
                 .OrderBy(entry => entry.TrayItemPath, StringComparer.OrdinalIgnoreCase)
-                .ToList()
-        };
+                .Select(entry => new TrayMetadataRow
+                {
+                    TrayItemPath = entry.TrayItemPath,
+                    Length = entry.Length,
+                    LastWriteUtcTicks = entry.LastWriteTimeUtc.ToUniversalTime().Ticks,
+                    FormatVersion = CacheFormatVersion,
+                    MetadataJson = JsonSerializer.Serialize(entry.Metadata, JsonOptions)
+                }),
+            transaction: transaction);
 
-        using var stream = new FileStream(_manifestPath, FileMode.Create, FileAccess.Write, FileShare.None);
-        JsonSerializer.Serialize(stream, payload, JsonOptions);
+        transaction.Commit();
     }
 
     private static bool IsValidLocked(StoredMetadataEntry entry)
@@ -304,11 +327,20 @@ public sealed class TrayMetadataIndexStore
         };
     }
 
-    private sealed class TrayMetadataIndexPayload
+    private System.Data.IDbConnection OpenConnection()
     {
-        public string FormatVersion { get; init; } = string.Empty;
-
-        public List<StoredMetadataEntry> Entries { get; init; } = new();
+        var connection = _database.OpenConnection();
+        connection.Execute(
+            """
+            CREATE TABLE IF NOT EXISTS TrayMetadataIndex (
+                TrayItemPath TEXT PRIMARY KEY,
+                Length INTEGER NOT NULL,
+                LastWriteUtcTicks INTEGER NOT NULL,
+                FormatVersion TEXT NOT NULL,
+                MetadataJson TEXT NOT NULL
+            );
+            """);
+        return connection;
     }
 
     private sealed class StoredMetadataEntry
@@ -317,5 +349,14 @@ public sealed class TrayMetadataIndexStore
         public long Length { get; init; }
         public DateTime LastWriteTimeUtc { get; init; }
         public TrayMetadataResult? Metadata { get; init; }
+    }
+
+    private sealed class TrayMetadataRow
+    {
+        public string TrayItemPath { get; set; } = string.Empty;
+        public long Length { get; set; }
+        public long LastWriteUtcTicks { get; set; }
+        public string FormatVersion { get; set; } = string.Empty;
+        public string MetadataJson { get; set; } = "{}";
     }
 }

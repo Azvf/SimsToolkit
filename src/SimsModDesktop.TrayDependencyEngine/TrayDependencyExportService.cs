@@ -1,4 +1,6 @@
 using System.Buffers.Binary;
+using System.Text.Json;
+using Dapper;
 using SimsModDesktop.PackageCore;
 
 namespace SimsModDesktop.TrayDependencyEngine;
@@ -168,13 +170,31 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
 
 public sealed class PackageIndexCache : IPackageIndexCache
 {
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
     private readonly object _sync = new();
     private readonly Dictionary<string, CacheState> _states = new(StringComparer.OrdinalIgnoreCase);
     private readonly IDbpfPackageCatalog _packageCatalog;
+    private readonly SqliteCacheDatabase _database;
 
     public PackageIndexCache(IDbpfPackageCatalog? packageCatalog = null)
+        : this(
+            Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "SimsModDesktop",
+                "Cache",
+                "TrayDependencyPackageIndex"),
+            packageCatalog)
+    {
+    }
+
+    public PackageIndexCache(string cacheRootPath, IDbpfPackageCatalog? packageCatalog = null)
     {
         _packageCatalog = packageCatalog ?? new DbpfPackageCatalog();
+        _database = new SqliteCacheDatabase(Path.Combine(cacheRootPath, "cache.db"));
     }
 
     public async Task<PackageIndexSnapshot> GetSnapshotAsync(
@@ -214,6 +234,23 @@ public sealed class PackageIndexCache : IPackageIndexCache
                 Detail = $"Indexing packages... {currentPackages.Length}/{currentPackages.Length}"
             });
             return existingState.Snapshot;
+        }
+
+        var persistedState = TryLoadPersistedState(normalizedRoot);
+        if (persistedState is not null && HasSameStamps(persistedState.PackageStamps, currentPackages))
+        {
+            lock (_sync)
+            {
+                _states[normalizedRoot] = persistedState;
+            }
+
+            progress?.Report(new TrayDependencyExportProgress
+            {
+                Stage = TrayDependencyExportStage.IndexingPackages,
+                Percent = 35,
+                Detail = $"Indexing packages... {currentPackages.Length}/{currentPackages.Length}"
+            });
+            return persistedState.Snapshot;
         }
 
         progress?.Report(new TrayDependencyExportProgress
@@ -258,6 +295,7 @@ public sealed class PackageIndexCache : IPackageIndexCache
             _states[normalizedRoot] = new CacheState(snapshot, currentPackages);
         }
 
+        PersistState(normalizedRoot, snapshot, currentPackages);
         return snapshot;
     }
 
@@ -378,6 +416,237 @@ public sealed class PackageIndexCache : IPackageIndexCache
         return true;
     }
 
+    private CacheState? TryLoadPersistedState(string normalizedRoot)
+    {
+        try
+        {
+            using var connection = OpenConnection();
+            var row = connection.QuerySingleOrDefault<PersistedCacheRow>(
+                """
+                SELECT
+                    ModsRootPath,
+                    PackageStampsJson,
+                    SnapshotJson
+                FROM PackageIndexCache
+                WHERE ModsRootPath = @ModsRootPath;
+                """,
+                new { ModsRootPath = normalizedRoot });
+            if (row is null)
+            {
+                return null;
+            }
+
+            var stamps = JsonSerializer.Deserialize<List<PackageStamp>>(row.PackageStampsJson, JsonOptions);
+            var persisted = JsonSerializer.Deserialize<PersistedSnapshot>(row.SnapshotJson, JsonOptions);
+            if (stamps is null || persisted is null)
+            {
+                return null;
+            }
+
+            return new CacheState(FromPersistedSnapshot(persisted), stamps);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private void PersistState(string normalizedRoot, PackageIndexSnapshot snapshot, IReadOnlyList<PackageStamp> stamps)
+    {
+        try
+        {
+            using var connection = OpenConnection();
+            connection.Execute(
+                """
+                INSERT INTO PackageIndexCache (
+                    ModsRootPath,
+                    PackageStampsJson,
+                    SnapshotJson,
+                    UpdatedUtcTicks
+                )
+                VALUES (
+                    @ModsRootPath,
+                    @PackageStampsJson,
+                    @SnapshotJson,
+                    @UpdatedUtcTicks
+                )
+                ON CONFLICT(ModsRootPath) DO UPDATE SET
+                    PackageStampsJson = excluded.PackageStampsJson,
+                    SnapshotJson = excluded.SnapshotJson,
+                    UpdatedUtcTicks = excluded.UpdatedUtcTicks;
+                """,
+                new PersistedCacheRow
+                {
+                    ModsRootPath = normalizedRoot,
+                    PackageStampsJson = JsonSerializer.Serialize(stamps, JsonOptions),
+                    SnapshotJson = JsonSerializer.Serialize(ToPersistedSnapshot(snapshot), JsonOptions),
+                    UpdatedUtcTicks = DateTime.UtcNow.Ticks
+                });
+        }
+        catch
+        {
+        }
+    }
+
+    private System.Data.IDbConnection OpenConnection()
+    {
+        var connection = _database.OpenConnection();
+        connection.Execute(
+            """
+            CREATE TABLE IF NOT EXISTS PackageIndexCache (
+                ModsRootPath TEXT PRIMARY KEY,
+                PackageStampsJson TEXT NOT NULL,
+                SnapshotJson TEXT NOT NULL,
+                UpdatedUtcTicks INTEGER NOT NULL
+            );
+            """);
+        return connection;
+    }
+
+    private static PersistedSnapshot ToPersistedSnapshot(PackageIndexSnapshot snapshot)
+    {
+        return new PersistedSnapshot
+        {
+            ModsRootPath = snapshot.ModsRootPath,
+            Packages = snapshot.Packages.Select(package => new PersistedPackage
+            {
+                FilePath = package.FilePath,
+                Length = package.Length,
+                LastWriteUtcTicks = package.LastWriteTimeUtc.ToUniversalTime().Ticks,
+                Entries = package.Entries.Select(entry => new PersistedPackageEntry
+                {
+                    Type = entry.Type,
+                    Group = entry.Group,
+                    Instance = entry.Instance,
+                    IsDeleted = entry.IsDeleted,
+                    DataOffset = entry.DataOffset,
+                    CompressedSize = entry.CompressedSize,
+                    UncompressedSize = entry.UncompressedSize,
+                    CompressionType = entry.CompressionType
+                }).ToList(),
+                TypeIndexes = package.TypeIndexes.Select(pair => new PersistedPackageTypeIndex
+                {
+                    Type = pair.Key,
+                    InstanceToEntryIndexes = pair.Value.InstanceToEntryIndexes
+                        .Select(indexPair => new PersistedInstanceEntryIndexes
+                        {
+                            Instance = indexPair.Key,
+                            EntryIndexes = indexPair.Value
+                        })
+                        .ToList()
+                }).ToList()
+            }).ToList(),
+            ExactIndex = snapshot.ExactIndex.Select(pair => new PersistedExactIndex
+            {
+                Type = pair.Key.Type,
+                Group = pair.Key.Group,
+                Instance = pair.Key.Instance,
+                Refs = pair.Value.Select(ToPersistedResolvedRef).ToList()
+            }).ToList(),
+            TypeInstanceIndex = snapshot.TypeInstanceIndex.Select(pair => new PersistedTypeInstanceIndex
+            {
+                Type = pair.Key.Type,
+                Instance = pair.Key.Instance,
+                Refs = pair.Value.Select(ToPersistedResolvedRef).ToList()
+            }).ToList(),
+            SupportedInstanceIndex = snapshot.SupportedInstanceIndex.Select(pair => new PersistedSupportedInstanceIndex
+            {
+                Instance = pair.Key,
+                Refs = pair.Value.Select(ToPersistedResolvedRef).ToList()
+            }).ToList()
+        };
+    }
+
+    private static PackageIndexSnapshot FromPersistedSnapshot(PersistedSnapshot persisted)
+    {
+        var packages = persisted.Packages.Select(package => new IndexedPackageFile
+        {
+            FilePath = package.FilePath,
+            Length = package.Length,
+            LastWriteTimeUtc = new DateTime(package.LastWriteUtcTicks, DateTimeKind.Utc),
+            Entries = package.Entries.Select(entry => new PackageIndexEntry
+            {
+                Type = entry.Type,
+                Group = entry.Group,
+                Instance = entry.Instance,
+                IsDeleted = entry.IsDeleted,
+                DataOffset = entry.DataOffset,
+                CompressedSize = entry.CompressedSize,
+                UncompressedSize = entry.UncompressedSize,
+                CompressionType = entry.CompressionType
+            }).ToArray(),
+            TypeIndexes = package.TypeIndexes.ToDictionary(
+                pair => pair.Type,
+                pair => new PackageTypeIndex
+                {
+                    InstanceToEntryIndexes = pair.InstanceToEntryIndexes.ToDictionary(
+                        indexPair => indexPair.Instance,
+                        indexPair => indexPair.EntryIndexes)
+                })
+        }).ToArray();
+
+        return new PackageIndexSnapshot
+        {
+            ModsRootPath = persisted.ModsRootPath,
+            Packages = packages,
+            ExactIndex = persisted.ExactIndex.ToDictionary(
+                row => new TrayResourceKey(row.Type, row.Group, row.Instance),
+                row => row.Refs.Select(FromPersistedResolvedRef).ToArray()),
+            TypeInstanceIndex = persisted.TypeInstanceIndex.ToDictionary(
+                row => new TypeInstanceKey(row.Type, row.Instance),
+                row => row.Refs.Select(FromPersistedResolvedRef).ToArray()),
+            SupportedInstanceIndex = persisted.SupportedInstanceIndex.ToDictionary(
+                row => row.Instance,
+                row => row.Refs.Select(FromPersistedResolvedRef).ToArray())
+        };
+    }
+
+    private static PersistedResolvedRef ToPersistedResolvedRef(ResolvedResourceRef item)
+    {
+        return new PersistedResolvedRef
+        {
+            KeyType = item.Key.Type,
+            KeyGroup = item.Key.Group,
+            KeyInstance = item.Key.Instance,
+            FilePath = item.FilePath,
+            Entry = item.Entry is null
+                ? null
+                : new PersistedPackageEntry
+                {
+                    Type = item.Entry.Type,
+                    Group = item.Entry.Group,
+                    Instance = item.Entry.Instance,
+                    IsDeleted = item.Entry.IsDeleted,
+                    DataOffset = item.Entry.DataOffset,
+                    CompressedSize = item.Entry.CompressedSize,
+                    UncompressedSize = item.Entry.UncompressedSize,
+                    CompressionType = item.Entry.CompressionType
+                }
+        };
+    }
+
+    private static ResolvedResourceRef FromPersistedResolvedRef(PersistedResolvedRef item)
+    {
+        return new ResolvedResourceRef
+        {
+            Key = new TrayResourceKey(item.KeyType, item.KeyGroup, item.KeyInstance),
+            FilePath = item.FilePath,
+            Entry = item.Entry is null
+                ? null
+                : new PackageIndexEntry
+                {
+                    Type = item.Entry.Type,
+                    Group = item.Entry.Group,
+                    Instance = item.Entry.Instance,
+                    IsDeleted = item.Entry.IsDeleted,
+                    DataOffset = item.Entry.DataOffset,
+                    CompressedSize = item.Entry.CompressedSize,
+                    UncompressedSize = item.Entry.UncompressedSize,
+                    CompressionType = item.Entry.CompressionType
+                }
+        };
+    }
+
     private sealed record CacheState(
         PackageIndexSnapshot Snapshot,
         IReadOnlyList<PackageStamp> PackageStamps);
@@ -386,6 +655,86 @@ public sealed class PackageIndexCache : IPackageIndexCache
         string FilePath,
         long Length,
         DateTime LastWriteTimeUtc);
+
+    private sealed class PersistedCacheRow
+    {
+        public string ModsRootPath { get; set; } = string.Empty;
+        public string PackageStampsJson { get; set; } = "[]";
+        public string SnapshotJson { get; set; } = "{}";
+        public long UpdatedUtcTicks { get; set; }
+    }
+
+    private sealed class PersistedSnapshot
+    {
+        public string ModsRootPath { get; set; } = string.Empty;
+        public List<PersistedPackage> Packages { get; set; } = [];
+        public List<PersistedExactIndex> ExactIndex { get; set; } = [];
+        public List<PersistedTypeInstanceIndex> TypeInstanceIndex { get; set; } = [];
+        public List<PersistedSupportedInstanceIndex> SupportedInstanceIndex { get; set; } = [];
+    }
+
+    private sealed class PersistedPackage
+    {
+        public string FilePath { get; set; } = string.Empty;
+        public long Length { get; set; }
+        public long LastWriteUtcTicks { get; set; }
+        public List<PersistedPackageEntry> Entries { get; set; } = [];
+        public List<PersistedPackageTypeIndex> TypeIndexes { get; set; } = [];
+    }
+
+    private sealed class PersistedPackageEntry
+    {
+        public uint Type { get; set; }
+        public uint Group { get; set; }
+        public ulong Instance { get; set; }
+        public bool IsDeleted { get; set; }
+        public long DataOffset { get; set; }
+        public int CompressedSize { get; set; }
+        public int UncompressedSize { get; set; }
+        public ushort CompressionType { get; set; }
+    }
+
+    private sealed class PersistedPackageTypeIndex
+    {
+        public uint Type { get; set; }
+        public List<PersistedInstanceEntryIndexes> InstanceToEntryIndexes { get; set; } = [];
+    }
+
+    private sealed class PersistedInstanceEntryIndexes
+    {
+        public ulong Instance { get; set; }
+        public int[] EntryIndexes { get; set; } = Array.Empty<int>();
+    }
+
+    private sealed class PersistedExactIndex
+    {
+        public uint Type { get; set; }
+        public uint Group { get; set; }
+        public ulong Instance { get; set; }
+        public List<PersistedResolvedRef> Refs { get; set; } = [];
+    }
+
+    private sealed class PersistedTypeInstanceIndex
+    {
+        public uint Type { get; set; }
+        public ulong Instance { get; set; }
+        public List<PersistedResolvedRef> Refs { get; set; } = [];
+    }
+
+    private sealed class PersistedSupportedInstanceIndex
+    {
+        public ulong Instance { get; set; }
+        public List<PersistedResolvedRef> Refs { get; set; } = [];
+    }
+
+    private sealed class PersistedResolvedRef
+    {
+        public uint KeyType { get; set; }
+        public uint KeyGroup { get; set; }
+        public ulong KeyInstance { get; set; }
+        public string FilePath { get; set; } = string.Empty;
+        public PersistedPackageEntry? Entry { get; set; }
+    }
 }
 
 internal static class ProgressScale
