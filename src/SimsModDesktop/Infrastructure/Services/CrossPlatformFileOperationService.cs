@@ -73,6 +73,12 @@ public sealed class CrossPlatformFileOperationService : IFileOperationService
 
             if (permanent)
             {
+                var attributes = File.GetAttributes(path);
+                if ((attributes & FileAttributes.ReadOnly) == FileAttributes.ReadOnly)
+                {
+                    File.SetAttributes(path, attributes & ~FileAttributes.ReadOnly);
+                }
+
                 File.Delete(path);
                 _logger.LogInformation("Permanently deleted file: {Path}", path);
                 return true;

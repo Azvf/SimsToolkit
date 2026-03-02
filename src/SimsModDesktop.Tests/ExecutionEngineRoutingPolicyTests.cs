@@ -10,7 +10,7 @@ public sealed class ExecutionEngineRoutingPolicyTests
     [Fact]
     public async Task DecideAsync_TransformationAction_UsesDefaults()
     {
-        var provider = new CrossPlatformConfigurationProvider(NullLogger<CrossPlatformConfigurationProvider>.Instance);
+        var provider = CreateProvider();
         var sut = new ExecutionEngineRoutingPolicy(provider);
 
         var decision = await sut.DecideAsync(SimsAction.Flatten);
@@ -23,7 +23,7 @@ public sealed class ExecutionEngineRoutingPolicyTests
     [Fact]
     public async Task DecideAsync_UsesConfiguredValues()
     {
-        var provider = new CrossPlatformConfigurationProvider(NullLogger<CrossPlatformConfigurationProvider>.Instance);
+        var provider = CreateProvider();
         await provider.SetConfigurationAsync("Execution.UseUnifiedEngine", false);
         await provider.SetConfigurationAsync("Execution.EnableFallbackToPowerShell", false);
         await provider.SetConfigurationAsync("Execution.FallbackOnValidationFailure", true);
@@ -39,11 +39,17 @@ public sealed class ExecutionEngineRoutingPolicyTests
     [Fact]
     public async Task DecideAsync_NonTransformationAction_DisablesUnified()
     {
-        var provider = new CrossPlatformConfigurationProvider(NullLogger<CrossPlatformConfigurationProvider>.Instance);
+        var provider = CreateProvider();
         var sut = new ExecutionEngineRoutingPolicy(provider);
 
         var decision = await sut.DecideAsync(SimsAction.FindDuplicates);
 
         Assert.False(decision.UseUnifiedEngine);
+    }
+
+    private static CrossPlatformConfigurationProvider CreateProvider()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"sims-config-{Guid.NewGuid():N}.json");
+        return new CrossPlatformConfigurationProvider(NullLogger<CrossPlatformConfigurationProvider>.Instance, path);
     }
 }

@@ -100,7 +100,9 @@ public sealed class UnifiedFileTransformationEngineTests
         var filePath = Path.Combine(root.Path, "  My   FILE .package");
         await File.WriteAllTextAsync(filePath, "x");
 
-        var provider = new CrossPlatformConfigurationProvider(NullLogger<CrossPlatformConfigurationProvider>.Instance);
+        var provider = new CrossPlatformConfigurationProvider(
+            NullLogger<CrossPlatformConfigurationProvider>.Instance,
+            Path.Combine(Path.GetTempPath(), $"sims-config-{Guid.NewGuid():N}.json"));
         await provider.SetConfigurationAsync("Normalize.CasePolicy", "lower");
         var sut = CreateEngine(provider);
 
@@ -186,7 +188,9 @@ public sealed class UnifiedFileTransformationEngineTests
     {
         var fileService = new CrossPlatformFileOperationService(NullLogger<CrossPlatformFileOperationService>.Instance);
         var hashService = new CrossPlatformHashComputationService(NullLogger<CrossPlatformHashComputationService>.Instance);
-        var config = provider ?? new CrossPlatformConfigurationProvider(NullLogger<CrossPlatformConfigurationProvider>.Instance);
+        var config = provider ?? new CrossPlatformConfigurationProvider(
+            NullLogger<CrossPlatformConfigurationProvider>.Instance,
+            Path.Combine(Path.GetTempPath(), $"sims-config-{Guid.NewGuid():N}.json"));
         return new UnifiedFileTransformationEngine(
             NullLogger<UnifiedFileTransformationEngine>.Instance,
             fileService,
