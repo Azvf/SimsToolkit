@@ -1,15 +1,6 @@
+using SimsModDesktop.Models;
+
 namespace SimsModDesktop.Presentation.Shell;
-
-public enum AppSection
-{
-    Toolkit,
-    Mods,
-    Tray,
-    Saves,
-    Settings
-}
-
-public sealed record NavigationItem(AppSection Section, string Title);
 
 public sealed class ShellNavigationState
 {
