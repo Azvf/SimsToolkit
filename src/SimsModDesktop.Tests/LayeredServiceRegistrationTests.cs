@@ -8,7 +8,6 @@ using SimsModDesktop.Application.UseCases;
 using SimsModDesktop.Infrastructure.ServiceRegistration;
 using SimsModDesktop.Presentation.ServiceRegistration;
 using SimsModDesktop.Presentation.Workspaces;
-using SimsModDesktop.Services;
 
 namespace SimsModDesktop.Tests;
 

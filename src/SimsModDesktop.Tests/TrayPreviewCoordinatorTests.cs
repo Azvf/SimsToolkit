@@ -1,8 +1,6 @@
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Application.Validation;
-using SimsModDesktop.Models;
-using SimsModDesktop.Services;
 
 namespace SimsModDesktop.Tests;
 

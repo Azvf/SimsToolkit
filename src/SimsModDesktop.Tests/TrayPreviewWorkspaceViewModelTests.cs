@@ -3,8 +3,6 @@ using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Infrastructure.Dialogs;
-using SimsModDesktop.Models;
-using SimsModDesktop.Services;
 using SimsModDesktop.TrayDependencyEngine;
 using SimsModDesktop.ViewModels.Panels;
 using SimsModDesktop.ViewModels.Preview;

@@ -2,7 +2,6 @@ using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Infrastructure.TextureProcessing;
-using SimsModDesktop.Models;
 using System.Text.Json.Nodes;
 
 namespace SimsModDesktop.Tests;

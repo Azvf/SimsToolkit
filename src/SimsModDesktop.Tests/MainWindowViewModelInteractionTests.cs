@@ -8,8 +8,6 @@ using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Infrastructure.Dialogs;
 using SimsModDesktop.Infrastructure.Localization;
 using SimsModDesktop.Infrastructure.Settings;
-using SimsModDesktop.Models;
-using SimsModDesktop.Services;
 using SimsModDesktop.TrayDependencyEngine;
 using SimsModDesktop.ViewModels;
 using SimsModDesktop.ViewModels.Panels;

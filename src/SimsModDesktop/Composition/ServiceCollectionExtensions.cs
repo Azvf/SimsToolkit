@@ -12,7 +12,7 @@ using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Infrastructure.Windowing;
 using SimsModDesktop.PackageCore;
 using SimsModDesktop.Presentation.ServiceRegistration;
-using SimsModDesktop.Services;
+using SimsModDesktop.Presentation.Services;
 using SimsModDesktop.TrayDependencyEngine;
 using SimsModDesktop.ViewModels.Shell;
 using SimsModDesktop.ViewModels;

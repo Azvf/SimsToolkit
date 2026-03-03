@@ -1,6 +1,5 @@
 using System.Reflection;
 using SimsModDesktop.Application.Results;
-using SimsModDesktop.Models;
 using SimsModDesktop.Infrastructure.Persistence;
 
 namespace SimsModDesktop.Tests;

@@ -1,5 +1,4 @@
 using SimsModDesktop.Application.Results;
-using SimsModDesktop.Models;
 
 namespace SimsModDesktop.Tests;
 

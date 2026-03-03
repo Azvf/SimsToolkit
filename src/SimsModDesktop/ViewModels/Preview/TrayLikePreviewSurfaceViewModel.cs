@@ -4,8 +4,6 @@ using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.TrayPreview;
-using SimsModDesktop.Models;
-using SimsModDesktop.Services;
 using SimsModDesktop.ViewModels.Infrastructure;
 using SimsModDesktop.ViewModels.Panels;
 

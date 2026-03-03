@@ -2,8 +2,6 @@ using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Cli;
-using SimsModDesktop.Models;
-using SimsModDesktop.Services;
 
 namespace SimsModDesktop.Infrastructure.Execution;
 

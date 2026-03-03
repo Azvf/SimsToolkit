@@ -1,6 +1,5 @@
 using System.Text.Json;
 using SimsModDesktop.Application.Recovery;
-using SimsModDesktop.Models;
 
 namespace SimsModDesktop.Tests;
 

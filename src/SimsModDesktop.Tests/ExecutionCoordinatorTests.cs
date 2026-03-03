@@ -3,8 +3,6 @@ using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Services;
 using Microsoft.Extensions.Logging.Abstractions;
-using SimsModDesktop.Models;
-using SimsModDesktop.Services;
 
 namespace SimsModDesktop.Tests;
 

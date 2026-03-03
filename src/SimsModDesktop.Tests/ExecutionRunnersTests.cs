@@ -2,7 +2,6 @@ using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.TrayPreview;
-using SimsModDesktop.Models;
 
 namespace SimsModDesktop.Tests;
 

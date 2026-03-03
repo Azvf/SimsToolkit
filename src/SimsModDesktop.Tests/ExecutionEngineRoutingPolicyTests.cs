@@ -1,7 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Application.Configuration;
 using SimsModDesktop.Application.Execution;
-using SimsModDesktop.Models;
 
 namespace SimsModDesktop.Tests;
 

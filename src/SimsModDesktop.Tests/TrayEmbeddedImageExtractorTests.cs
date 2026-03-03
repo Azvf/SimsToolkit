@@ -1,5 +1,3 @@
-using SimsModDesktop.Services;
-using SimsModDesktop.Models;
 
 namespace SimsModDesktop.Tests;
 

@@ -13,19 +13,13 @@ public sealed class LegacyStructureTests
     }
 
     [Fact]
-    public void LegacyServicesFolder_OnlyContainsTrayDependenciesLauncher()
+    public void LegacyServicesFolder_DoesNotExist()
     {
         var repositoryRoot = FindRepositoryRoot();
         var legacyServicesPath = Path.Combine(repositoryRoot, "src", "SimsModDesktop", "Services");
-
-        var remainingSourceFiles = Directory.Exists(legacyServicesPath)
-            ? Directory.EnumerateFiles(legacyServicesPath, "*.cs", SearchOption.AllDirectories)
-                .Select(path => Path.GetRelativePath(legacyServicesPath, path))
-                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-                .ToArray()
-            : Array.Empty<string>();
-
-        Assert.Equal(["TrayDependenciesLauncher.cs"], remainingSourceFiles);
+        Assert.False(
+            Directory.Exists(legacyServicesPath),
+            $"Legacy services folder should not exist: {legacyServicesPath}");
     }
 
     private static string FindRepositoryRoot()

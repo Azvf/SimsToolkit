@@ -1,5 +1,4 @@
 using Avalonia.Media.Imaging;
-using SimsModDesktop.Models;
 using SimsModDesktop.ViewModels.Infrastructure;
 
 namespace SimsModDesktop.ViewModels.Panels;

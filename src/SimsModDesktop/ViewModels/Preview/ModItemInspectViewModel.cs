@@ -4,8 +4,8 @@ using Avalonia.Media.Imaging;
 using SimsModDesktop.Application.Mods;
 using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Infrastructure.Dialogs;
-using SimsModDesktop.Models;
 using SimsModDesktop.ViewModels.Infrastructure;
+using SimsModDesktop.ViewModels.Preview.Models;
 
 namespace SimsModDesktop.ViewModels.Preview;
 

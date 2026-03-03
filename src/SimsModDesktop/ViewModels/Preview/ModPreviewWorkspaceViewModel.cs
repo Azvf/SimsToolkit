@@ -3,7 +3,6 @@ using Avalonia.Threading;
 using SimsModDesktop.Application.Mods;
 using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Infrastructure.Dialogs;
-using SimsModDesktop.Services;
 using SimsModDesktop.ViewModels.Infrastructure;
 using SimsModDesktop.ViewModels.Panels;
 

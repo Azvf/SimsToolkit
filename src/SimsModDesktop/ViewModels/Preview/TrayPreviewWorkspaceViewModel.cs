@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Infrastructure.Dialogs;
-using SimsModDesktop.Services;
 using SimsModDesktop.TrayDependencyEngine;
 using SimsModDesktop.ViewModels.Infrastructure;
 using SimsModDesktop.ViewModels.Panels;
@@ -237,7 +236,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         LogText = string.Join(Environment.NewLine, messages);
     }
 
-    private static string BuildExportDirectoryName(SimsModDesktop.Application.Models.SimsTrayPreviewItem item)
+    private static string BuildExportDirectoryName(SimsTrayPreviewItem item)
     {
         var baseName = string.IsNullOrWhiteSpace(item.DisplayTitle) ? "TrayItem" : item.DisplayTitle.Trim();
         var sanitized = string.Concat(baseName.Select(ch => Path.GetInvalidFileNameChars().Contains(ch) ? '_' : ch));

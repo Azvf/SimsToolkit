@@ -1,4 +1,3 @@
-using SimsModDesktop.Models;
 using SimsModDesktop.ViewModels.Infrastructure;
 
 namespace SimsModDesktop.ViewModels.Preview;
