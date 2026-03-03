@@ -17,6 +17,22 @@ public sealed class LegacyStructureTests
             "Legacy application folder should be empty of source files:" + Environment.NewLine + string.Join(Environment.NewLine, remainingSourceFiles));
     }
 
+    [Fact]
+    public void LegacyServicesFolder_OnlyContainsTrayDependenciesLauncher()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var legacyServicesPath = Path.Combine(repositoryRoot, "src", "SimsModDesktop", "Services");
+
+        var remainingSourceFiles = Directory.Exists(legacyServicesPath)
+            ? Directory.EnumerateFiles(legacyServicesPath, "*.cs", SearchOption.AllDirectories)
+                .Select(path => Path.GetRelativePath(legacyServicesPath, path))
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToArray()
+            : Array.Empty<string>();
+
+        Assert.Equal(["TrayDependenciesLauncher.cs"], remainingSourceFiles);
+    }
+
     private static string FindRepositoryRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);
