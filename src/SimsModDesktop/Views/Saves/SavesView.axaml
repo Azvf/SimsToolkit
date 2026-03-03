@@ -2,7 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             xmlns:vm="clr-namespace:SimsModDesktop.ViewModels.Saves"
+             xmlns:vm="clr-namespace:SimsModDesktop.ViewModels.Saves;assembly=SimsModDesktop.Presentation"
              xmlns:preview="clr-namespace:SimsModDesktop.Views.Preview"
              xmlns:savedata="clr-namespace:SimsModDesktop.SaveData.Models;assembly=SimsModDesktop.SaveData"
              mc:Ignorable="d"
@@ -86,3 +86,4 @@
                                             DataContext="{Binding Surface}" />
     </Grid>
 </UserControl>
+

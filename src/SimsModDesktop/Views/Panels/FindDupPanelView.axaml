@@ -1,6 +1,6 @@
-﻿<UserControl xmlns="https://github.com/avaloniaui"
+<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:vm="clr-namespace:SimsModDesktop.ViewModels"
+             xmlns:vm="clr-namespace:SimsModDesktop.ViewModels;assembly=SimsModDesktop.Presentation"
              x:Class="SimsModDesktop.Views.Panels.FindDupPanelView"
              x:DataType="vm:MainWindowViewModel">
     <Border Classes="card-muted" Padding="10" IsVisible="{Binding IsFindDupVisible}">
@@ -29,5 +29,6 @@
         </StackPanel>
     </Border>
 </UserControl>
+
 
 

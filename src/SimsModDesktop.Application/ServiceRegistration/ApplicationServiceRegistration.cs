@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using SimsModDesktop.Application.Cli;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Mods;
+using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Recovery;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Results;
@@ -47,6 +48,14 @@ public static class ApplicationServiceRegistration
         services.AddSingleton<IMainWindowPlanBuilder, MainWindowPlanBuilder>();
         services.AddSingleton<IToolkitExecutionRunner, ToolkitExecutionRunner>();
         services.AddSingleton<ITrayPreviewRunner, TrayPreviewRunner>();
+        services.AddSingleton<IActionModule, OrganizeActionModule>();
+        services.AddSingleton<IActionModule, FlattenActionModule>();
+        services.AddSingleton<IActionModule, NormalizeActionModule>();
+        services.AddSingleton<IActionModule, MergeActionModule>();
+        services.AddSingleton<IActionModule, FindDupActionModule>();
+        services.AddSingleton<IActionModule, TrayDependenciesActionModule>();
+        services.AddSingleton<IActionModule, TrayPreviewActionModule>();
+        services.AddSingleton<IActionModuleRegistry, ActionModuleRegistry>();
 
         services.AddSingleton<IBuildBuyItemDescriptorService, BuildBuyPlaceholderDescriptorService>();
         services.AddSingleton<ICasItemDescriptorService, CasItemDescriptorService>();

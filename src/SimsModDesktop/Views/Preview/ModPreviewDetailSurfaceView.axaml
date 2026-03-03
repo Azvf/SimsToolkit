@@ -2,8 +2,8 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             xmlns:vm="clr-namespace:SimsModDesktop.ViewModels.Preview"
-             xmlns:models="clr-namespace:SimsModDesktop.ViewModels.Preview.Models"
+             xmlns:vm="clr-namespace:SimsModDesktop.ViewModels.Preview;assembly=SimsModDesktop.Presentation"
+             xmlns:models="clr-namespace:SimsModDesktop.ViewModels.Preview.Models;assembly=SimsModDesktop.Presentation"
              mc:Ignorable="d"
              x:Class="SimsModDesktop.Views.Preview.ModPreviewDetailSurfaceView"
              x:DataType="vm:ModItemInspectViewModel">
@@ -241,3 +241,4 @@
         </ScrollViewer>
     </Grid>
 </UserControl>
+

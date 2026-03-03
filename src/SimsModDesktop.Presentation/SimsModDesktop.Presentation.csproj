@@ -6,10 +6,14 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.3.12" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.1" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\SimsModDesktop.Application\SimsModDesktop.Application.csproj" />
+    <ProjectReference Include="..\SimsModDesktop.Infrastructure\SimsModDesktop.Infrastructure.csproj" />
+    <ProjectReference Include="..\SimsModDesktop.SaveData\SimsModDesktop.SaveData.csproj" />
+    <ProjectReference Include="..\SimsModDesktop.TrayDependencyEngine\SimsModDesktop.TrayDependencyEngine.csproj" />
   </ItemGroup>
 </Project>

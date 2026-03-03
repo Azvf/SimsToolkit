@@ -1,7 +1,7 @@
-﻿<UserControl xmlns="https://github.com/avaloniaui"
+<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:vm="clr-namespace:SimsModDesktop.ViewModels"
-             xmlns:panelVm="clr-namespace:SimsModDesktop.ViewModels.Panels"
+             xmlns:vm="clr-namespace:SimsModDesktop.ViewModels;assembly=SimsModDesktop.Presentation"
+             xmlns:panelVm="clr-namespace:SimsModDesktop.ViewModels.Panels;assembly=SimsModDesktop.Presentation"
              x:Class="SimsModDesktop.Views.Panels.MergePanelView"
              x:DataType="vm:MainWindowViewModel">
     <Border Classes="card-muted" Padding="10" IsVisible="{Binding IsMergeVisible}">
@@ -60,4 +60,5 @@
         </StackPanel>
     </Border>
 </UserControl>
+
 

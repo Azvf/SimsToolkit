@@ -1,6 +1,6 @@
 ﻿<Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:dialogs="clr-namespace:SimsModDesktop.Infrastructure.Dialogs"
+        xmlns:dialogs="clr-namespace:SimsModDesktop.Infrastructure.Dialogs;assembly=SimsModDesktop.Presentation"
         x:Class="SimsModDesktop.Views.ConfirmationDialogWindow"
         x:DataType="dialogs:ConfirmationRequest"
         Width="500"

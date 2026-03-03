@@ -2,8 +2,8 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             xmlns:vm="clr-namespace:SimsModDesktop.ViewModels.Preview"
-             xmlns:panelvm="clr-namespace:SimsModDesktop.ViewModels.Panels"
+             xmlns:vm="clr-namespace:SimsModDesktop.ViewModels.Preview;assembly=SimsModDesktop.Presentation"
+             xmlns:panelvm="clr-namespace:SimsModDesktop.ViewModels.Panels;assembly=SimsModDesktop.Presentation"
              xmlns:preview="clr-namespace:SimsModDesktop.Views.Preview"
              mc:Ignorable="d"
              x:Class="SimsModDesktop.Views.Preview.TrayLikePreviewSurfaceView"
@@ -348,3 +348,4 @@
         </Border>
     </Grid>
 </UserControl>
+
