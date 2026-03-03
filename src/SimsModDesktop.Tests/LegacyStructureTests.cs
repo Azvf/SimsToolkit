@@ -42,6 +42,38 @@ public sealed class LegacyStructureTests
         Assert.DoesNotContain(@"""SimsModDesktop.App"", ""src\SimsModDesktop.App\SimsModDesktop.App.csproj""", solutionContents, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void AppBootstrap_UsesSingleShellCompositionEntryPoint()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var appBootstrapPath = Path.Combine(repositoryRoot, "src", "SimsModDesktop", "App.axaml.cs");
+        var appBootstrapSource = File.ReadAllText(appBootstrapPath);
+
+        Assert.Contains(".AddSimsDesktopShell()", appBootstrapSource, StringComparison.Ordinal);
+        Assert.DoesNotContain(".AddSimsDesktopInfrastructure()", appBootstrapSource, StringComparison.Ordinal);
+        Assert.DoesNotContain(".AddSimsDesktopExecution()", appBootstrapSource, StringComparison.Ordinal);
+        Assert.DoesNotContain(".AddSimsDesktopModules()", appBootstrapSource, StringComparison.Ordinal);
+        Assert.DoesNotContain(".AddSimsDesktopPresentation()", appBootstrapSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LegacyCompositionMethods_AreNotPublicApis()
+    {
+        var shellCompositionType = typeof(SimsModDesktop.App).Assembly.GetType("SimsModDesktop.Composition.ServiceCollectionExtensions");
+        Assert.NotNull(shellCompositionType);
+
+        var publicMethodNames = shellCompositionType!
+            .GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Select(method => method.Name)
+            .ToArray();
+
+        Assert.Contains("AddSimsDesktopShell", publicMethodNames, StringComparer.Ordinal);
+        Assert.DoesNotContain("AddSimsDesktopInfrastructure", publicMethodNames, StringComparer.Ordinal);
+        Assert.DoesNotContain("AddSimsDesktopExecution", publicMethodNames, StringComparer.Ordinal);
+        Assert.DoesNotContain("AddSimsDesktopModules", publicMethodNames, StringComparer.Ordinal);
+        Assert.DoesNotContain("AddSimsDesktopPresentation", publicMethodNames, StringComparer.Ordinal);
+    }
+
     private static string FindRepositoryRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);
