@@ -21,9 +21,7 @@ public sealed class TrayPreviewOutputParser : IExecutionOutputParser
                 UpdatedLocal = item.LatestWriteTimeLocal == DateTime.MinValue ? null : item.LatestWriteTimeLocal,
                 Confidence = "n/a",
                 Category = "TrayPreview",
-                DependencyInfo = string.IsNullOrWhiteSpace(item.AuthorId)
-                    ? item.ResourceTypes
-                    : $"AuthorId={item.AuthorId}; {item.ResourceTypes}",
+                DependencyInfo = item.ResourceTypes,
                 RawSummary = string.IsNullOrWhiteSpace(item.FileListPreview)
                     ? item.TrayItemKey
                     : item.FileListPreview

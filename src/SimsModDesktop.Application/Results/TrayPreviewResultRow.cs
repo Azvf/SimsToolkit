@@ -3,8 +3,10 @@ namespace SimsModDesktop.Application.Results;
 public sealed record TrayPreviewResultRow
 {
     public string TrayItemKey { get; init; } = string.Empty;
+    public string ItemName { get; init; } = string.Empty;
     public string PresetType { get; init; } = string.Empty;
     public int FileCount { get; init; }
+    public long TotalBytes { get; init; }
     public double TotalMB { get; init; }
     public DateTime LatestWriteTimeLocal { get; init; }
     public string Extensions { get; init; } = string.Empty;

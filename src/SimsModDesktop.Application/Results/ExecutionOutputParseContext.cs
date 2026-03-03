@@ -6,5 +6,5 @@ public sealed record ExecutionOutputParseContext
 {
     public required SimsAction Action { get; init; }
     public string LogText { get; init; } = string.Empty;
-    public IReadOnlyList<SimsTrayPreviewItem> TrayPreviewItems { get; init; } = Array.Empty<SimsTrayPreviewItem>();
+    public IReadOnlyList<TrayPreviewResultRow> TrayPreviewItems { get; init; } = Array.Empty<TrayPreviewResultRow>();
 }

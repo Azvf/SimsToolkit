@@ -14,10 +14,11 @@ public sealed class ExecutionOutputParsersTests
             Action = SimsAction.TrayPreview,
             TrayPreviewItems =
             [
-                new SimsTrayPreviewItem
+                new TrayPreviewResultRow
                 {
                     TrayItemKey = "0x1",
                     PresetType = "Lot",
+                    ItemName = string.Empty,
                     FileCount = 3,
                     TotalBytes = 1024,
                     TotalMB = 1,
