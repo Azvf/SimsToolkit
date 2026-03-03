@@ -24,7 +24,7 @@ public sealed class SavePreviewCacheStore : ISavePreviewCacheStore
     {
     }
 
-    internal SavePreviewCacheStore(string cacheBasePath)
+    public SavePreviewCacheStore(string cacheBasePath)
     {
         _cacheRootPath = Path.Combine(cacheBasePath, "SavePreview");
         _database = new AppCacheDatabase(cacheBasePath);
