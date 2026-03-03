@@ -2,7 +2,7 @@ using SimsModDesktop.Models;
 
 namespace SimsModDesktop.Services;
 
-internal sealed class NullTrayMetadataService : ITrayMetadataService
+public sealed class NullTrayMetadataService : ITrayMetadataService
 {
     public static NullTrayMetadataService Instance { get; } = new();
 

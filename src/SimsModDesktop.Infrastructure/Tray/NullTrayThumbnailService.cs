@@ -2,7 +2,7 @@ using SimsModDesktop.Models;
 
 namespace SimsModDesktop.Services;
 
-internal sealed class NullTrayThumbnailService : ITrayThumbnailService
+public sealed class NullTrayThumbnailService : ITrayThumbnailService
 {
     public static NullTrayThumbnailService Instance { get; } = new();
 
