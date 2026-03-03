@@ -96,7 +96,7 @@ public sealed class SimsPowerShellRunner : ISimsPowerShellRunner
         };
     }
 
-    internal static bool TryParseProgressLine(string line, out SimsProgressUpdate progress)
+    public static bool TryParseProgressLine(string line, out SimsProgressUpdate progress)
     {
         progress = null!;
 
