@@ -7,8 +7,8 @@ using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Application.UseCases;
 using SimsModDesktop.Infrastructure.ServiceRegistration;
 using SimsModDesktop.Presentation.ServiceRegistration;
-using SimsModDesktop.ViewModels;
-using SimsModDesktop.ViewModels.Shell;
+using SimsModDesktop.Presentation.ViewModels;
+using SimsModDesktop.Presentation.ViewModels.Shell;
 
 namespace SimsModDesktop.Tests;
 

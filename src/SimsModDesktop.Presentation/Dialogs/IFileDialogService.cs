@@ -1,4 +1,4 @@
-namespace SimsModDesktop.Infrastructure.Dialogs;
+namespace SimsModDesktop.Presentation.Dialogs;
 
 public interface IFileDialogService
 {

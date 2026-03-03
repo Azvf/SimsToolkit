@@ -1,7 +1,7 @@
 using SimsModDesktop.Application.Modules;
-using SimsModDesktop.ViewModels.Infrastructure;
+using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 
-namespace SimsModDesktop.ViewModels.Panels;
+namespace SimsModDesktop.Presentation.ViewModels.Panels;
 
 public sealed class OrganizePanelViewModel : ObservableObject, IOrganizeModuleState
 {

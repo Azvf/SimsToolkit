@@ -3,7 +3,7 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
 
-namespace SimsModDesktop.ViewModels.Infrastructure;
+namespace SimsModDesktop.Presentation.ViewModels.Infrastructure;
 
 public sealed class BulkObservableCollection<T> : ObservableCollection<T>
 {

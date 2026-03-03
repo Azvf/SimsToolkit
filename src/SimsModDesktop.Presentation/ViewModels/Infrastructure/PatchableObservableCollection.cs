@@ -1,6 +1,6 @@
 using System.Collections.ObjectModel;
 
-namespace SimsModDesktop.ViewModels.Infrastructure;
+namespace SimsModDesktop.Presentation.ViewModels.Infrastructure;
 
 public sealed class PatchableObservableCollection<T> : ObservableCollection<T>
 {

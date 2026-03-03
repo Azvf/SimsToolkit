@@ -1,8 +1,8 @@
 using Avalonia.Threading;
 using SimsModDesktop.Application.Mods;
 using SimsModDesktop.Application.TextureCompression;
-using SimsModDesktop.Infrastructure.Dialogs;
-using SimsModDesktop.ViewModels.Preview;
+using SimsModDesktop.Presentation.Dialogs;
+using SimsModDesktop.Presentation.ViewModels.Preview;
 
 namespace SimsModDesktop.Tests;
 

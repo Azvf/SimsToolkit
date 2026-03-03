@@ -14,16 +14,16 @@ using SimsModDesktop.Application.Results;
 using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Application.Validation;
-using SimsModDesktop.Infrastructure.Dialogs;
+using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.Infrastructure.Localization;
 using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Infrastructure.TextureProcessing;
 using SimsModDesktop.TrayDependencyEngine;
-using SimsModDesktop.ViewModels.Infrastructure;
-using SimsModDesktop.ViewModels.Panels;
-using SimsModDesktop.ViewModels.Preview;
+using SimsModDesktop.Presentation.ViewModels.Infrastructure;
+using SimsModDesktop.Presentation.ViewModels.Panels;
+using SimsModDesktop.Presentation.ViewModels.Preview;
 
-namespace SimsModDesktop.ViewModels;
+namespace SimsModDesktop.Presentation.ViewModels;
 
 public sealed class MainWindowViewModel : ObservableObject
 {
@@ -115,17 +115,17 @@ public sealed class MainWindowViewModel : ObservableObject
         ModPreviewPanelViewModel modPreview,
         TrayPreviewPanelViewModel trayPreview,
         SharedFileOpsPanelViewModel sharedFileOps,
-        ITrayThumbnailService? trayThumbnailService = null,
+        ITrayThumbnailService trayThumbnailService,
+        ITextureCompressionService textureCompressionService,
+        ITextureDimensionProbe textureDimensionProbe,
         IOperationRecoveryCoordinator? operationRecoveryCoordinator = null,
-        IActionResultRepository? actionResultRepository = null,
-        ITextureCompressionService? textureCompressionService = null,
-        ITextureDimensionProbe? textureDimensionProbe = null)
+        IActionResultRepository? actionResultRepository = null)
     {
         _toolkitExecutionRunner = toolkitExecutionRunner;
         _trayPreviewRunner = trayPreviewRunner;
         _trayDependencyExportService = trayDependencyExportService;
         _trayDependencyAnalysisService = trayDependencyAnalysisService;
-        _trayThumbnailService = trayThumbnailService ?? NullTrayThumbnailService.Instance;
+        _trayThumbnailService = trayThumbnailService;
         _fileDialogService = fileDialogService;
         _confirmationDialogService = confirmationDialogService;
         _localization = localization;
@@ -135,8 +135,8 @@ public sealed class MainWindowViewModel : ObservableObject
         _planBuilder = planBuilder;
         _operationRecoveryCoordinator = operationRecoveryCoordinator;
         _actionResultRepository = actionResultRepository;
-        _textureCompressionService = textureCompressionService ?? CreateDefaultTextureCompressionService();
-        _textureDimensionProbe = textureDimensionProbe ?? new TextureDimensionProbe();
+        _textureCompressionService = textureCompressionService;
+        _textureDimensionProbe = textureDimensionProbe;
         ModPreviewWorkspace = modPreviewWorkspace;
         TrayPreviewWorkspace = trayPreviewWorkspace;
 
@@ -3564,16 +3564,6 @@ public sealed class MainWindowViewModel : ObservableObject
         _isTrayExportQueueExpanded = expanded;
         OnPropertyChanged(nameof(IsTrayExportQueueVisible));
         OnPropertyChanged(nameof(TrayExportQueueToggleText));
-    }
-
-    private static ITextureCompressionService CreateDefaultTextureCompressionService()
-    {
-        var decodeService = new CompositeTextureDecodeService(new ImageSharpPngDecoder(), new PfimDdsDecoder());
-        var pipeline = new TextureTranscodePipeline(
-            decodeService,
-            new ImageSharpResizeService(),
-            new BcnTextureEncodeService());
-        return new TextureCompressionService(decodeService, pipeline);
     }
 
     private static bool TryResolveTextureContainerKind(string sourcePath, out TextureContainerKind containerKind, out string error)

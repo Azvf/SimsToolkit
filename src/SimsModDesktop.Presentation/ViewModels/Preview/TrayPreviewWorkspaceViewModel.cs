@@ -1,11 +1,11 @@
 using System.Diagnostics;
 using SimsModDesktop.Application.Execution;
-using SimsModDesktop.Infrastructure.Dialogs;
+using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.TrayDependencyEngine;
-using SimsModDesktop.ViewModels.Infrastructure;
-using SimsModDesktop.ViewModels.Panels;
+using SimsModDesktop.Presentation.ViewModels.Infrastructure;
+using SimsModDesktop.Presentation.ViewModels.Panels;
 
-namespace SimsModDesktop.ViewModels.Preview;
+namespace SimsModDesktop.Presentation.ViewModels.Preview;
 
 public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
 {

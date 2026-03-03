@@ -1,11 +1,11 @@
 using SimsModDesktop.Application.Saves;
 using SimsModDesktop.Application.Execution;
-using SimsModDesktop.Infrastructure.Dialogs;
+using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.SaveData.Models;
-using SimsModDesktop.ViewModels.Infrastructure;
-using SimsModDesktop.ViewModels.Preview;
+using SimsModDesktop.Presentation.ViewModels.Infrastructure;
+using SimsModDesktop.Presentation.ViewModels.Preview;
 
-namespace SimsModDesktop.ViewModels.Saves;
+namespace SimsModDesktop.Presentation.ViewModels.Saves;
 
 public sealed class SaveWorkspaceViewModel : ObservableObject
 {

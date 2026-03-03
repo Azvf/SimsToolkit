@@ -2,11 +2,11 @@ using System.ComponentModel;
 using Avalonia.Threading;
 using SimsModDesktop.Application.Mods;
 using SimsModDesktop.Application.TextureCompression;
-using SimsModDesktop.Infrastructure.Dialogs;
-using SimsModDesktop.ViewModels.Infrastructure;
-using SimsModDesktop.ViewModels.Panels;
+using SimsModDesktop.Presentation.Dialogs;
+using SimsModDesktop.Presentation.ViewModels.Infrastructure;
+using SimsModDesktop.Presentation.ViewModels.Panels;
 
-namespace SimsModDesktop.ViewModels.Preview;
+namespace SimsModDesktop.Presentation.ViewModels.Preview;
 
 public sealed class ModPreviewWorkspaceViewModel : ObservableObject
 {
@@ -36,28 +36,18 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
 
     public ModPreviewWorkspaceViewModel(
         ModPreviewPanelViewModel filter,
-        IModPreviewCatalogService? legacyCatalogService = null,
-        IModItemCatalogService? catalogService = null,
-        IModItemIndexScheduler? indexScheduler = null,
-        IModPackageScanService? scanService = null,
-        IModItemInspectService? inspectService = null,
-        IModPackageTextureEditService? textureEditService = null,
-        IFileDialogService? fileDialogService = null)
+        IModItemCatalogService catalogService,
+        IModItemIndexScheduler indexScheduler,
+        IModPackageScanService scanService,
+        IModItemInspectService inspectService,
+        IModPackageTextureEditService textureEditService,
+        IFileDialogService fileDialogService)
     {
         _filter = filter;
-        _scanService = scanService ?? new ModPackageScanService();
-
-        var store = new SqliteModItemIndexStore();
-        _catalogService = catalogService ?? new SqliteModItemCatalogService(store);
-        _indexScheduler = indexScheduler ?? new ModItemIndexScheduler(
-            store,
-            new FastModItemIndexService(),
-            new DeepModItemEnrichmentService(new ModPackageTextureAnalysisService(new SqliteModPackageTextureAnalysisStore())));
-
-        var resolvedInspectService = inspectService ?? new SqliteModItemInspectService(store);
-        var resolvedTextureEditService = textureEditService ?? NullModPackageTextureEditService.Instance;
-        var resolvedFileDialog = fileDialogService ?? new NullFileDialogService();
-        Inspect = new ModItemInspectViewModel(resolvedInspectService, resolvedTextureEditService, resolvedFileDialog);
+        _scanService = scanService;
+        _catalogService = catalogService;
+        _indexScheduler = indexScheduler;
+        Inspect = new ModItemInspectViewModel(inspectService, textureEditService, fileDialogService);
 
         CatalogItems = new PatchableObservableCollection<ModItemListItemViewModel>();
         RefreshCommand = new AsyncRelayCommand(RefreshAsync, () => HasValidModsPath && !IsBusy);
@@ -648,21 +638,4 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
         return Dispatcher.UIThread.InvokeAsync(action).GetTask();
     }
 
-    private sealed class NullFileDialogService : IFileDialogService
-    {
-        public Task<IReadOnlyList<string>> PickFolderPathsAsync(string title, bool allowMultiple)
-        {
-            return Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
-        }
-
-        public Task<string?> PickFilePathAsync(string title, string fileTypeName, IReadOnlyList<string> patterns)
-        {
-            return Task.FromResult<string?>(null);
-        }
-
-        public Task<string?> PickCsvSavePathAsync(string title, string suggestedFileName)
-        {
-            return Task.FromResult<string?>(null);
-        }
-    }
 }

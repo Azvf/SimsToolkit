@@ -1,7 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Platform;
 using SimsModDesktop.Infrastructure.Windowing;
-using SimsModDesktop.ViewModels.Shell;
+using SimsModDesktop.Presentation.ViewModels.Shell;
 
 namespace SimsModDesktop.Views;
 

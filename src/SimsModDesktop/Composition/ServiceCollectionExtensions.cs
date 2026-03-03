@@ -1,8 +1,8 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SimsModDesktop.Application.Recovery;
 using SimsModDesktop.Application.ServiceRegistration;
-using SimsModDesktop.Infrastructure.Dialogs;
+using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.Infrastructure.ServiceRegistration;
 using SimsModDesktop.Infrastructure.Windowing;
 using SimsModDesktop.PackageCore;

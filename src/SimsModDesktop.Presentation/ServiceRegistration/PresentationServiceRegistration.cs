@@ -2,11 +2,11 @@ using Microsoft.Extensions.DependencyInjection;
 using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Presentation.Shell;
 using SimsModDesktop.Presentation.Services;
-using SimsModDesktop.ViewModels;
-using SimsModDesktop.ViewModels.Panels;
-using SimsModDesktop.ViewModels.Preview;
-using SimsModDesktop.ViewModels.Saves;
-using SimsModDesktop.ViewModels.Shell;
+using SimsModDesktop.Presentation.ViewModels;
+using SimsModDesktop.Presentation.ViewModels.Panels;
+using SimsModDesktop.Presentation.ViewModels.Preview;
+using SimsModDesktop.Presentation.ViewModels.Saves;
+using SimsModDesktop.Presentation.ViewModels.Shell;
 
 namespace SimsModDesktop.Presentation.ServiceRegistration;
 

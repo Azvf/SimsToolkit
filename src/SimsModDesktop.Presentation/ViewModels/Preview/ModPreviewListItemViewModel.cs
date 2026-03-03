@@ -1,6 +1,6 @@
-using SimsModDesktop.ViewModels.Infrastructure;
+using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 
-namespace SimsModDesktop.ViewModels.Preview;
+namespace SimsModDesktop.Presentation.ViewModels.Preview;
 
 public sealed class ModPreviewListItemViewModel : ObservableObject
 {

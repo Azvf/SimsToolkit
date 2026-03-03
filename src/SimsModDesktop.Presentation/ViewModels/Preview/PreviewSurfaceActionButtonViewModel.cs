@@ -1,6 +1,6 @@
 using System.Windows.Input;
 
-namespace SimsModDesktop.ViewModels.Preview;
+namespace SimsModDesktop.Presentation.ViewModels.Preview;
 
 public sealed class PreviewSurfaceActionButtonViewModel
 {

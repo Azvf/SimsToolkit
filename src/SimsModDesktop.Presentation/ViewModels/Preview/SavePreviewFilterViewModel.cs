@@ -1,6 +1,6 @@
 using SimsModDesktop.Application.Requests;
 
-namespace SimsModDesktop.ViewModels.Preview;
+namespace SimsModDesktop.Presentation.ViewModels.Preview;
 
 public sealed class SavePreviewFilterViewModel : TrayLikePreviewFilterViewModel
 {

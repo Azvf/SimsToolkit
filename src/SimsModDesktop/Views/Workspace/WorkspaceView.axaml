@@ -5,8 +5,8 @@
              xmlns:models="clr-namespace:SimsModDesktop.Models"
              xmlns:panels="clr-namespace:SimsModDesktop.Views.Panels"
              xmlns:preview="clr-namespace:SimsModDesktop.Views.Preview"
-             xmlns:panelvm="clr-namespace:SimsModDesktop.ViewModels.Panels;assembly=SimsModDesktop.Presentation"
-             xmlns:vm="clr-namespace:SimsModDesktop.ViewModels;assembly=SimsModDesktop.Presentation"
+             xmlns:panelvm="clr-namespace:SimsModDesktop.Presentation.ViewModels.Panels;assembly=SimsModDesktop.Presentation"
+             xmlns:vm="clr-namespace:SimsModDesktop.Presentation.ViewModels;assembly=SimsModDesktop.Presentation"
              mc:Ignorable="d"
              x:Class="SimsModDesktop.Views.Workspace.WorkspaceView"
              x:DataType="vm:MainWindowViewModel">

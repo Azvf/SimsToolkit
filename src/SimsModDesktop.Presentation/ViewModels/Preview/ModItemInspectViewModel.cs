@@ -3,11 +3,11 @@ using System.IO;
 using Avalonia.Media.Imaging;
 using SimsModDesktop.Application.Mods;
 using SimsModDesktop.Application.TextureCompression;
-using SimsModDesktop.Infrastructure.Dialogs;
-using SimsModDesktop.ViewModels.Infrastructure;
-using SimsModDesktop.ViewModels.Preview.Models;
+using SimsModDesktop.Presentation.Dialogs;
+using SimsModDesktop.Presentation.ViewModels.Infrastructure;
+using SimsModDesktop.Presentation.ViewModels.Preview.Models;
 
-namespace SimsModDesktop.ViewModels.Preview;
+namespace SimsModDesktop.Presentation.ViewModels.Preview;
 
 public sealed class ModItemInspectViewModel : ObservableObject
 {

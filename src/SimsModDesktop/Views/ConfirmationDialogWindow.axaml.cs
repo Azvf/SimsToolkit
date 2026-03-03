@@ -1,5 +1,5 @@
-﻿using Avalonia.Controls;
-using SimsModDesktop.Infrastructure.Dialogs;
+using Avalonia.Controls;
+using SimsModDesktop.Presentation.Dialogs;
 
 namespace SimsModDesktop.Views;
 

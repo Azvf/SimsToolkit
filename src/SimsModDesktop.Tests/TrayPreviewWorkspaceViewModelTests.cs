@@ -2,10 +2,10 @@ using Avalonia.Threading;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.TrayPreview;
-using SimsModDesktop.Infrastructure.Dialogs;
+using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.TrayDependencyEngine;
-using SimsModDesktop.ViewModels.Panels;
-using SimsModDesktop.ViewModels.Preview;
+using SimsModDesktop.Presentation.ViewModels.Panels;
+using SimsModDesktop.Presentation.ViewModels.Preview;
 
 namespace SimsModDesktop.Tests;
 

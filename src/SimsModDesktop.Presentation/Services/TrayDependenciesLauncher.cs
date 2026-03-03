@@ -1,5 +1,5 @@
-using SimsModDesktop.ViewModels;
-using SimsModDesktop.ViewModels.Panels;
+using SimsModDesktop.Presentation.ViewModels;
+using SimsModDesktop.Presentation.ViewModels.Panels;
 
 namespace SimsModDesktop.Presentation.Services;
 

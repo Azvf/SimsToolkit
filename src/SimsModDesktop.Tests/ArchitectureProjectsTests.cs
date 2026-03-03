@@ -15,15 +15,15 @@ public sealed class ArchitectureProjectsTests
     [Fact]
     public void Presentation_Contains_RuntimeViewModelTypes()
     {
-        var presentationAssembly = typeof(SimsModDesktop.ViewModels.MainWindowViewModel).Assembly;
+        var presentationAssembly = typeof(SimsModDesktop.Presentation.ViewModels.MainWindowViewModel).Assembly;
 
         Assert.Equal("SimsModDesktop.Presentation", presentationAssembly.GetName().Name);
         Assert.Contains(
             presentationAssembly.GetTypes(),
-            type => string.Equals(type.FullName, "SimsModDesktop.ViewModels.MainWindowViewModel", StringComparison.Ordinal));
+            type => string.Equals(type.FullName, "SimsModDesktop.Presentation.ViewModels.MainWindowViewModel", StringComparison.Ordinal));
         Assert.Contains(
             presentationAssembly.GetTypes(),
-            type => string.Equals(type.FullName, "SimsModDesktop.ViewModels.Shell.MainShellViewModel", StringComparison.Ordinal));
+            type => string.Equals(type.FullName, "SimsModDesktop.Presentation.ViewModels.Shell.MainShellViewModel", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -49,7 +49,7 @@ public sealed class ArchitectureProjectsTests
         var shellAssembly = Assembly.Load("SimsModDesktop");
         var invalidTypes = shellAssembly
             .GetTypes()
-            .Where(type => type.Namespace?.StartsWith("SimsModDesktop.ViewModels", StringComparison.Ordinal) == true)
+            .Where(type => type.Namespace?.StartsWith("SimsModDesktop.Presentation.ViewModels", StringComparison.Ordinal) == true)
             .Select(type => type.FullName ?? type.Name)
             .ToArray();
 

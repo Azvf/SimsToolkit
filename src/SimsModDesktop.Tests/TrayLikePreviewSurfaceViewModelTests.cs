@@ -2,7 +2,7 @@ using Avalonia.Threading;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.TrayPreview;
-using SimsModDesktop.ViewModels.Preview;
+using SimsModDesktop.Presentation.ViewModels.Preview;
 
 namespace SimsModDesktop.Tests;
 

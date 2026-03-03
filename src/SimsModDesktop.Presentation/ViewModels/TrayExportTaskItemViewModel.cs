@@ -1,6 +1,6 @@
-using SimsModDesktop.ViewModels.Infrastructure;
+using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 
-namespace SimsModDesktop.ViewModels;
+namespace SimsModDesktop.Presentation.ViewModels;
 
 public sealed class TrayExportTaskItemViewModel : ObservableObject
 {

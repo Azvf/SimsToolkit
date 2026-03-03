@@ -1,7 +1,7 @@
 using Avalonia.Platform.Storage;
 using SimsModDesktop.Infrastructure.Windowing;
 
-namespace SimsModDesktop.Infrastructure.Dialogs;
+namespace SimsModDesktop.Presentation.Dialogs;
 
 public sealed class AvaloniaFileDialogService : IFileDialogService
 {

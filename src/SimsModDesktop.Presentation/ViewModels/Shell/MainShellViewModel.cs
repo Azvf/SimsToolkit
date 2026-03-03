@@ -1,11 +1,11 @@
 using System.ComponentModel;
 using SimsModDesktop.Application.Recovery;
-using SimsModDesktop.Infrastructure.Dialogs;
+using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.Infrastructure.Settings;
-using SimsModDesktop.ViewModels.Infrastructure;
-using SimsModDesktop.ViewModels.Saves;
+using SimsModDesktop.Presentation.ViewModels.Infrastructure;
+using SimsModDesktop.Presentation.ViewModels.Saves;
 
-namespace SimsModDesktop.ViewModels.Shell;
+namespace SimsModDesktop.Presentation.ViewModels.Shell;
 
 public sealed class MainShellViewModel : ObservableObject
 {

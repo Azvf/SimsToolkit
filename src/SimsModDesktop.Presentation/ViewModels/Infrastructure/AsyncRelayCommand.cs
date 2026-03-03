@@ -1,6 +1,6 @@
 using System.Windows.Input;
 
-namespace SimsModDesktop.ViewModels.Infrastructure;
+namespace SimsModDesktop.Presentation.ViewModels.Infrastructure;
 
 public sealed class AsyncRelayCommand : ICommand
 {

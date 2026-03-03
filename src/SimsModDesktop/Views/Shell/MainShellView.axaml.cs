@@ -3,7 +3,7 @@ using Avalonia.Data.Converters;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Threading;
-using SimsModDesktop.ViewModels.Shell;
+using SimsModDesktop.Presentation.ViewModels.Shell;
 
 namespace SimsModDesktop.Views.Shell;
 

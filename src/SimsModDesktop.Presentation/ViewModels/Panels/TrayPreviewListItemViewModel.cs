@@ -1,7 +1,7 @@
 using Avalonia.Media.Imaging;
-using SimsModDesktop.ViewModels.Infrastructure;
+using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 
-namespace SimsModDesktop.ViewModels.Panels;
+namespace SimsModDesktop.Presentation.ViewModels.Panels;
 
 public sealed class TrayPreviewListItemViewModel : ObservableObject, IDisposable
 {

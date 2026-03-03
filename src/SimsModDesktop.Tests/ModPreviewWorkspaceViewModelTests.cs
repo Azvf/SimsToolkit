@@ -1,7 +1,9 @@
 using Avalonia.Threading;
 using SimsModDesktop.Application.Mods;
-using SimsModDesktop.ViewModels.Panels;
-using SimsModDesktop.ViewModels.Preview;
+using SimsModDesktop.Application.TextureCompression;
+using SimsModDesktop.Presentation.Dialogs;
+using SimsModDesktop.Presentation.ViewModels.Panels;
+using SimsModDesktop.Presentation.ViewModels.Preview;
 
 namespace SimsModDesktop.Tests;
 
@@ -18,11 +20,12 @@ public sealed class ModPreviewWorkspaceViewModelTests
 
         var workspace = new ModPreviewWorkspaceViewModel(
             filter,
-            legacyCatalogService: null,
             catalogService: new FakeCatalogService(),
             indexScheduler: new NoOpScheduler(),
             scanService: new FakeScanService(),
-            inspectService: new FakeInspectService());
+            inspectService: new FakeInspectService(),
+            textureEditService: NullModPackageTextureEditService.Instance,
+            fileDialogService: new FakeFileDialogService());
 
         await workspace.RefreshAsync();
         Dispatcher.UIThread.RunJobs(null);
@@ -113,6 +116,18 @@ public sealed class ModPreviewWorkspaceViewModelTests
         {
             return Task.FromResult<ModItemInspectDetail?>(null);
         }
+    }
+
+    private sealed class FakeFileDialogService : IFileDialogService
+    {
+        public Task<IReadOnlyList<string>> PickFolderPathsAsync(string title, bool allowMultiple)
+            => Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
+
+        public Task<string?> PickFilePathAsync(string title, string fileTypeName, IReadOnlyList<string> patterns)
+            => Task.FromResult<string?>(null);
+
+        public Task<string?> PickCsvSavePathAsync(string title, string suggestedFileName)
+            => Task.FromResult<string?>(null);
     }
 
     private sealed class TempDirectory : IDisposable

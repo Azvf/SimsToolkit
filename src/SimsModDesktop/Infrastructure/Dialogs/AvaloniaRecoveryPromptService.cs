@@ -3,7 +3,7 @@ using SimsModDesktop.Application.Recovery;
 using SimsModDesktop.Infrastructure.Windowing;
 using SimsModDesktop.Views;
 
-namespace SimsModDesktop.Infrastructure.Dialogs;
+namespace SimsModDesktop.Presentation.Dialogs;
 
 public sealed class AvaloniaRecoveryPromptService : IRecoveryPromptService
 {

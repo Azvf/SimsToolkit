@@ -59,7 +59,7 @@ public sealed class ArchitectureBoundaryTests
                 continue;
             }
 
-            if (!flattened.Namespace.StartsWith("SimsModDesktop.ViewModels.Panels", StringComparison.Ordinal))
+            if (!flattened.Namespace.StartsWith("SimsModDesktop.Presentation.ViewModels.Panels", StringComparison.Ordinal))
             {
                 continue;
             }

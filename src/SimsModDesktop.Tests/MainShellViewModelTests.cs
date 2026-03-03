@@ -1,19 +1,22 @@
 using SimsModDesktop.Application.Execution;
+using SimsModDesktop.Application.Mods;
 using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Saves;
 using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Application.TrayPreview;
-using SimsModDesktop.Infrastructure.Dialogs;
 using SimsModDesktop.Infrastructure.Localization;
 using SimsModDesktop.Infrastructure.Settings;
+using SimsModDesktop.Infrastructure.TextureCompression;
+using SimsModDesktop.Infrastructure.TextureProcessing;
+using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.SaveData.Models;
 using SimsModDesktop.TrayDependencyEngine;
-using SimsModDesktop.ViewModels;
-using SimsModDesktop.ViewModels.Panels;
-using SimsModDesktop.ViewModels.Preview;
-using SimsModDesktop.ViewModels.Shell;
-using SimsModDesktop.ViewModels.Saves;
+using SimsModDesktop.Presentation.ViewModels;
+using SimsModDesktop.Presentation.ViewModels.Panels;
+using SimsModDesktop.Presentation.ViewModels.Preview;
+using SimsModDesktop.Presentation.ViewModels.Shell;
+using SimsModDesktop.Presentation.ViewModels.Saves;
 
 namespace SimsModDesktop.Tests;
 
@@ -232,7 +235,12 @@ public sealed class MainShellViewModelTests
             trayDependencies);
         var modPreviewWorkspace = new ModPreviewWorkspaceViewModel(
             modPreview,
-            new ModPreviewCatalogService());
+            new NoOpModItemCatalogService(),
+            new NoOpModItemIndexScheduler(),
+            new NoOpModPackageScanService(),
+            new NoOpModItemInspectService(),
+            NullModPackageTextureEditService.Instance,
+            new FakeFileDialogService());
 
         return new MainWindowViewModel(
             new ToolkitExecutionRunner(new FakeExecutionCoordinator()),
@@ -258,7 +266,19 @@ public sealed class MainShellViewModelTests
             modPreview: modPreview,
             trayPreview: trayPreview,
             sharedFileOps: sharedFileOps,
-            trayThumbnailService: trayThumbnailService);
+            trayThumbnailService: trayThumbnailService,
+            textureCompressionService: CreateTextureCompressionService(),
+            textureDimensionProbe: new TextureDimensionProbe());
+    }
+
+    private static ITextureCompressionService CreateTextureCompressionService()
+    {
+        var decodeService = new CompositeTextureDecodeService(new ImageSharpPngDecoder(), new PfimDdsDecoder());
+        var pipeline = new TextureTranscodePipeline(
+            decodeService,
+            new ImageSharpResizeService(),
+            new BcnTextureEncodeService());
+        return new TextureCompressionService(decodeService, pipeline);
     }
 
     private sealed class FakeExecutionCoordinator : IExecutionCoordinator
@@ -406,6 +426,43 @@ public sealed class MainShellViewModelTests
         {
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class NoOpModItemCatalogService : IModItemCatalogService
+    {
+        public Task<ModItemCatalogPage> QueryPageAsync(ModItemCatalogQuery query, CancellationToken cancellationToken = default)
+            => Task.FromResult(new ModItemCatalogPage
+            {
+                Items = Array.Empty<ModItemListRow>(),
+                TotalItems = 0,
+                PageIndex = 1,
+                PageSize = 50,
+                TotalPages = 0
+            });
+    }
+
+    private sealed class NoOpModItemIndexScheduler : IModItemIndexScheduler
+    {
+        public event EventHandler<ModFastBatchAppliedEventArgs>? FastBatchApplied;
+        public event EventHandler<ModEnrichmentAppliedEventArgs>? EnrichmentApplied;
+        public event EventHandler? AllWorkCompleted;
+        public bool IsFastPassRunning => false;
+        public bool IsDeepPassRunning => false;
+
+        public Task QueueRefreshAsync(IReadOnlyList<string> packagePaths, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+    }
+
+    private sealed class NoOpModPackageScanService : IModPackageScanService
+    {
+        public Task<IReadOnlyList<ModPackageScanResult>> ScanAsync(string modsRoot, CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<ModPackageScanResult>>(Array.Empty<ModPackageScanResult>());
+    }
+
+    private sealed class NoOpModItemInspectService : IModItemInspectService
+    {
+        public Task<ModItemInspectDetail?> TryGetAsync(string itemKey, CancellationToken cancellationToken = default)
+            => Task.FromResult<ModItemInspectDetail?>(null);
     }
 
     private sealed class FakeAppThemeService : IAppThemeService

@@ -1,8 +1,8 @@
-﻿using Avalonia.Controls;
+using Avalonia.Controls;
 using SimsModDesktop.Infrastructure.Windowing;
 using SimsModDesktop.Views;
 
-namespace SimsModDesktop.Infrastructure.Dialogs;
+namespace SimsModDesktop.Presentation.Dialogs;
 
 public sealed class AvaloniaConfirmationDialogService : IConfirmationDialogService
 {

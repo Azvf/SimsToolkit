@@ -1,4 +1,4 @@
-using SimsModDesktop.ViewModels.Infrastructure;
+using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 
 namespace SimsModDesktop.Tests;
 

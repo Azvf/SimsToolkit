@@ -1,7 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
-namespace SimsModDesktop.ViewModels.Infrastructure;
+namespace SimsModDesktop.Presentation.ViewModels.Infrastructure;
 
 public abstract class ObservableObject : INotifyPropertyChanged
 {

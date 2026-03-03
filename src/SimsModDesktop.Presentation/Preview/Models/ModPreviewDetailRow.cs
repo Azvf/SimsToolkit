@@ -1,4 +1,4 @@
-namespace SimsModDesktop.ViewModels.Preview.Models;
+namespace SimsModDesktop.Presentation.ViewModels.Preview.Models;
 
 public sealed record ModPreviewDetailRow
 {

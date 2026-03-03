@@ -1,7 +1,7 @@
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Requests;
-using SimsModDesktop.ViewModels.Panels;
+using SimsModDesktop.Presentation.ViewModels.Panels;
 
 namespace SimsModDesktop.Tests;
 

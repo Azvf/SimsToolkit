@@ -104,6 +104,36 @@ public sealed class LegacyStructureTests
         Assert.DoesNotContain("AddSimsDesktopPresentation", publicMethodNames, StringComparer.Ordinal);
     }
 
+    [Fact]
+    public void PresentationSource_DoesNotUse_LegacyViewModelNamespaces()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var presentationRoot = Path.Combine(repositoryRoot, "src", "SimsModDesktop.Presentation");
+        var sourceFiles = Directory.EnumerateFiles(presentationRoot, "*.cs", SearchOption.AllDirectories);
+
+        foreach (var sourceFile in sourceFiles)
+        {
+            var source = File.ReadAllText(sourceFile);
+            Assert.DoesNotContain("namespace SimsModDesktop.ViewModels", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("using SimsModDesktop.ViewModels", source, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void PresentationSource_DoesNotUse_LegacyDialogNamespaces()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var presentationRoot = Path.Combine(repositoryRoot, "src", "SimsModDesktop.Presentation");
+        var sourceFiles = Directory.EnumerateFiles(presentationRoot, "*.cs", SearchOption.AllDirectories);
+
+        foreach (var sourceFile in sourceFiles)
+        {
+            var source = File.ReadAllText(sourceFile);
+            Assert.DoesNotContain("namespace SimsModDesktop.Infrastructure.Dialogs", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("using SimsModDesktop.Infrastructure.Dialogs", source, StringComparison.Ordinal);
+        }
+    }
+
     private static string FindRepositoryRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);
