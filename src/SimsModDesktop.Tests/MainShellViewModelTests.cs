@@ -186,16 +186,23 @@ public sealed class MainShellViewModelTests
             new TrayDependenciesLauncher(workspaceVm, workspaceVm.TrayDependencies, navigation),
             new FakeTrayPreviewCoordinator(),
             trayThumbnailService);
+        var settingsController = new ShellSettingsController(
+            workspaceVm,
+            savesVm,
+            fileDialog,
+            settingsStore,
+            themeService,
+            new FakePathDiscoveryService());
+        var systemOperationsController = new ShellSystemOperationsController(
+            workspaceVm,
+            new FakeGameLaunchService(),
+            cacheService ?? new FakeAppCacheMaintenanceService());
         return new MainShellViewModel(
             workspaceVm,
             savesVm,
             navigation,
-            fileDialog,
-            settingsStore,
-            themeService,
-            new FakePathDiscoveryService(),
-            new FakeGameLaunchService(),
-            cacheService ?? new FakeAppCacheMaintenanceService());
+            settingsController,
+            systemOperationsController);
     }
 
     private static MainWindowViewModel CreateWorkspaceViewModel(

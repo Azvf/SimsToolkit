@@ -12,60 +12,39 @@ public sealed class MainShellViewModel : ObservableObject
     private readonly MainWindowViewModel _workspaceVm;
     private readonly SaveWorkspaceViewModel _savesVm;
     private readonly INavigationService _navigation;
-    private readonly IFileDialogService _fileDialogService;
-    private readonly ISettingsStore _settingsStore;
-    private readonly IAppThemeService _appThemeService;
-    private readonly ITS4PathDiscoveryService _pathDiscovery;
-    private readonly IGameLaunchService _gameLaunchService;
-    private readonly IAppCacheMaintenanceService _appCacheMaintenanceService;
+    private readonly ShellSettingsController _settingsController;
+    private readonly ShellSystemOperationsController _systemOperationsController;
     private readonly IOperationRecoveryCoordinator? _operationRecoveryCoordinator;
 
     private AppSection _selectedSection = AppSection.Toolkit;
-    private bool _enableLaunchGame = true;
-    private string _requestedTheme = "Dark";
-    private string _ts4RootPath = string.Empty;
-    private string _gameExecutablePath = string.Empty;
-    private string _modsPath = string.Empty;
-    private string _trayPath = string.Empty;
-    private string _savesPath = string.Empty;
-    private string _launchGameStatus = string.Empty;
-    private string _cacheMaintenanceStatus = string.Empty;
-    private bool _isApplyingDerivedPaths;
-    private string _lastDerivedModsPath = string.Empty;
-    private string _lastDerivedTrayPath = string.Empty;
-    private string _lastDerivedSavesPath = string.Empty;
     private bool _isInitialized;
     private bool _isSidebarExpanded = true;
+
     public event EventHandler? Ts4RootFocusRequested;
 
     public MainShellViewModel(
         MainWindowViewModel workspaceVm,
         SaveWorkspaceViewModel savesVm,
         INavigationService navigation,
-        IFileDialogService fileDialogService,
-        ISettingsStore settingsStore,
-        IAppThemeService appThemeService,
-        ITS4PathDiscoveryService pathDiscovery,
-        IGameLaunchService gameLaunchService,
-        IAppCacheMaintenanceService appCacheMaintenanceService,
+        ShellSettingsController settingsController,
+        ShellSystemOperationsController systemOperationsController,
         IOperationRecoveryCoordinator? operationRecoveryCoordinator = null)
     {
         _workspaceVm = workspaceVm;
         _savesVm = savesVm;
         _navigation = navigation;
-        _fileDialogService = fileDialogService;
-        _settingsStore = settingsStore;
-        _appThemeService = appThemeService;
-        _pathDiscovery = pathDiscovery;
-        _gameLaunchService = gameLaunchService;
-        _appCacheMaintenanceService = appCacheMaintenanceService;
+        _settingsController = settingsController;
+        _systemOperationsController = systemOperationsController;
         _operationRecoveryCoordinator = operationRecoveryCoordinator;
 
         SelectSectionCommand = new RelayCommand<string>(SelectSection);
         LaunchGameCommand = new AsyncRelayCommand(LaunchGameAsync, () => CanLaunchGame);
         SetDarkThemeCommand = new RelayCommand(() => RequestedTheme = "Dark");
         SetLightThemeCommand = new RelayCommand(() => RequestedTheme = "Light");
-        BrowseTs4RootCommand = new AsyncRelayCommand(BrowseTs4RootAsync, () => !_workspaceVm.IsBusy, disableWhileRunning: false);
+        BrowseTs4RootCommand = new AsyncRelayCommand(
+            () => _settingsController.BrowseTs4RootAsync(),
+            () => !_workspaceVm.IsBusy,
+            disableWhileRunning: false);
         ClearCacheCommand = new AsyncRelayCommand(ClearCacheAsync, () => !_workspaceVm.IsBusy, disableWhileRunning: false);
         NavigateToSettingsForPathFixCommand = new RelayCommand(
             NavigateToSettingsForPathFix,
@@ -74,6 +53,8 @@ public sealed class MainShellViewModel : ObservableObject
 
         _workspaceVm.PropertyChanged += OnWorkspaceVmPropertyChanged;
         _navigation.PropertyChanged += OnNavigationPropertyChanged;
+        _settingsController.PropertyChanged += OnSettingsControllerPropertyChanged;
+        _systemOperationsController.PropertyChanged += OnSystemOperationsControllerPropertyChanged;
     }
 
     public MainWindowViewModel WorkspaceVm => _workspaceVm;
@@ -133,120 +114,54 @@ public sealed class MainShellViewModel : ObservableObject
 
     public bool EnableLaunchGame
     {
-        get => _enableLaunchGame;
-        set
-        {
-            if (!SetProperty(ref _enableLaunchGame, value))
-            {
-                return;
-            }
-
-            OnPropertyChanged(nameof(CanLaunchGame));
-            LaunchGameCommand.NotifyCanExecuteChanged();
-        }
+        get => _settingsController.EnableLaunchGame;
+        set => _settingsController.EnableLaunchGame = value;
     }
 
     public string RequestedTheme
     {
-        get => _requestedTheme;
-        set
-        {
-            if (!SetProperty(ref _requestedTheme, value))
-            {
-                return;
-            }
-
-            OnPropertyChanged(nameof(IsDarkThemeSelected));
-            OnPropertyChanged(nameof(IsLightThemeSelected));
-            ApplyTheme();
-        }
+        get => _settingsController.RequestedTheme;
+        set => _settingsController.RequestedTheme = value;
     }
 
     public string Ts4RootPath
     {
-        get => _ts4RootPath;
-        set
-        {
-            var normalized = NormalizePath(value);
-            if (!SetProperty(ref _ts4RootPath, normalized))
-            {
-                return;
-            }
-
-            OnPropertyChanged(nameof(IsDerivedPathsReadOnly));
-            ApplyDerivedPathsFromRoot();
-        }
+        get => _settingsController.Ts4RootPath;
+        set => _settingsController.Ts4RootPath = value;
     }
 
     public string GameExecutablePath
     {
-        get => _gameExecutablePath;
-        set
-        {
-            if (!SetProperty(ref _gameExecutablePath, value))
-            {
-                return;
-            }
-
-            NotifyPathHealthChanged();
-        }
+        get => _settingsController.GameExecutablePath;
+        set => _settingsController.GameExecutablePath = value;
     }
 
     public string ModsPath
     {
-        get => _modsPath;
-        set
-        {
-            if (!SetProperty(ref _modsPath, value))
-            {
-                return;
-            }
-
-            NotifyPathHealthChanged();
-            SyncWorkspacePaths();
-        }
+        get => _settingsController.ModsPath;
+        set => _settingsController.ModsPath = value;
     }
 
     public string TrayPath
     {
-        get => _trayPath;
-        set
-        {
-            if (!SetProperty(ref _trayPath, value))
-            {
-                return;
-            }
-
-            NotifyPathHealthChanged();
-            SyncWorkspacePaths();
-        }
+        get => _settingsController.TrayPath;
+        set => _settingsController.TrayPath = value;
     }
 
     public string SavesPath
     {
-        get => _savesPath;
-        set
-        {
-            if (!SetProperty(ref _savesPath, value))
-            {
-                return;
-            }
-
-            NotifyPathHealthChanged();
-            _savesVm.SavesPath = _savesPath;
-        }
+        get => _settingsController.SavesPath;
+        set => _settingsController.SavesPath = value;
     }
 
     public string LaunchGameStatus
     {
-        get => _launchGameStatus;
-        private set => SetProperty(ref _launchGameStatus, value);
+        get => _systemOperationsController.LaunchGameStatus;
     }
 
     public string CacheMaintenanceStatus
     {
-        get => _cacheMaintenanceStatus;
-        private set => SetProperty(ref _cacheMaintenanceStatus, value);
+        get => _systemOperationsController.CacheMaintenanceStatus;
     }
 
     public bool IsToolkitSectionVisible => SelectedSection == AppSection.Toolkit;
@@ -260,48 +175,31 @@ public sealed class MainShellViewModel : ObservableObject
     public bool IsSavesSectionSelected => SelectedSection == AppSection.Saves;
     public bool IsSettingsSectionSelected => SelectedSection == AppSection.Settings;
 
-    public bool HasGameExecutable => !string.IsNullOrWhiteSpace(GameExecutablePath) && File.Exists(GameExecutablePath);
-    public bool HasModsPath => !string.IsNullOrWhiteSpace(ModsPath) && Directory.Exists(ModsPath);
-    public bool HasTrayPath => !string.IsNullOrWhiteSpace(TrayPath) && Directory.Exists(TrayPath);
-    public bool HasSavesPath => !string.IsNullOrWhiteSpace(SavesPath) && Directory.Exists(SavesPath);
-    public bool HasAllCorePathsValid => HasGameExecutable && HasModsPath && HasTrayPath && HasSavesPath;
-    public bool IsPathHealthExpanded => !HasAllCorePathsValid;
-
-    public bool IsGameExecutableWarning => !string.IsNullOrWhiteSpace(GameExecutablePath) && !File.Exists(GameExecutablePath);
-    public bool IsModsPathWarning => !string.IsNullOrWhiteSpace(ModsPath) && !Directory.Exists(ModsPath);
-    public bool IsTrayPathWarning => !string.IsNullOrWhiteSpace(TrayPath) && !Directory.Exists(TrayPath);
-    public bool IsSavesPathWarning => !string.IsNullOrWhiteSpace(SavesPath) && !Directory.Exists(SavesPath);
-
-    public bool IsGameExecutableMissing => string.IsNullOrWhiteSpace(GameExecutablePath);
-    public bool IsModsPathMissing => string.IsNullOrWhiteSpace(ModsPath);
-    public bool IsTrayPathMissing => string.IsNullOrWhiteSpace(TrayPath);
-    public bool IsSavesPathMissing => string.IsNullOrWhiteSpace(SavesPath);
-
-    public string GameStatusBadgeText => ResolveStatusBadgeText(HasGameExecutable, IsGameExecutableWarning);
-    public string ModsStatusBadgeText => ResolveStatusBadgeText(HasModsPath, IsModsPathWarning);
-    public string TrayStatusBadgeText => ResolveStatusBadgeText(HasTrayPath, IsTrayPathWarning);
-    public string SavesStatusBadgeText => ResolveStatusBadgeText(HasSavesPath, IsSavesPathWarning);
-
-    public string PathHealthSummary
-    {
-        get
-        {
-            var ready = 0;
-            if (HasGameExecutable) { ready++; }
-            if (HasModsPath) { ready++; }
-            if (HasTrayPath) { ready++; }
-            if (HasSavesPath) { ready++; }
-
-            return $"{ready}/4 core paths ready";
-        }
-    }
-
-    public bool CanLaunchGame => EnableLaunchGame && HasGameExecutable;
-    public string LaunchButtonText => HasGameExecutable ? "Launch The Sims 4" : "Set Game Path First";
+    public bool HasGameExecutable => _settingsController.HasGameExecutable;
+    public bool HasModsPath => _settingsController.HasModsPath;
+    public bool HasTrayPath => _settingsController.HasTrayPath;
+    public bool HasSavesPath => _settingsController.HasSavesPath;
+    public bool HasAllCorePathsValid => _settingsController.HasAllCorePathsValid;
+    public bool IsPathHealthExpanded => _settingsController.IsPathHealthExpanded;
+    public bool IsGameExecutableWarning => _settingsController.IsGameExecutableWarning;
+    public bool IsModsPathWarning => _settingsController.IsModsPathWarning;
+    public bool IsTrayPathWarning => _settingsController.IsTrayPathWarning;
+    public bool IsSavesPathWarning => _settingsController.IsSavesPathWarning;
+    public bool IsGameExecutableMissing => _settingsController.IsGameExecutableMissing;
+    public bool IsModsPathMissing => _settingsController.IsModsPathMissing;
+    public bool IsTrayPathMissing => _settingsController.IsTrayPathMissing;
+    public bool IsSavesPathMissing => _settingsController.IsSavesPathMissing;
+    public string GameStatusBadgeText => _settingsController.GameStatusBadgeText;
+    public string ModsStatusBadgeText => _settingsController.ModsStatusBadgeText;
+    public string TrayStatusBadgeText => _settingsController.TrayStatusBadgeText;
+    public string SavesStatusBadgeText => _settingsController.SavesStatusBadgeText;
+    public string PathHealthSummary => _settingsController.PathHealthSummary;
+    public bool CanLaunchGame => _settingsController.CanLaunchGame;
+    public string LaunchButtonText => _settingsController.LaunchButtonText;
     public bool IsWorkspaceSectionVisible => IsToolkitSectionVisible || IsModsSectionVisible || IsTraySectionVisible;
-    public bool IsDerivedPathsReadOnly => !string.IsNullOrWhiteSpace(Ts4RootPath);
-    public bool IsDarkThemeSelected => string.Equals(RequestedTheme, "Dark", StringComparison.OrdinalIgnoreCase);
-    public bool IsLightThemeSelected => string.Equals(RequestedTheme, "Light", StringComparison.OrdinalIgnoreCase);
+    public bool IsDerivedPathsReadOnly => _settingsController.IsDerivedPathsReadOnly;
+    public bool IsDarkThemeSelected => _settingsController.IsDarkThemeSelected;
+    public bool IsLightThemeSelected => _settingsController.IsLightThemeSelected;
 
     public async Task InitializeAsync()
     {
@@ -311,42 +209,12 @@ public sealed class MainShellViewModel : ObservableObject
         }
 
         await _workspaceVm.InitializeAsync();
-        await LoadShellSettingsAsync();
+        await _settingsController.InitializeAsync();
 
-        var discovered = _pathDiscovery.Discover();
-
-        if (string.IsNullOrWhiteSpace(Ts4RootPath) &&
-            !string.IsNullOrWhiteSpace(discovered.Ts4RootPath))
-        {
-            Ts4RootPath = discovered.Ts4RootPath;
-        }
-
-        if (string.IsNullOrWhiteSpace(GameExecutablePath))
-        {
-            GameExecutablePath = discovered.GameExecutablePath;
-        }
-
-        if (string.IsNullOrWhiteSpace(Ts4RootPath))
-        {
-            if (string.IsNullOrWhiteSpace(ModsPath))
-            {
-                ModsPath = discovered.ModsPath;
-            }
-
-            if (string.IsNullOrWhiteSpace(TrayPath))
-            {
-                TrayPath = discovered.TrayPath;
-            }
-
-            if (string.IsNullOrWhiteSpace(SavesPath))
-            {
-                SavesPath = discovered.SavesPath;
-            }
-        }
-
-        ApplyTheme();
+        _navigation.SelectSection(AppSection.Toolkit);
+        SelectedSection = _navigation.SelectedSection;
         ApplyNavigationToWorkspace();
-        SyncWorkspacePaths();
+
         if (_operationRecoveryCoordinator is not null)
         {
             await _operationRecoveryCoordinator.InitializeAndPromptAsync(_workspaceVm.ResumeRecoverableOperationAsync);
@@ -358,53 +226,7 @@ public sealed class MainShellViewModel : ObservableObject
     public async Task PersistSettingsAsync()
     {
         await _workspaceVm.PersistSettingsAsync();
-
-        var settings = await _settingsStore.LoadAsync();
-        settings.Navigation = new AppSettings.NavigationSettings
-        {
-            SelectedSection = SelectedSection
-        };
-        settings.FeatureFlags = new AppSettings.FeatureFlagsSettings
-        {
-            EnableLaunchGame = EnableLaunchGame
-        };
-        settings.GameLaunch = new AppSettings.GameLaunchSettings
-        {
-            Ts4RootPath = Ts4RootPath,
-            GameExecutablePath = GameExecutablePath,
-            ModsPath = ModsPath,
-            TrayPath = TrayPath,
-            SavesPath = SavesPath
-        };
-        settings.Theme = new AppSettings.ThemeSettings
-        {
-            RequestedTheme = RequestedTheme
-        };
-        settings.Saves = SavesVm.ToSettings();
-
-        await _settingsStore.SaveAsync(settings);
-    }
-
-    private async Task LoadShellSettingsAsync()
-    {
-        var settings = await _settingsStore.LoadAsync();
-        EnableLaunchGame = settings.FeatureFlags.EnableLaunchGame;
-        RequestedTheme = _appThemeService.Normalize(settings.Theme.RequestedTheme);
-        SavesVm.LoadFromSettings(settings.Saves ?? new AppSettings.SavesSettings());
-        GameExecutablePath = settings.GameLaunch.GameExecutablePath;
-        ModsPath = settings.GameLaunch.ModsPath;
-        TrayPath = settings.GameLaunch.TrayPath;
-        SavesPath = settings.GameLaunch.SavesPath;
-        Ts4RootPath = settings.GameLaunch.Ts4RootPath;
-
-        _navigation.SelectSection(AppSection.Toolkit);
-
-        SelectedSection = _navigation.SelectedSection;
-    }
-
-    private void ApplyTheme()
-    {
-        _appThemeService.Apply(RequestedTheme);
+        await _settingsController.PersistAsync(SelectedSection);
     }
 
     private void ToggleSidebar()
@@ -444,22 +266,15 @@ public sealed class MainShellViewModel : ObservableObject
                 break;
         }
 
-        SyncWorkspacePaths();
+        _workspaceVm.ModPreview.ModsRoot = ModsPath;
+        _workspaceVm.TrayPreview.TrayRoot = TrayPath;
+        _workspaceVm.TrayDependencies.TrayPath = TrayPath;
+        _workspaceVm.TrayDependencies.ModsPath = ModsPath;
     }
 
     private async Task LaunchGameAsync()
     {
-        var request = new LaunchGameRequest
-        {
-            ExecutablePath = GameExecutablePath,
-            WorkingDirectory = string.IsNullOrWhiteSpace(GameExecutablePath)
-                ? null
-                : Path.GetDirectoryName(GameExecutablePath)
-        };
-
-        var result = _gameLaunchService.Launch(request);
-        LaunchGameStatus = result.Message;
-        await Task.CompletedTask;
+        await _systemOperationsController.LaunchGameAsync(GameExecutablePath);
     }
 
     private void OnWorkspaceVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -471,18 +286,6 @@ public sealed class MainShellViewModel : ObservableObject
 
         BrowseTs4RootCommand.NotifyCanExecuteChanged();
         ClearCacheCommand.NotifyCanExecuteChanged();
-    }
-
-    private async Task BrowseTs4RootAsync()
-    {
-        var selectedPaths = await _fileDialogService.PickFolderPathsAsync("Select The Sims 4 Root", allowMultiple: false);
-        var selectedPath = selectedPaths.FirstOrDefault();
-        if (string.IsNullOrWhiteSpace(selectedPath))
-        {
-            return;
-        }
-
-        Ts4RootPath = selectedPath;
     }
 
     private void NavigateToSettingsForPathFix()
@@ -498,18 +301,7 @@ public sealed class MainShellViewModel : ObservableObject
 
     private async Task ClearCacheAsync()
     {
-        CacheMaintenanceStatus = "Clearing disk cache...";
-        var result = await _appCacheMaintenanceService.ClearAsync();
-        if (result.Success)
-        {
-            _workspaceVm.TrayPreviewWorkspace.ResetAfterCacheClear();
-            if (SelectedSection == AppSection.Tray)
-            {
-                await _workspaceVm.TrayPreviewWorkspace.EnsureLoadedAsync(forceReload: true);
-            }
-        }
-
-        CacheMaintenanceStatus = result.Message;
+        await _systemOperationsController.ClearCacheAsync(SelectedSection == AppSection.Tray);
     }
 
     private void OnNavigationPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -521,112 +313,31 @@ public sealed class MainShellViewModel : ObservableObject
         }
     }
 
-
-    private void ApplyDerivedPathsFromRoot()
+    private void OnSettingsControllerPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (_isApplyingDerivedPaths)
+        if (string.IsNullOrWhiteSpace(e.PropertyName))
         {
             return;
         }
 
-        _isApplyingDerivedPaths = true;
-        try
+        OnPropertyChanged(e.PropertyName);
+
+        if (string.Equals(e.PropertyName, nameof(CanLaunchGame), StringComparison.Ordinal))
         {
-            if (string.IsNullOrWhiteSpace(Ts4RootPath))
-            {
-                if (PathEquals(ModsPath, _lastDerivedModsPath))
-                {
-                    ModsPath = string.Empty;
-                }
-
-                if (PathEquals(TrayPath, _lastDerivedTrayPath))
-                {
-                    TrayPath = string.Empty;
-                }
-
-                if (PathEquals(SavesPath, _lastDerivedSavesPath))
-                {
-                    SavesPath = string.Empty;
-                }
-
-                _lastDerivedModsPath = string.Empty;
-                _lastDerivedTrayPath = string.Empty;
-                _lastDerivedSavesPath = string.Empty;
-                return;
-            }
-
-            _lastDerivedModsPath = Path.Combine(Ts4RootPath, "Mods");
-            _lastDerivedTrayPath = Path.Combine(Ts4RootPath, "Tray");
-            _lastDerivedSavesPath = Path.Combine(Ts4RootPath, "saves");
-
-            ModsPath = _lastDerivedModsPath;
-            TrayPath = _lastDerivedTrayPath;
-            SavesPath = _lastDerivedSavesPath;
+            LaunchGameCommand.NotifyCanExecuteChanged();
         }
-        finally
+
+        if (string.Equals(e.PropertyName, nameof(HasAllCorePathsValid), StringComparison.Ordinal))
         {
-            _isApplyingDerivedPaths = false;
+            NavigateToSettingsForPathFixCommand.NotifyCanExecuteChanged();
         }
     }
 
-    private void NotifyPathHealthChanged()
+    private void OnSystemOperationsControllerPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        OnPropertyChanged(nameof(HasGameExecutable));
-        OnPropertyChanged(nameof(HasModsPath));
-        OnPropertyChanged(nameof(HasTrayPath));
-        OnPropertyChanged(nameof(HasSavesPath));
-        OnPropertyChanged(nameof(HasAllCorePathsValid));
-        OnPropertyChanged(nameof(IsPathHealthExpanded));
-        OnPropertyChanged(nameof(IsGameExecutableWarning));
-        OnPropertyChanged(nameof(IsModsPathWarning));
-        OnPropertyChanged(nameof(IsTrayPathWarning));
-        OnPropertyChanged(nameof(IsSavesPathWarning));
-        OnPropertyChanged(nameof(IsGameExecutableMissing));
-        OnPropertyChanged(nameof(IsModsPathMissing));
-        OnPropertyChanged(nameof(IsTrayPathMissing));
-        OnPropertyChanged(nameof(IsSavesPathMissing));
-        OnPropertyChanged(nameof(GameStatusBadgeText));
-        OnPropertyChanged(nameof(ModsStatusBadgeText));
-        OnPropertyChanged(nameof(TrayStatusBadgeText));
-        OnPropertyChanged(nameof(SavesStatusBadgeText));
-        OnPropertyChanged(nameof(PathHealthSummary));
-        OnPropertyChanged(nameof(CanLaunchGame));
-        OnPropertyChanged(nameof(LaunchButtonText));
-        LaunchGameCommand.NotifyCanExecuteChanged();
-        NavigateToSettingsForPathFixCommand.NotifyCanExecuteChanged();
-    }
-
-    private void SyncWorkspacePaths()
-    {
-        _workspaceVm.ModPreview.ModsRoot = ModsPath;
-        _workspaceVm.TrayPreview.TrayRoot = TrayPath;
-        _workspaceVm.TrayDependencies.TrayPath = TrayPath;
-        _workspaceVm.TrayDependencies.ModsPath = ModsPath;
-    }
-
-    private static string NormalizePath(string? value)
-    {
-        return string.IsNullOrWhiteSpace(value)
-            ? string.Empty
-            : value.Trim().Trim('"');
-    }
-
-    private static string ResolveStatusBadgeText(bool isReady, bool isWarning)
-    {
-        if (isReady)
+        if (!string.IsNullOrWhiteSpace(e.PropertyName))
         {
-            return "Ready";
+            OnPropertyChanged(e.PropertyName);
         }
-
-        return isWarning ? "Check" : "Missing";
-    }
-
-    private static bool PathEquals(string? left, string? right)
-    {
-        return string.Equals(
-            NormalizePath(left),
-            NormalizePath(right),
-            StringComparison.OrdinalIgnoreCase);
     }
 }
-

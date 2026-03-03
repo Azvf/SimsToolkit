@@ -19,6 +19,8 @@ public static class PresentationServiceRegistration
         services.AddSingleton<ShellNavigationState>();
         services.AddSingleton<INavigationService, NavigationService>();
         services.AddSingleton<ITrayDependenciesLauncher, TrayDependenciesLauncher>();
+        services.AddSingleton<ShellSettingsController>();
+        services.AddSingleton<ShellSystemOperationsController>();
 
         services.AddSingleton<OrganizePanelViewModel>();
         services.AddSingleton<TextureCompressPanelViewModel>();
