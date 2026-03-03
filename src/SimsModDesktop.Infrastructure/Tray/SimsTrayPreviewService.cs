@@ -64,8 +64,8 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         TrayMetadataIndexStore? metadataIndexStore)
     {
         _metadataIndexStore = metadataIndexStore ?? new TrayMetadataIndexStore();
-        _trayThumbnailService = trayThumbnailService ?? NullTrayThumbnailService.Instance;
-        _trayMetadataService = trayMetadataService ?? NullTrayMetadataService.Instance;
+        _trayThumbnailService = trayThumbnailService ?? new TrayThumbnailService();
+        _trayMetadataService = trayMetadataService ?? new TrayMetadataService();
     }
 
     public Task<SimsTrayPreviewSummary> BuildSummaryAsync(
