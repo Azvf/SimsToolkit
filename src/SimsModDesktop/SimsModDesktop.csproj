@@ -40,6 +40,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SimsModDesktop.Application\SimsModDesktop.Application.csproj" />
+    <ProjectReference Include="..\SimsModDesktop.Infrastructure\SimsModDesktop.Infrastructure.csproj" />
     <ProjectReference Include="..\SimsModDesktop.PackageCore\SimsModDesktop.PackageCore.csproj" />
     <ProjectReference Include="..\SimsModDesktop.Presentation\SimsModDesktop.Presentation.csproj" />
     <ProjectReference Include="..\SimsModDesktop.TrayDependencyEngine\SimsModDesktop.TrayDependencyEngine.csproj" />
