@@ -1,3 +1,5 @@
+using SimsModDesktop.Application.TextureCompression;
+
 namespace SimsModDesktop.Infrastructure.TextureProcessing;
 
 public sealed class TextureTranscodeResult

@@ -13,5 +13,6 @@
   <ItemGroup>
     <ProjectReference Include="..\SimsModDesktop.PackageCore\SimsModDesktop.PackageCore.csproj" />
     <ProjectReference Include="..\SimsModDesktop.SaveData\SimsModDesktop.SaveData.csproj" />
+    <ProjectReference Include="..\SimsModDesktop.TrayDependencyEngine\SimsModDesktop.TrayDependencyEngine.csproj" />
   </ItemGroup>
 </Project>

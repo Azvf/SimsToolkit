@@ -1,3 +1,4 @@
+using SimsModDesktop.Application.TextureCompression;
 using BCnEncoder.Encoder;
 using BCnEncoder.ImageSharp;
 using BCnEncoder.Shared;

@@ -1,5 +1,3 @@
-using SimsModDesktop.Infrastructure.TextureProcessing;
-
 namespace SimsModDesktop.Application.TextureCompression;
 
 public sealed class TextureCompressionFileRequest
