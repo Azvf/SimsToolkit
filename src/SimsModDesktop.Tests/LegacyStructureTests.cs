@@ -22,6 +22,26 @@ public sealed class LegacyStructureTests
             $"Legacy services folder should not exist: {legacyServicesPath}");
     }
 
+    [Fact]
+    public void DuplicateShellProjectFolder_DoesNotExist()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var duplicateShellProjectPath = Path.Combine(repositoryRoot, "src", "SimsModDesktop.App");
+        Assert.False(
+            Directory.Exists(duplicateShellProjectPath),
+            $"Duplicate shell project folder should not exist: {duplicateShellProjectPath}");
+    }
+
+    [Fact]
+    public void Solution_DoesNotContain_DuplicateShellProject()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var solutionPath = Path.Combine(repositoryRoot, "SimsDesktopTools.sln");
+        var solutionContents = File.ReadAllText(solutionPath);
+
+        Assert.DoesNotContain(@"""SimsModDesktop.App"", ""src\SimsModDesktop.App\SimsModDesktop.App.csproj""", solutionContents, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);

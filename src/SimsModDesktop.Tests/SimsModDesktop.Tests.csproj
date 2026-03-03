@@ -20,7 +20,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\SimsModDesktop.App\SimsModDesktop.App.csproj" />
     <ProjectReference Include="..\SimsModDesktop.Application\SimsModDesktop.Application.csproj" />
     <ProjectReference Include="..\SimsModDesktop.PackageCore\SimsModDesktop.PackageCore.csproj" />
     <ProjectReference Include="..\SimsModDesktop.Presentation\SimsModDesktop.Presentation.csproj" />

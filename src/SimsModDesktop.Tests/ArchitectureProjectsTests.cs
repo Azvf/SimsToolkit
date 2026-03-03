@@ -21,10 +21,10 @@ public sealed class ArchitectureProjectsTests
     }
 
     [Fact]
-    public void App_Contains_No_UseCase_Or_Repository_Types()
+    public void DesktopShell_Contains_No_UseCase_Or_Repository_Types()
     {
-        var appAssembly = Assembly.Load("SimsModDesktop.App");
-        var invalidTypes = appAssembly
+        var shellAssembly = Assembly.Load("SimsModDesktop");
+        var invalidTypes = shellAssembly
             .GetTypes()
             .Where(type =>
                 (type.Namespace?.Contains(".UseCases", StringComparison.Ordinal) ?? false) ||
@@ -34,7 +34,7 @@ public sealed class ArchitectureProjectsTests
 
         Assert.True(
             invalidTypes.Length == 0,
-            "App assembly should not define use case or repository types:" + Environment.NewLine + string.Join(Environment.NewLine, invalidTypes));
+            "Desktop shell assembly should not define use case or repository types:" + Environment.NewLine + string.Join(Environment.NewLine, invalidTypes));
     }
 
     [Fact]

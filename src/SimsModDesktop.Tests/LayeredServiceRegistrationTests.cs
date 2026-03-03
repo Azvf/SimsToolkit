@@ -40,13 +40,13 @@ public sealed class LayeredServiceRegistrationTests
     }
 
     [Fact]
-    public void AppRegistration_ComposesLayeredRegistrations()
+    public void DesktopShellRegistration_ComposesLayeredRegistrations()
     {
         var services = new ServiceCollection();
-        var registrationType = Type.GetType("SimsModDesktop.App.AppServiceRegistration, SimsModDesktop.App");
+        var registrationType = Type.GetType("SimsModDesktop.Composition.ServiceCollectionExtensions, SimsModDesktop");
         Assert.NotNull(registrationType);
 
-        var registerMethod = registrationType!.GetMethod("AddSimsModDesktopApp");
+        var registerMethod = registrationType!.GetMethod("AddSimsDesktopShell");
         Assert.NotNull(registerMethod);
 
         _ = registerMethod!.Invoke(null, [services]);
