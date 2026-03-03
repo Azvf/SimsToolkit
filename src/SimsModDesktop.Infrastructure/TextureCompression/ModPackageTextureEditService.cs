@@ -2,10 +2,10 @@ using System.Buffers.Binary;
 using System.IO;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
-using SimsModDesktop.Infrastructure.TextureProcessing;
+using SimsModDesktop.Application.TextureProcessing;
 using SimsModDesktop.PackageCore;
 
-namespace SimsModDesktop.Application.TextureCompression;
+namespace SimsModDesktop.Infrastructure.TextureCompression;
 
 public sealed class ModPackageTextureEditService : IModPackageTextureEditService
 {

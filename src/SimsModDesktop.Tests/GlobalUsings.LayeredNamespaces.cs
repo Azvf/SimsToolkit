@@ -1,0 +1,16 @@
+global using SimsModDesktop.Application.Models;
+global using SimsModDesktop.Application.Execution;
+global using SimsModDesktop.Application.Mods;
+global using SimsModDesktop.Application.Services;
+global using SimsModDesktop.Application.TextureCompression;
+global using SimsModDesktop.Application.TextureProcessing;
+global using SimsModDesktop.Application.TrayPreview;
+global using SimsModDesktop.Presentation.Models;
+global using SimsModDesktop.Infrastructure.Configuration;
+global using SimsModDesktop.Infrastructure.Execution;
+global using SimsModDesktop.Infrastructure.Mods;
+global using SimsModDesktop.Infrastructure.Saves;
+global using SimsModDesktop.Infrastructure.Services;
+global using SimsModDesktop.Infrastructure.TextureCompression;
+global using SimsModDesktop.Infrastructure.Tray;
+global using SimsModDesktop.Presentation.Services;

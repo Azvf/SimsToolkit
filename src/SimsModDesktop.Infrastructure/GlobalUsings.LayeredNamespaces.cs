@@ -1,0 +1,9 @@
+global using SimsModDesktop.Application.Configuration;
+global using SimsModDesktop.Application.Execution;
+global using SimsModDesktop.Application.Models;
+global using SimsModDesktop.Application.Mods;
+global using SimsModDesktop.Application.Saves;
+global using SimsModDesktop.Application.Services;
+global using SimsModDesktop.Application.TextureCompression;
+global using SimsModDesktop.Application.TextureProcessing;
+global using SimsModDesktop.Application.TrayPreview;

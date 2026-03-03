@@ -237,7 +237,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         LogText = string.Join(Environment.NewLine, messages);
     }
 
-    private static string BuildExportDirectoryName(SimsModDesktop.Models.SimsTrayPreviewItem item)
+    private static string BuildExportDirectoryName(SimsModDesktop.Application.Models.SimsTrayPreviewItem item)
     {
         var baseName = string.IsNullOrWhiteSpace(item.DisplayTitle) ? "TrayItem" : item.DisplayTitle.Trim();
         var sanitized = string.Concat(baseName.Select(ch => Path.GetInvalidFileNameChars().Contains(ch) ? '_' : ch));

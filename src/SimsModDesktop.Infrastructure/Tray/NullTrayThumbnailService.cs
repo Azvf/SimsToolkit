@@ -1,6 +1,6 @@
 using SimsModDesktop.Models;
 
-namespace SimsModDesktop.Services;
+namespace SimsModDesktop.Infrastructure.Tray;
 
 public sealed class NullTrayThumbnailService : ITrayThumbnailService
 {

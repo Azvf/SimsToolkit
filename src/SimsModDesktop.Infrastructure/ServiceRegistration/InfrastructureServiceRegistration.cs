@@ -9,11 +9,16 @@ using SimsModDesktop.Application.Services;
 using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Application.UseCases;
+using SimsModDesktop.Infrastructure.Configuration;
+using SimsModDesktop.Infrastructure.Execution;
+using SimsModDesktop.Infrastructure.Mods;
+using SimsModDesktop.Infrastructure.Saves;
 using SimsModDesktop.Infrastructure.Services;
-using SimsModDesktop.Infrastructure.UseCases;
+using SimsModDesktop.Infrastructure.TextureCompression;
 using SimsModDesktop.Infrastructure.TextureProcessing;
+using SimsModDesktop.Infrastructure.Tray;
+using SimsModDesktop.Infrastructure.UseCases;
 using SimsModDesktop.SaveData.Services;
-using SimsModDesktop.Services;
 
 namespace SimsModDesktop.Infrastructure.ServiceRegistration;
 

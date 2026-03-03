@@ -1,0 +1,1 @@
+namespace SimsModDesktop.Models;

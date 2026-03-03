@@ -1,8 +1,9 @@
 using System.Diagnostics;
 using SimsModDesktop.Application.Cli;
+using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Models;
 
-namespace SimsModDesktop.Services;
+namespace SimsModDesktop.Infrastructure.Execution;
 
 public sealed class SimsPowerShellRunner : ISimsPowerShellRunner
 {

@@ -1,4 +1,4 @@
-namespace SimsModDesktop.Models;
+namespace SimsModDesktop.Application.Models;
 
 public sealed record ModPreviewCatalogItem
 {

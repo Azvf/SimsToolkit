@@ -1,6 +1,6 @@
 using SimsModDesktop.Models;
 
-namespace SimsModDesktop.Services;
+namespace SimsModDesktop.Infrastructure.Services;
 
 public sealed class TS4PathDiscoveryService : ITS4PathDiscoveryService
 {

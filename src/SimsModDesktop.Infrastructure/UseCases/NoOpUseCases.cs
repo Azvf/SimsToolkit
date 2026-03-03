@@ -82,6 +82,8 @@ public sealed class NoOpLoadSaveCatalogUseCase : ILoadSaveCatalogUseCase
 
 public sealed class NoOpLaunchGameUseCase : ILaunchGameUseCase
 {
-    public Task<LaunchGameResult> ExecuteAsync(LaunchGameRequest request, CancellationToken cancellationToken = default)
-        => Task.FromResult(new LaunchGameResult());
+    public Task<SimsModDesktop.Application.UseCases.LaunchGameResult> ExecuteAsync(
+        SimsModDesktop.Application.UseCases.LaunchGameRequest request,
+        CancellationToken cancellationToken = default)
+        => Task.FromResult(new SimsModDesktop.Application.UseCases.LaunchGameResult());
 }

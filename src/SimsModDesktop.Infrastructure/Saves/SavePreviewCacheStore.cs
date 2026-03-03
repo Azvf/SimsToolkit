@@ -4,7 +4,7 @@ using System.Text.Json;
 using Dapper;
 using SimsModDesktop.Infrastructure.Persistence;
 
-namespace SimsModDesktop.Application.Saves;
+namespace SimsModDesktop.Infrastructure.Saves;
 
 public sealed class SavePreviewCacheStore : ISavePreviewCacheStore
 {

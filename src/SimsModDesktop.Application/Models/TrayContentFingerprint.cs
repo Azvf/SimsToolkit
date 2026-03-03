@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace SimsModDesktop.Models;
+namespace SimsModDesktop.Application.Models;
 
 internal static class TrayContentFingerprint
 {

@@ -4,7 +4,7 @@ using Dapper;
 using SimsModDesktop.Infrastructure.Persistence;
 using SimsModDesktop.Models;
 
-namespace SimsModDesktop.Services;
+namespace SimsModDesktop.Infrastructure.Tray;
 
 public sealed class TrayThumbnailCacheStore
 {

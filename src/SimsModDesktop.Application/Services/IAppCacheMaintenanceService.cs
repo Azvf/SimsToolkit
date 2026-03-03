@@ -1,4 +1,4 @@
-namespace SimsModDesktop.Services;
+namespace SimsModDesktop.Application.Services;
 
 public interface IAppCacheMaintenanceService
 {

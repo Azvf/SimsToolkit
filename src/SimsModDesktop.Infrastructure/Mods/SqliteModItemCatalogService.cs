@@ -1,4 +1,4 @@
-namespace SimsModDesktop.Application.Mods;
+namespace SimsModDesktop.Infrastructure.Mods;
 
 public sealed class SqliteModItemCatalogService : IModItemCatalogService
 {

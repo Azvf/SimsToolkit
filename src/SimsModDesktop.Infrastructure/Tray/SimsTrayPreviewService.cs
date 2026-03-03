@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Text.RegularExpressions;
 using SimsModDesktop.Models;
 
-namespace SimsModDesktop.Services;
+namespace SimsModDesktop.Infrastructure.Tray;
 
 public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
 {

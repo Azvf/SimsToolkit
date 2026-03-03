@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using SimsModDesktop.Models;
 
-namespace SimsModDesktop.Services;
+namespace SimsModDesktop.Infrastructure.Services;
 
 public sealed class GameLaunchService : IGameLaunchService
 {

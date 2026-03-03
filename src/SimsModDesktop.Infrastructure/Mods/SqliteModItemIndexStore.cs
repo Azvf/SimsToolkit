@@ -2,7 +2,7 @@ using Dapper;
 using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Infrastructure.Persistence;
 
-namespace SimsModDesktop.Application.Mods;
+namespace SimsModDesktop.Infrastructure.Mods;
 
 public sealed class SqliteModItemIndexStore : IModItemIndexStore
 {

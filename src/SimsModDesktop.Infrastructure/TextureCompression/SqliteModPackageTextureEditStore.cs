@@ -1,7 +1,7 @@
 using Dapper;
 using SimsModDesktop.Infrastructure.Persistence;
 
-namespace SimsModDesktop.Application.TextureCompression;
+namespace SimsModDesktop.Infrastructure.TextureCompression;
 
 public sealed class SqliteModPackageTextureEditStore : IModPackageTextureEditStore
 {

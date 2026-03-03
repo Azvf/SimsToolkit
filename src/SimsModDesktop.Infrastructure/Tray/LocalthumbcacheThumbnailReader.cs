@@ -1,7 +1,7 @@
 using System.Globalization;
 using SimsModDesktop.PackageCore;
 
-namespace SimsModDesktop.Services;
+namespace SimsModDesktop.Infrastructure.Tray;
 
 public sealed class LocalthumbcacheThumbnailReader
 {

@@ -1,6 +1,6 @@
 using SimsModDesktop.Application.TextureCompression;
 
-namespace SimsModDesktop.Infrastructure.TextureProcessing;
+namespace SimsModDesktop.Application.TextureProcessing;
 
 public sealed class TextureTranscodeResult
 {

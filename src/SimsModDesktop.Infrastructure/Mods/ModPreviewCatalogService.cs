@@ -1,7 +1,7 @@
 using SimsModDesktop.Models;
 using System.Threading.Channels;
 
-namespace SimsModDesktop.Services;
+namespace SimsModDesktop.Infrastructure.Mods;
 
 public sealed class ModPreviewCatalogService : IModPreviewCatalogService, IDisposable
 {

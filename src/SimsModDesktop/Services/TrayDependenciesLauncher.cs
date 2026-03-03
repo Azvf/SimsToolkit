@@ -38,7 +38,7 @@ public sealed class TrayDependenciesLauncher : ITrayDependenciesLauncher
 
         _trayDependencies.TrayPath = Path.GetFullPath(trayRootPath.Trim());
         _trayDependencies.TrayItemKey = trayItemKey.Trim();
-        _navigation.SelectSection(Models.AppSection.Mods);
+        _navigation.SelectSection(SimsModDesktop.Application.Models.AppSection.Mods);
         await _workspaceVm.RunTrayDependenciesForTrayItemAsync(_trayDependencies.TrayPath, _trayDependencies.TrayItemKey);
     }
 }

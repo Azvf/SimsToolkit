@@ -1,4 +1,4 @@
-namespace SimsModDesktop.Infrastructure.TextureProcessing;
+namespace SimsModDesktop.Application.TextureProcessing;
 
 public enum TextureColorSpaceHint
 {

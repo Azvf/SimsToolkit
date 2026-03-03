@@ -1,9 +1,9 @@
+using SimsModDesktop.Application.Services;
 using SimsModDesktop.Models;
 using SimsModDesktop.SaveData.Models;
 using SimsModDesktop.SaveData.Services;
-using SimsModDesktop.Services;
 
-namespace SimsModDesktop.Application.Saves;
+namespace SimsModDesktop.Infrastructure.Saves;
 
 public sealed class SaveHouseholdCoordinator : ISaveHouseholdCoordinator
 {

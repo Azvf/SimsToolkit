@@ -4,7 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using SimsModDesktop.Application.Execution;
 
-namespace SimsModDesktop.Application.Configuration;
+namespace SimsModDesktop.Infrastructure.Configuration;
 
 /// <summary>
 /// 跨平台配置提供器实现，包含线程安全缓存和落盘持久化。

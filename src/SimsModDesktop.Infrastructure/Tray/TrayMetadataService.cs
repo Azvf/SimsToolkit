@@ -3,7 +3,7 @@ using System.Globalization;
 using System.Text;
 using SimsModDesktop.Models;
 
-namespace SimsModDesktop.Services;
+namespace SimsModDesktop.Infrastructure.Tray;
 
 public sealed class TrayMetadataService : ITrayMetadataService
 {

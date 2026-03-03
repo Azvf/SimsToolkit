@@ -2,7 +2,7 @@ using Dapper;
 using SimsModDesktop.Infrastructure.Persistence;
 using System.Text.Json;
 
-namespace SimsModDesktop.Application.TextureCompression;
+namespace SimsModDesktop.Infrastructure.TextureCompression;
 
 public sealed class SqliteModPackageTextureAnalysisStore : IModPackageTextureAnalysisStore
 {

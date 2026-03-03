@@ -1,4 +1,4 @@
-namespace SimsModDesktop.Services;
+namespace SimsModDesktop.Presentation.Services;
 
 public interface ITrayDependenciesLauncher
 {

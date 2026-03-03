@@ -1,6 +1,6 @@
 using SimsModDesktop.PackageCore;
 
-namespace SimsModDesktop.Infrastructure.TextureProcessing;
+namespace SimsModDesktop.Application.TextureProcessing;
 
 public sealed class TextureSourceDescriptor
 {

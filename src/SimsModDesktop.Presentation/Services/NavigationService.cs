@@ -1,7 +1,7 @@
 using System.ComponentModel;
 using SimsModDesktop.Models;
 
-namespace SimsModDesktop.Services;
+namespace SimsModDesktop.Presentation.Services;
 
 public sealed class NavigationService : INavigationService
 {

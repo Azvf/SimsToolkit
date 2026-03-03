@@ -1,7 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using SimsModDesktop.Presentation.Shell;
 using SimsModDesktop.Presentation.Workspaces;
-using SimsModDesktop.Services;
+using SimsModDesktop.Presentation.Services;
 
 namespace SimsModDesktop.Presentation.ServiceRegistration;
 

@@ -1,4 +1,4 @@
-namespace SimsModDesktop.Services;
+namespace SimsModDesktop.Infrastructure.Tray;
 
 public sealed class ExtractedTrayImage
 {

@@ -1,6 +1,6 @@
 using SimsModDesktop.Models;
 
-namespace SimsModDesktop.Services;
+namespace SimsModDesktop.Application.Mods;
 
 public interface IModPreviewCatalogService
 {

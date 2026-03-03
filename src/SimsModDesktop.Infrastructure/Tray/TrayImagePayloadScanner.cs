@@ -1,6 +1,6 @@
 using System.Buffers.Binary;
 
-namespace SimsModDesktop.Services;
+namespace SimsModDesktop.Infrastructure.Tray;
 
 public static class TrayImagePayloadScanner
 {

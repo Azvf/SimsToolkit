@@ -1,6 +1,6 @@
 using SkiaSharp;
 
-namespace SimsModDesktop.Services;
+namespace SimsModDesktop.Infrastructure.Tray;
 
 public static class TrayImageCodec
 {

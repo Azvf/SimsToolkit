@@ -1,4 +1,4 @@
-using SimsModDesktop.Infrastructure.TextureProcessing;
+using SimsModDesktop.Application.TextureProcessing;
 
 namespace SimsModDesktop.Application.TextureCompression;
 

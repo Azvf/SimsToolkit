@@ -1,4 +1,4 @@
-namespace SimsModDesktop.Services;
+namespace SimsModDesktop.Infrastructure.Services;
 
 public sealed class AppCacheMaintenanceService : IAppCacheMaintenanceService
 {
