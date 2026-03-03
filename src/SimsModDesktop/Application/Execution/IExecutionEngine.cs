@@ -181,19 +181,6 @@ public enum TransformationMode
 }
 
 /// <summary>
-/// 冲突解决策略
-/// </summary>
-public enum ConflictResolutionStrategy
-{
-    Prompt,       // 提示用户
-    Skip,         // 跳过冲突
-    Overwrite,    // 覆盖旧文件
-    KeepNewer,    // 保留较新文件
-    KeepOlder,    // 保留较旧文件
-    HashCompare   // 哈希比对后决定
-}
-
-/// <summary>
 /// 分析模式
 /// </summary>
 public enum AnalysisMode
