@@ -1,4 +1,4 @@
-﻿<UserControl xmlns="https://github.com/avaloniaui"
+<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -12,16 +12,16 @@
              x:DataType="vm:MainWindowViewModel">
     <Grid RowDefinitions="*,Auto" RowSpacing="12" MinHeight="0">
         <Grid>
-            <Border Classes="card" IsVisible="{Binding IsToolkitWorkspace}" Padding="12">
-                <Grid RowDefinitions="Auto,Auto,*" RowSpacing="12">
-                    <StackPanel Spacing="2">
+            <Border Classes="card" IsVisible="{Binding IsToolkitWorkspace}" Padding="24">
+                <Grid RowDefinitions="Auto,Auto,*" RowSpacing="24">
+                    <StackPanel Spacing="4">
                         <TextBlock Classes="section-title" Text="Toolkit Workspace" />
                         <TextBlock Classes="helper-text"
                                    Text="Utility-focused workflows for common Mods folder cleanup, organization, and dependency tasks." />
                     </StackPanel>
 
-                    <Border Grid.Row="1" Classes="card-muted" Padding="10">
-                        <Grid ColumnDefinitions="Auto,190,*" ColumnSpacing="8">
+                    <Border Grid.Row="1" Classes="card-muted" Padding="16">
+                        <Grid ColumnDefinitions="Auto,200,*" ColumnSpacing="12">
                             <TextBlock VerticalAlignment="Center" Text="Action" />
                             <ComboBox Grid.Column="1" Width="180" ItemsSource="{Binding AvailableToolkitActions}" SelectedItem="{Binding SelectedAction}" />
                             <TextBlock Grid.Column="2" VerticalAlignment="Center" Classes="helper-text" Text="Select an action, adjust parameters, then run." />
@@ -29,7 +29,7 @@
                     </Border>
 
                     <ScrollViewer Grid.Row="2">
-                        <StackPanel Spacing="12">
+                        <StackPanel Spacing="16">
                             <panels:OrganizePanelView />
                             <panels:FlattenPanelView />
                             <panels:NormalizePanelView />
@@ -37,12 +37,12 @@
                             <panels:FindDupPanelView />
                             <panels:TrayDependenciesPanelView />
                             <Border Classes="card-muted"
-                                    Padding="10"
+                                    Padding="16"
                                     IsVisible="{Binding IsSharedFileOpsVisible}">
-                                <Grid ColumnDefinitions="210,*"
+                                <Grid ColumnDefinitions="240,*"
                                       RowDefinitions="Auto,Auto,Auto,Auto"
-                                      RowSpacing="8"
-                                      ColumnSpacing="8">
+                                      RowSpacing="12"
+                                      ColumnSpacing="12">
                                     <TextBlock Grid.ColumnSpan="2"
                                                Classes="sub-title"
                                                Text="Shared File Operation Options for Flatten, Merge, and FindDuplicates" />
@@ -63,9 +63,9 @@
                             </Border>
 
                             <Border Classes="card-muted"
-                                    Padding="10"
+                                    Padding="16"
                                     IsVisible="{Binding IsSharedFileOpsVisible}">
-                                <Grid ColumnDefinitions="210,*" ColumnSpacing="8">
+                                <Grid ColumnDefinitions="240,*" ColumnSpacing="12">
                                     <TextBlock VerticalAlignment="Center" Text="Extensions" />
                                     <TextBox Grid.Column="1" Text="{Binding SharedFileOps.ModExtensionsText}" />
                                 </Grid>
@@ -75,19 +75,19 @@
                 </Grid>
             </Border>
 
-            <Border Classes="card" IsVisible="{Binding IsModPreviewWorkspace}" Padding="12" MinHeight="0">
-                <Grid RowDefinitions="Auto,Auto,*" RowSpacing="12" MinHeight="0">
-                    <StackPanel Spacing="2">
+            <Border Classes="card" IsVisible="{Binding IsModPreviewWorkspace}" Padding="24" MinHeight="0">
+                <Grid RowDefinitions="Auto,Auto,*" RowSpacing="24" MinHeight="0">
+                    <StackPanel Spacing="4">
                         <TextBlock Classes="section-title" Text="Mod Workspace" />
                         <TextBlock Classes="helper-text"
                                    Text="Browse indexed CAS and Build/Buy items like an in-game catalog." />
                     </StackPanel>
 
-                    <Border Grid.Row="1" Classes="card-muted" Padding="10">
+                    <Border Grid.Row="1" Classes="card-muted" Padding="16">
                         <Grid ColumnDefinitions="Auto,*,Auto,*,Auto,*"
                               RowDefinitions="Auto,Auto"
-                              ColumnSpacing="8"
-                              RowSpacing="8">
+                              ColumnSpacing="12"
+                              RowSpacing="12">
                             <TextBlock VerticalAlignment="Center" Text="Item Type" />
                             <ComboBox Grid.Column="1"
                                       ItemsSource="{Binding ModPreviewPackageTypeFilterOptions}"
@@ -117,9 +117,9 @@
                         </Grid>
                     </Border>
 
-                    <Border Grid.Row="2" Classes="card-muted" Padding="10" MinHeight="0">
-                        <Grid RowDefinitions="Auto,*" RowSpacing="10" MinHeight="0">
-                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                    <Border Grid.Row="2" Classes="card-muted" Padding="16" MinHeight="0">
+                        <Grid RowDefinitions="Auto,*" RowSpacing="16" MinHeight="0">
+                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12">
                                 <TextBlock Classes="helper-text"
                                            VerticalAlignment="Center"
                                            Text="{Binding ModPreviewPathHintText}" />
@@ -134,16 +134,16 @@
                             </Grid>
 
                             <Grid Grid.Row="1"
-                                  ColumnDefinitions="320,*"
-                                  ColumnSpacing="12"
+                                  ColumnDefinitions="360,*"
+                                  ColumnSpacing="16"
                                   MinHeight="0">
                                 <Border Classes="card"
-                                        Padding="12"
+                                        Padding="16"
                                         MinHeight="0">
                                     <Grid RowDefinitions="Auto,*"
-                                          RowSpacing="10"
+                                          RowSpacing="16"
                                           MinHeight="0">
-                                        <StackPanel Spacing="2">
+                                        <StackPanel Spacing="4">
                                             <TextBlock Classes="sub-title" Text="Item Catalog" />
                                             <TextBlock Classes="helper-text"
                                                        Text="{Binding ModPreviewWorkspace.StatusText}" />
@@ -156,12 +156,12 @@
 
                                 <Border Grid.Column="1"
                                         Classes="card"
-                                        Padding="12"
+                                        Padding="16"
                                         MinHeight="0">
                                     <Grid RowDefinitions="Auto,*"
-                                          RowSpacing="10"
+                                          RowSpacing="16"
                                           MinHeight="0">
-                                        <StackPanel Spacing="2">
+                                        <StackPanel Spacing="4">
                                             <TextBlock Classes="sub-title" Text="Item Inspect" />
                                             <TextBlock Classes="helper-text"
                                                        Text="The right pane stays fixed and updates with the selected catalog item." />
@@ -177,11 +177,11 @@
                 </Grid>
             </Border>
 
-            <Border Classes="card" IsVisible="{Binding IsTrayPreviewWorkspace}" Padding="12" MinHeight="0">
+            <Border Classes="card" IsVisible="{Binding IsTrayPreviewWorkspace}" Padding="24" MinHeight="0">
                 <Grid RowDefinitions="Auto,*"
-                      RowSpacing="12"
+                      RowSpacing="24"
                       MinHeight="0">
-                    <Border Classes="card-muted" Padding="10">
+                    <Border Classes="card-muted" Padding="16">
                         <preview:TrayLikePreviewFilterBarView DataContext="{Binding TrayPreviewWorkspace.Filter}" />
                     </Border>
 

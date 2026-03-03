@@ -9,14 +9,14 @@
              x:Class="SimsModDesktop.Views.Saves.SavesView"
              x:DataType="vm:SaveWorkspaceViewModel">
     <Grid RowDefinitions="Auto,*"
-          RowSpacing="12"
+          RowSpacing="24"
           MinHeight="0">
         <Border Classes="card-muted"
-                Padding="12">
+                Padding="16">
             <Grid RowDefinitions="Auto,Auto"
-                  RowSpacing="12">
+                  RowSpacing="16">
                 <Grid ColumnDefinitions="Auto,260,Auto,Auto,Auto,*,Auto,Auto"
-                      ColumnSpacing="8">
+                      ColumnSpacing="12">
                     <TextBlock VerticalAlignment="Center" Text="Current Save" />
                     <ComboBox Grid.Column="1"
                               SelectedItem="{Binding SelectedSave}"
@@ -60,8 +60,8 @@
 
                 <Grid Grid.Row="1"
                       ColumnDefinitions="1.1*,1.4*"
-                      ColumnSpacing="12">
-                    <StackPanel Spacing="6">
+                      ColumnSpacing="16">
+                    <StackPanel Spacing="8">
                         <CheckBox Content="Generate Thumbnails"
                                   IsChecked="{Binding GenerateThumbnails}" />
                         <TextBlock Text="{Binding SelectedSaveSummary}" TextWrapping="Wrap" />

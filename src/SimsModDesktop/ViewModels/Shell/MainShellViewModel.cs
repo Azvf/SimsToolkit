@@ -1,6 +1,4 @@
 using System.ComponentModel;
-using Avalonia;
-using Avalonia.Styling;
 using SimsModDesktop.Application.Recovery;
 using SimsModDesktop.Infrastructure.Dialogs;
 using SimsModDesktop.Infrastructure.Settings;
@@ -18,6 +16,7 @@ public sealed class MainShellViewModel : ObservableObject
     private readonly INavigationService _navigation;
     private readonly IFileDialogService _fileDialogService;
     private readonly ISettingsStore _settingsStore;
+    private readonly IAppThemeService _appThemeService;
     private readonly ITS4PathDiscoveryService _pathDiscovery;
     private readonly IGameLaunchService _gameLaunchService;
     private readonly IAppCacheMaintenanceService _appCacheMaintenanceService;
@@ -38,7 +37,7 @@ public sealed class MainShellViewModel : ObservableObject
     private string _lastDerivedTrayPath = string.Empty;
     private string _lastDerivedSavesPath = string.Empty;
     private bool _isInitialized;
-
+    private bool _isSidebarExpanded = true;
     public event EventHandler? Ts4RootFocusRequested;
 
     public MainShellViewModel(
@@ -47,6 +46,7 @@ public sealed class MainShellViewModel : ObservableObject
         INavigationService navigation,
         IFileDialogService fileDialogService,
         ISettingsStore settingsStore,
+        IAppThemeService appThemeService,
         ITS4PathDiscoveryService pathDiscovery,
         IGameLaunchService gameLaunchService,
         IAppCacheMaintenanceService appCacheMaintenanceService,
@@ -57,6 +57,7 @@ public sealed class MainShellViewModel : ObservableObject
         _navigation = navigation;
         _fileDialogService = fileDialogService;
         _settingsStore = settingsStore;
+        _appThemeService = appThemeService;
         _pathDiscovery = pathDiscovery;
         _gameLaunchService = gameLaunchService;
         _appCacheMaintenanceService = appCacheMaintenanceService;
@@ -71,6 +72,7 @@ public sealed class MainShellViewModel : ObservableObject
         NavigateToSettingsForPathFixCommand = new RelayCommand(
             NavigateToSettingsForPathFix,
             () => !HasAllCorePathsValid);
+        ToggleSidebarCommand = new RelayCommand(ToggleSidebar);
 
         _workspaceVm.PropertyChanged += OnWorkspaceVmPropertyChanged;
         _navigation.PropertyChanged += OnNavigationPropertyChanged;
@@ -86,8 +88,23 @@ public sealed class MainShellViewModel : ObservableObject
     public AsyncRelayCommand BrowseTs4RootCommand { get; }
     public AsyncRelayCommand ClearCacheCommand { get; }
     public RelayCommand NavigateToSettingsForPathFixCommand { get; }
+    public RelayCommand ToggleSidebarCommand { get; }
 
     public IReadOnlyList<NavigationItem> SectionItems => _navigation.SectionItems;
+
+    public bool IsSidebarExpanded
+    {
+        get => _isSidebarExpanded;
+        set
+        {
+            if (SetProperty(ref _isSidebarExpanded, value))
+            {
+                OnPropertyChanged(nameof(SidebarWidth));
+            }
+        }
+    }
+
+    public double SidebarWidth => IsSidebarExpanded ? 240 : 72;
 
     public AppSection SelectedSection
     {
@@ -374,9 +391,7 @@ public sealed class MainShellViewModel : ObservableObject
     {
         var settings = await _settingsStore.LoadAsync();
         EnableLaunchGame = settings.FeatureFlags.EnableLaunchGame;
-        RequestedTheme = string.IsNullOrWhiteSpace(settings.Theme.RequestedTheme)
-            ? "Dark"
-            : settings.Theme.RequestedTheme;
+        RequestedTheme = _appThemeService.Normalize(settings.Theme.RequestedTheme);
         SavesVm.LoadFromSettings(settings.Saves ?? new AppSettings.SavesSettings());
         GameExecutablePath = settings.GameLaunch.GameExecutablePath;
         ModsPath = settings.GameLaunch.ModsPath;
@@ -391,15 +406,12 @@ public sealed class MainShellViewModel : ObservableObject
 
     private void ApplyTheme()
     {
-        if (Avalonia.Application.Current is null)
-        {
-            return;
-        }
+        _appThemeService.Apply(RequestedTheme);
+    }
 
-        Avalonia.Application.Current.RequestedThemeVariant =
-            string.Equals(RequestedTheme, "Light", StringComparison.OrdinalIgnoreCase)
-                ? ThemeVariant.Light
-                : ThemeVariant.Dark;
+    private void ToggleSidebar()
+    {
+        IsSidebarExpanded = !IsSidebarExpanded;
     }
 
     private void SelectSection(string? sectionKey)

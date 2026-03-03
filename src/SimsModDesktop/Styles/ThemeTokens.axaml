@@ -2,40 +2,41 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Styles.Resources>
         <ResourceDictionary>
-            <x:Double x:Key="Size.ControlHeight">34</x:Double>
-            <CornerRadius x:Key="Radius.Small">6</CornerRadius>
-            <CornerRadius x:Key="Radius.Medium">10</CornerRadius>
-            <CornerRadius x:Key="Radius.Large">14</CornerRadius>
-            <Thickness x:Key="Thickness.CardPadding">12</Thickness>
-            <Thickness x:Key="Thickness.SectionPadding">10</Thickness>
+            <x:Double x:Key="Size.ControlHeight">36</x:Double>
+            <CornerRadius x:Key="Radius.Small">8</CornerRadius>
+            <CornerRadius x:Key="Radius.Medium">12</CornerRadius>
+            <CornerRadius x:Key="Radius.Large">16</CornerRadius>
+            <Thickness x:Key="Thickness.CardPadding">16</Thickness>
+            <Thickness x:Key="Thickness.SectionPadding">12</Thickness>
 
             <ResourceDictionary.ThemeDictionaries>
                 <ResourceDictionary x:Key="Light">
-                    <Color x:Key="Color.AppBackground">#F2F5F8</Color>
-                    <Color x:Key="Color.Surface">#FFFFFFFF</Color>
-                    <Color x:Key="Color.SurfaceMuted">#EDF3F8</Color>
-                    <Color x:Key="Color.SurfaceHover">#F3F8FD</Color>
-                    <Color x:Key="Color.SurfacePressed">#E5F0FA</Color>
-                    <Color x:Key="Color.Border">#D4DEE7</Color>
-                    <Color x:Key="Color.BorderHover">#A9C0D8</Color>
-                    <Color x:Key="Color.BorderFocus">#0F5FA8</Color>
-                    <Color x:Key="Color.TextPrimary">#102236</Color>
-                    <Color x:Key="Color.TextSecondary">#4E657C</Color>
-                    <Color x:Key="Color.Accent">#0F5FA8</Color>
-                    <Color x:Key="Color.AccentHover">#136FC2</Color>
-                    <Color x:Key="Color.AccentPressed">#0A4F8C</Color>
-                    <Color x:Key="Color.AccentMuted">#DCEAF8</Color>
-                    <Color x:Key="Color.AccentMutedHover">#CFE3F8</Color>
-                    <Color x:Key="Color.AccentMutedPressed">#C2DCF7</Color>
-                    <Color x:Key="Color.Danger">#B22424</Color>
-                    <Color x:Key="Color.DangerHover">#9E1F1F</Color>
-                    <Color x:Key="Color.DangerPressed">#861919</Color>
-                    <Color x:Key="Color.Warning">#A66300</Color>
-                    <Color x:Key="Color.Success">#1F7A48</Color>
-                    <Color x:Key="Color.LogBackground">#F7FBFF</Color>
-                    <Color x:Key="Color.ListItemHover">#EAF3FD</Color>
-                    <Color x:Key="Color.ListItemPressed">#DBEBFC</Color>
-                    <Color x:Key="Color.ListItemSelected">#CCE2F9</Color>
+                    <!-- Sims 4 Light: Clean white, soft blues, and vibrant UI blue -->
+                    <Color x:Key="Color.AppBackground">#F4F8FB</Color>
+                    <Color x:Key="Color.Surface">#FFFFFF</Color>
+                    <Color x:Key="Color.SurfaceMuted">#EBF3F9</Color>
+                    <Color x:Key="Color.SurfaceHover">#F0F6FB</Color>
+                    <Color x:Key="Color.SurfacePressed">#DEEBF5</Color>
+                    <Color x:Key="Color.Border">#DCE7F0</Color>
+                    <Color x:Key="Color.BorderHover">#B8CFE2</Color>
+                    <Color x:Key="Color.BorderFocus">#1296DB</Color>
+                    <Color x:Key="Color.TextPrimary">#1A2B42</Color>
+                    <Color x:Key="Color.TextSecondary">#5C708A</Color>
+                    <Color x:Key="Color.Accent">#1296DB</Color>
+                    <Color x:Key="Color.AccentHover">#0F85C4</Color>
+                    <Color x:Key="Color.AccentPressed">#0C74AB</Color>
+                    <Color x:Key="Color.AccentMuted">#E6F4FB</Color>
+                    <Color x:Key="Color.AccentMutedHover">#D9EEF9</Color>
+                    <Color x:Key="Color.AccentMutedPressed">#CCE8F7</Color>
+                    <Color x:Key="Color.Danger">#E04F5F</Color>
+                    <Color x:Key="Color.DangerHover">#CC4252</Color>
+                    <Color x:Key="Color.DangerPressed">#B83645</Color>
+                    <Color x:Key="Color.Warning">#F0A500</Color>
+                    <Color x:Key="Color.Success">#4CB050</Color>
+                    <Color x:Key="Color.LogBackground">#FAFCFE</Color>
+                    <Color x:Key="Color.ListItemHover">#F0F6FB</Color>
+                    <Color x:Key="Color.ListItemPressed">#DEEBF5</Color>
+                    <Color x:Key="Color.ListItemSelected">#E6F4FB</Color>
 
                     <SolidColorBrush x:Key="Brush.AppBackground" Color="{DynamicResource Color.AppBackground}" />
                     <SolidColorBrush x:Key="Brush.Surface" Color="{DynamicResource Color.Surface}" />
@@ -65,31 +66,32 @@
                 </ResourceDictionary>
 
                 <ResourceDictionary x:Key="Dark">
-                    <Color x:Key="Color.AppBackground">#111820</Color>
-                    <Color x:Key="Color.Surface">#18222D</Color>
-                    <Color x:Key="Color.SurfaceMuted">#1F2D3A</Color>
-                    <Color x:Key="Color.SurfaceHover">#243545</Color>
-                    <Color x:Key="Color.SurfacePressed">#2A3E51</Color>
-                    <Color x:Key="Color.Border">#2E3F50</Color>
-                    <Color x:Key="Color.BorderHover">#4A647D</Color>
-                    <Color x:Key="Color.BorderFocus">#63B1F3</Color>
-                    <Color x:Key="Color.TextPrimary">#E8F0F8</Color>
-                    <Color x:Key="Color.TextSecondary">#9FB2C4</Color>
-                    <Color x:Key="Color.Accent">#4EA4F0</Color>
-                    <Color x:Key="Color.AccentHover">#66B4F4</Color>
-                    <Color x:Key="Color.AccentPressed">#3A8FD3</Color>
-                    <Color x:Key="Color.AccentMuted">#19324A</Color>
-                    <Color x:Key="Color.AccentMutedHover">#21405D</Color>
-                    <Color x:Key="Color.AccentMutedPressed">#285079</Color>
+                    <!-- Sims 4 Dark: Deep navy blues inspired by the main menu/loading screen -->
+                    <Color x:Key="Color.AppBackground">#102339</Color>
+                    <Color x:Key="Color.Surface">#1A304C</Color>
+                    <Color x:Key="Color.SurfaceMuted">#223D5E</Color>
+                    <Color x:Key="Color.SurfaceHover">#244566</Color>
+                    <Color x:Key="Color.SurfacePressed">#2D5278</Color>
+                    <Color x:Key="Color.Border">#2F4B70</Color>
+                    <Color x:Key="Color.BorderHover">#4A6B96</Color>
+                    <Color x:Key="Color.BorderFocus">#33B5E5</Color>
+                    <Color x:Key="Color.TextPrimary">#EAF4FC</Color>
+                    <Color x:Key="Color.TextSecondary">#9ABBD6</Color>
+                    <Color x:Key="Color.Accent">#33B5E5</Color>
+                    <Color x:Key="Color.AccentHover">#66C9EF</Color>
+                    <Color x:Key="Color.AccentPressed">#0099CC</Color>
+                    <Color x:Key="Color.AccentMuted">#1F3A5C</Color>
+                    <Color x:Key="Color.AccentMutedHover">#26456B</Color>
+                    <Color x:Key="Color.AccentMutedPressed">#2E507A</Color>
                     <Color x:Key="Color.Danger">#FF6B6B</Color>
-                    <Color x:Key="Color.DangerHover">#FF8383</Color>
-                    <Color x:Key="Color.DangerPressed">#E45A5A</Color>
-                    <Color x:Key="Color.Warning">#F5B14C</Color>
+                    <Color x:Key="Color.DangerHover">#FF8585</Color>
+                    <Color x:Key="Color.DangerPressed">#E65252</Color>
+                    <Color x:Key="Color.Warning">#FFC107</Color>
                     <Color x:Key="Color.Success">#56C98A</Color>
-                    <Color x:Key="Color.LogBackground">#10171F</Color>
-                    <Color x:Key="Color.ListItemHover">#223447</Color>
-                    <Color x:Key="Color.ListItemPressed">#2A4057</Color>
-                    <Color x:Key="Color.ListItemSelected">#21405A</Color>
+                    <Color x:Key="Color.LogBackground">#0C1A2B</Color>
+                    <Color x:Key="Color.ListItemHover">#244566</Color>
+                    <Color x:Key="Color.ListItemPressed">#2D5278</Color>
+                    <Color x:Key="Color.ListItemSelected">#1F3A5C</Color>
 
                     <SolidColorBrush x:Key="Brush.AppBackground" Color="{DynamicResource Color.AppBackground}" />
                     <SolidColorBrush x:Key="Brush.Surface" Color="{DynamicResource Color.Surface}" />

@@ -128,6 +128,33 @@ public sealed class MainShellViewModelTests
     }
 
     [Fact]
+    public async Task InitializeAsync_NormalizesSavedThemeAndAppliesIt()
+    {
+        var settings = new AppSettings();
+        settings.Theme.RequestedTheme = "Light";
+        var themeService = new FakeAppThemeService();
+        var vm = CreateShellViewModel(initialSettings: settings, themeService: themeService);
+
+        await vm.InitializeAsync();
+
+        Assert.Equal("Light", vm.RequestedTheme);
+        Assert.Equal("Light", themeService.LastAppliedTheme);
+        Assert.True(themeService.ApplyCallCount > 0);
+    }
+
+    [Fact]
+    public void RequestedTheme_UsesThemeServiceForManualChanges()
+    {
+        var themeService = new FakeAppThemeService();
+        var vm = CreateShellViewModel(themeService: themeService);
+
+        vm.RequestedTheme = "Light";
+
+        Assert.Equal("Light", themeService.LastAppliedTheme);
+        Assert.Equal(1, themeService.ApplyCallCount);
+    }
+
+    [Fact]
     public void ModsPath_SyncsIntoModPreviewWorkspace()
     {
         var vm = CreateShellViewModel();
@@ -142,9 +169,11 @@ public sealed class MainShellViewModelTests
         FakeAppCacheMaintenanceService? cacheService = null,
         FakeTrayPreviewCoordinator? trayPreviewCoordinator = null,
         FakeTrayThumbnailService? trayThumbnailService = null,
-        AppSettings? initialSettings = null)
+        AppSettings? initialSettings = null,
+        FakeAppThemeService? themeService = null)
     {
         var settingsStore = new FakeSettingsStore(initialSettings ?? new AppSettings());
+        themeService ??= new FakeAppThemeService();
         trayPreviewCoordinator ??= new FakeTrayPreviewCoordinator();
         trayThumbnailService ??= new FakeTrayThumbnailService();
         var workspaceVm = CreateWorkspaceViewModel(settingsStore, trayPreviewCoordinator, trayThumbnailService);
@@ -162,6 +191,7 @@ public sealed class MainShellViewModelTests
             navigation,
             fileDialog,
             settingsStore,
+            themeService,
             new FakePathDiscoveryService(),
             new FakeGameLaunchService(),
             cacheService ?? new FakeAppCacheMaintenanceService());
@@ -377,6 +407,30 @@ public sealed class MainShellViewModelTests
         public Task SaveAsync(AppSettings settings, CancellationToken cancellationToken = default)
         {
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FakeAppThemeService : IAppThemeService
+    {
+        public int ApplyCallCount { get; private set; }
+        public string? LastAppliedTheme { get; private set; }
+
+        public string Normalize(string? requestedTheme)
+        {
+            return string.Equals(requestedTheme, "Light", StringComparison.OrdinalIgnoreCase)
+                ? "Light"
+                : "Dark";
+        }
+
+        public Task<string> LoadRequestedThemeAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult("Dark");
+        }
+
+        public void Apply(string? requestedTheme)
+        {
+            ApplyCallCount++;
+            LastAppliedTheme = Normalize(requestedTheme);
         }
     }
 
