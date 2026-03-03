@@ -43,8 +43,7 @@ public sealed class MainWindowViewModel : ObservableObject
     private readonly MainWindowSettingsPersistenceController _settingsPersistenceController;
     private readonly IMainWindowSettingsProjection _settingsProjection;
     private readonly IToolkitActionPlanner _toolkitActionPlanner;
-    private readonly IOperationRecoveryCoordinator? _operationRecoveryCoordinator;
-    private readonly IActionResultRepository? _actionResultRepository;
+    private readonly MainWindowRecoveryController _recoveryController;
     private readonly ITextureCompressionService _textureCompressionService;
     private readonly ITextureDimensionProbe _textureDimensionProbe;
     private readonly Stack<TrayPreviewListItemViewModel> _trayPreviewDetailHistory = new();
@@ -95,6 +94,7 @@ public sealed class MainWindowViewModel : ObservableObject
         IMainWindowSettingsProjection settingsProjection,
         IToolkitActionPlanner toolkitActionPlanner,
         MainWindowStatusController statusController,
+        MainWindowRecoveryController recoveryController,
         ModPreviewWorkspaceViewModel modPreviewWorkspace,
         TrayPreviewWorkspaceViewModel trayPreviewWorkspace,
         OrganizePanelViewModel organize,
@@ -109,9 +109,7 @@ public sealed class MainWindowViewModel : ObservableObject
         SharedFileOpsPanelViewModel sharedFileOps,
         ITrayThumbnailService trayThumbnailService,
         ITextureCompressionService textureCompressionService,
-        ITextureDimensionProbe textureDimensionProbe,
-        IOperationRecoveryCoordinator? operationRecoveryCoordinator = null,
-        IActionResultRepository? actionResultRepository = null)
+        ITextureDimensionProbe textureDimensionProbe)
     {
         _executionCoordinator = executionCoordinator;
         _trayPreviewCoordinator = trayPreviewCoordinator;
@@ -125,8 +123,7 @@ public sealed class MainWindowViewModel : ObservableObject
         _settingsProjection = settingsProjection;
         _toolkitActionPlanner = toolkitActionPlanner;
         _statusController = statusController;
-        _operationRecoveryCoordinator = operationRecoveryCoordinator;
-        _actionResultRepository = actionResultRepository;
+        _recoveryController = recoveryController;
         _textureCompressionService = textureCompressionService;
         _textureDimensionProbe = textureDimensionProbe;
         ModPreviewWorkspace = modPreviewWorkspace;
@@ -697,10 +694,7 @@ public sealed class MainWindowViewModel : ObservableObject
             return;
         }
 
-        if (_actionResultRepository is not null)
-        {
-            await _actionResultRepository.InitializeAsync();
-        }
+        await _recoveryController.InitializeAsync();
 
         var settings = await _settingsPersistenceController.LoadAsync();
         var resolved = _settingsProjection.Resolve(settings, AvailableToolkitActions);
@@ -779,17 +773,13 @@ public sealed class MainWindowViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            if (_operationRecoveryCoordinator is not null)
-            {
-                await _operationRecoveryCoordinator.MarkCompletedAsync(
-                    record.OperationId,
-                    new RecoverableOperationCompletion
-                    {
-                        Status = OperationRecoveryStatus.Failed,
-                        FailureMessage = ex.Message
-                    },
-                    cancellationToken);
-            }
+            await _recoveryController.MarkRecoveryCompletedAsync(
+                record.OperationId,
+                new RecoverableOperationCompletion
+                {
+                    Status = OperationRecoveryStatus.Failed,
+                    FailureMessage = ex.Message
+                });
 
             AppendLog("[recovery] " + ex.Message);
             StatusMessage = "Failed to resume the previous task.";
@@ -1864,61 +1854,17 @@ public sealed class MainWindowViewModel : ObservableObject
         }
     }
 
-    private async Task<string?> RegisterRecoveryAsync(RecoverableOperationPayload payload)
-    {
-        if (_operationRecoveryCoordinator is null)
-        {
-            return null;
-        }
+    private Task<string?> RegisterRecoveryAsync(RecoverableOperationPayload payload) =>
+        _recoveryController.RegisterRecoveryAsync(payload);
 
-        return await _operationRecoveryCoordinator.RegisterPendingAsync(payload);
-    }
+    private Task MarkRecoveryStartedAsync(string? operationId) =>
+        _recoveryController.MarkRecoveryStartedAsync(operationId);
 
-    private async Task MarkRecoveryStartedAsync(string? operationId)
-    {
-        if (_operationRecoveryCoordinator is null || string.IsNullOrWhiteSpace(operationId))
-        {
-            return;
-        }
+    private Task MarkRecoveryCompletedAsync(string? operationId, RecoverableOperationCompletion completion) =>
+        _recoveryController.MarkRecoveryCompletedAsync(operationId, completion);
 
-        await _operationRecoveryCoordinator.MarkStartedAsync(operationId);
-    }
-
-    private async Task MarkRecoveryCompletedAsync(string? operationId, RecoverableOperationCompletion completion)
-    {
-        if (_operationRecoveryCoordinator is null || string.IsNullOrWhiteSpace(operationId))
-        {
-            return;
-        }
-
-        await _operationRecoveryCoordinator.MarkCompletedAsync(operationId, completion);
-    }
-
-    private async Task SaveResultHistoryAsync(SimsAction action, string source, string summary, string? relatedOperationId)
-    {
-        if (_actionResultRepository is null)
-        {
-            return;
-        }
-
-        await _actionResultRepository.SaveAsync(
-            new ActionResultEnvelope
-            {
-                Action = action,
-                Source = source,
-                GeneratedAtLocal = DateTime.Now,
-                Rows =
-                [
-                    new ActionResultRow
-                    {
-                        Name = action.ToString(),
-                        Status = summary,
-                        RawSummary = summary
-                    }
-                ]
-            },
-            relatedOperationId);
-    }
+    private Task SaveResultHistoryAsync(SimsAction action, string source, string summary, string? relatedOperationId) =>
+        _recoveryController.SaveResultHistoryAsync(action, source, summary, relatedOperationId);
 
     private static RecoverableOperationPayload BuildToolkitRecoveryPayload(CliExecutionPlan plan)
     {
