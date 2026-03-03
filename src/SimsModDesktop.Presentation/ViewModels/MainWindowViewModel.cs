@@ -50,7 +50,7 @@ public sealed class MainWindowViewModel : ObservableObject
     private readonly Stack<TrayPreviewListItemViewModel> _trayPreviewDetailHistory = new();
     private readonly HashSet<string> _selectedTrayPreviewKeys = new(StringComparer.OrdinalIgnoreCase);
 
-    private readonly StringWriter _logWriter = new();
+    private readonly MainWindowStatusController _statusController;
     private CancellationTokenSource? _executionCts;
     private CancellationTokenSource? _validationDebounceCts;
     private CancellationTokenSource? _settingsPersistDebounceCts;
@@ -62,11 +62,6 @@ public sealed class MainWindowViewModel : ObservableObject
     private string _selectedLanguageCode = DefaultLanguageCode;
     private string _scriptPath = string.Empty;
     private bool _whatIf;
-    private string _statusMessage = string.Empty;
-    private bool _isProgressIndeterminate;
-    private int _progressValue;
-    private string _progressMessage = string.Empty;
-    private string _logText = string.Empty;
     private int _trayPreviewCurrentPage = 1;
     private int _trayPreviewTotalPages = 1;
     private string _previewSummaryText = "No preview data loaded.";
@@ -100,6 +95,7 @@ public sealed class MainWindowViewModel : ObservableObject
         ISettingsStore settingsStore,
         IMainWindowSettingsProjection settingsProjection,
         IToolkitActionPlanner toolkitActionPlanner,
+        MainWindowStatusController statusController,
         ModPreviewWorkspaceViewModel modPreviewWorkspace,
         TrayPreviewWorkspaceViewModel trayPreviewWorkspace,
         OrganizePanelViewModel organize,
@@ -129,6 +125,7 @@ public sealed class MainWindowViewModel : ObservableObject
         _settingsStore = settingsStore;
         _settingsProjection = settingsProjection;
         _toolkitActionPlanner = toolkitActionPlanner;
+        _statusController = statusController;
         _operationRecoveryCoordinator = operationRecoveryCoordinator;
         _actionResultRepository = actionResultRepository;
         _textureCompressionService = textureCompressionService;
@@ -190,6 +187,7 @@ public sealed class MainWindowViewModel : ObservableObject
         ClearLogCommand = new RelayCommand(ClearLog, () => !string.IsNullOrWhiteSpace(LogText));
 
         _localization.PropertyChanged += OnLocalizationPropertyChanged;
+        _statusController.PropertyChanged += OnStatusControllerPropertyChanged;
         _localization.SetLanguage(_selectedLanguageCode);
         _selectedLanguageCode = _localization.CurrentLanguageCode;
         ProgressMessage = L("progress.idle");
@@ -401,40 +399,31 @@ public sealed class MainWindowViewModel : ObservableObject
 
     public bool IsProgressIndeterminate
     {
-        get => _isProgressIndeterminate;
-        private set => SetProperty(ref _isProgressIndeterminate, value);
+        get => _statusController.IsProgressIndeterminate;
+        private set => _statusController.IsProgressIndeterminate = value;
     }
 
     public int ProgressValue
     {
-        get => _progressValue;
-        private set => SetProperty(ref _progressValue, value);
+        get => _statusController.ProgressValue;
+        private set => _statusController.ProgressValue = value;
     }
 
     public string ProgressMessage
     {
-        get => _progressMessage;
-        private set => SetProperty(ref _progressMessage, value);
+        get => _statusController.ProgressMessage;
+        private set => _statusController.ProgressMessage = value;
     }
 
     public string StatusMessage
     {
-        get => _statusMessage;
-        private set => SetProperty(ref _statusMessage, value);
+        get => _statusController.StatusMessage;
+        private set => _statusController.StatusMessage = value;
     }
 
     public string LogText
     {
-        get => _logText;
-        private set
-        {
-            if (!SetProperty(ref _logText, value))
-            {
-                return;
-            }
-
-            ClearLogCommand.NotifyCanExecuteChanged();
-        }
+        get => _statusController.LogText;
     }
 
     public string PreviewSummaryText
@@ -2209,30 +2198,17 @@ public sealed class MainWindowViewModel : ObservableObject
 
     private void SetProgress(bool isIndeterminate, int percent, string message)
     {
-        ExecuteOnUi(() =>
-        {
-            IsProgressIndeterminate = isIndeterminate;
-            ProgressValue = isIndeterminate ? 0 : Math.Clamp(percent, 0, 100);
-            ProgressMessage = message;
-        });
+        ExecuteOnUi(() => _statusController.SetProgress(isIndeterminate, percent, message));
     }
 
     private void ClearLog()
     {
-        ExecuteOnUi(() =>
-        {
-            _logWriter.GetStringBuilder().Clear();
-            LogText = string.Empty;
-        });
+        ExecuteOnUi(_statusController.ClearLog);
     }
 
     private void AppendLog(string message)
     {
-        ExecuteOnUi(() =>
-        {
-            _logWriter.WriteLine(message);
-            LogText = _logWriter.ToString();
-        });
+        ExecuteOnUi(() => _statusController.AppendLog(message));
     }
 
     private void ClearTrayPreview()
@@ -3319,6 +3295,29 @@ public sealed class MainWindowViewModel : ObservableObject
 
             NotifyLocalizationDependentProperties();
         });
+    }
+
+    private void OnStatusControllerPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        switch (e.PropertyName)
+        {
+            case nameof(MainWindowStatusController.StatusMessage):
+                OnPropertyChanged(nameof(StatusMessage));
+                return;
+            case nameof(MainWindowStatusController.IsProgressIndeterminate):
+                OnPropertyChanged(nameof(IsProgressIndeterminate));
+                return;
+            case nameof(MainWindowStatusController.ProgressValue):
+                OnPropertyChanged(nameof(ProgressValue));
+                return;
+            case nameof(MainWindowStatusController.ProgressMessage):
+                OnPropertyChanged(nameof(ProgressMessage));
+                return;
+            case nameof(MainWindowStatusController.LogText):
+                OnPropertyChanged(nameof(LogText));
+                ClearLogCommand.NotifyCanExecuteChanged();
+                return;
+        }
     }
 
     private void NotifyLocalizationDependentProperties()

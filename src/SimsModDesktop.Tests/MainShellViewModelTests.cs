@@ -256,6 +256,7 @@ public sealed class MainShellViewModelTests
                 findDup,
                 trayDependencies,
                 trayPreview),
+            new MainWindowStatusController(),
             modPreviewWorkspace,
             trayPreviewWorkspace,
             organize,

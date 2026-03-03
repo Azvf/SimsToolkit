@@ -794,6 +794,7 @@ public sealed class MainWindowViewModelInteractionTests
                 findDup,
                 trayDependencies,
                 trayPreview),
+            new MainWindowStatusController(),
             modPreviewWorkspace,
             trayPreviewWorkspace,
             organize,
