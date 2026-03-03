@@ -1,7 +1,7 @@
 using System.ComponentModel;
 using SimsModDesktop.Application.Recovery;
+using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Presentation.Dialogs;
-using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 using SimsModDesktop.Presentation.ViewModels.Saves;
 

@@ -1,12 +1,15 @@
 using Microsoft.Extensions.DependencyInjection;
 using SimsModDesktop.Application.Configuration;
 using SimsModDesktop.Application.Execution;
+using SimsModDesktop.Application.Localization;
 using SimsModDesktop.Application.Mods;
 using SimsModDesktop.Application.Recovery;
 using SimsModDesktop.Application.Results;
 using SimsModDesktop.Application.Saves;
 using SimsModDesktop.Application.Services;
+using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Application.TextureCompression;
+using SimsModDesktop.Application.TextureProcessing;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Application.UseCases;
 using SimsModDesktop.Infrastructure.Configuration;

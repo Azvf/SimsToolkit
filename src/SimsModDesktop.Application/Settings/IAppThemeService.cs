@@ -1,4 +1,4 @@
-namespace SimsModDesktop.Infrastructure.Settings;
+namespace SimsModDesktop.Application.Settings;
 
 public interface IAppThemeService
 {

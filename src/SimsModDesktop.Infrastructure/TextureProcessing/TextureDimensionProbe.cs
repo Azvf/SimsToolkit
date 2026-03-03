@@ -1,5 +1,6 @@
 using Pfim;
 using SixLabors.ImageSharp;
+using SimsModDesktop.Application.TextureProcessing;
 
 namespace SimsModDesktop.Infrastructure.TextureProcessing;
 

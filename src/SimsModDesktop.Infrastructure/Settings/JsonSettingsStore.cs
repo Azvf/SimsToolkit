@@ -1,4 +1,5 @@
 using System.Text.Json;
+using SimsModDesktop.Application.Settings;
 
 namespace SimsModDesktop.Infrastructure.Settings;
 

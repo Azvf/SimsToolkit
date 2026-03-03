@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Avalonia;
 using Avalonia.Styling;
+using SimsModDesktop.Application.Settings;
 
 namespace SimsModDesktop.Infrastructure.Settings;
 

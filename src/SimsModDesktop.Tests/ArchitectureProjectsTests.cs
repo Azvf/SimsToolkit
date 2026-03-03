@@ -13,6 +13,14 @@ public sealed class ArchitectureProjectsTests
     }
 
     [Fact]
+    public void Presentation_DoesNotReference_Infrastructure()
+    {
+        AssertNoAssemblyReference(
+            typeof(SimsModDesktop.Presentation.ViewModels.MainWindowViewModel).Assembly,
+            "SimsModDesktop.Infrastructure");
+    }
+
+    [Fact]
     public void Presentation_Contains_RuntimeViewModelTypes()
     {
         var presentationAssembly = typeof(SimsModDesktop.Presentation.ViewModels.MainWindowViewModel).Assembly;

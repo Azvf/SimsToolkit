@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.Text.Json;
+using SimsModDesktop.Application.Localization;
 
 namespace SimsModDesktop.Infrastructure.Localization;
 

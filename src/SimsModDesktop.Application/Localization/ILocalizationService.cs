@@ -1,6 +1,6 @@
 using System.ComponentModel;
 
-namespace SimsModDesktop.Infrastructure.Localization;
+namespace SimsModDesktop.Application.Localization;
 
 public interface ILocalizationService : INotifyPropertyChanged
 {

@@ -2,8 +2,8 @@ using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Microsoft.Extensions.DependencyInjection;
+using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Composition;
-using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Views;
 
 namespace SimsModDesktop;
