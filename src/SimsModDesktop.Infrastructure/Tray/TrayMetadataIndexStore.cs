@@ -30,7 +30,7 @@ public sealed class TrayMetadataIndexStore
     {
     }
 
-    internal TrayMetadataIndexStore(string cacheRootPath)
+    public TrayMetadataIndexStore(string cacheRootPath)
     {
         _database = new AppCacheDatabase(cacheRootPath);
     }

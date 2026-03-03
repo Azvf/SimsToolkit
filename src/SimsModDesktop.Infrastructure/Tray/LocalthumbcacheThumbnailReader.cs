@@ -18,7 +18,7 @@ public sealed class LocalthumbcacheThumbnailReader
         _resourceReader = resourceReader ?? new DbpfResourceReader();
     }
 
-    internal ExtractedTrayImage? TryExtractBestImage(
+    public ExtractedTrayImage? TryExtractBestImage(
         string trayRootPath,
         string trayInstanceId,
         CancellationToken cancellationToken = default)

@@ -30,7 +30,7 @@ public sealed class TrayThumbnailCacheStore
     {
     }
 
-    internal TrayThumbnailCacheStore(
+    public TrayThumbnailCacheStore(
         string cacheRootPath,
         int targetWidth = DefaultTargetWidth,
         int targetHeight = DefaultTargetHeight)

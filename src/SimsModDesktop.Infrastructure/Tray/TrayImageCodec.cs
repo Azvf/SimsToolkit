@@ -2,7 +2,7 @@ using SkiaSharp;
 
 namespace SimsModDesktop.Services;
 
-internal static class TrayImageCodec
+public static class TrayImageCodec
 {
     public static bool TryMeasure(ReadOnlySpan<byte> data, out int width, out int height)
     {

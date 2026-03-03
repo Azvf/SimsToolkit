@@ -13,7 +13,7 @@ public sealed class TrayEmbeddedImageExtractor
         ".trayitem"
     ];
 
-    internal ExtractedTrayImage? TryExtractBestImage(
+    public ExtractedTrayImage? TryExtractBestImage(
         SimsTrayPreviewItem item,
         CancellationToken cancellationToken = default)
     {
@@ -33,7 +33,7 @@ public sealed class TrayEmbeddedImageExtractor
         return null;
     }
 
-    internal ExtractedTrayImage? TryExtractBestImage(
+    public ExtractedTrayImage? TryExtractBestImage(
         string filePath,
         CancellationToken cancellationToken = default)
     {

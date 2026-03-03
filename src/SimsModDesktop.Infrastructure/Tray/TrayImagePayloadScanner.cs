@@ -2,7 +2,7 @@ using System.Buffers.Binary;
 
 namespace SimsModDesktop.Services;
 
-internal static class TrayImagePayloadScanner
+public static class TrayImagePayloadScanner
 {
     private const int EncodedContainerHeaderSize = 24;
     private const int MaxEncodedPayloadBytes = 32 * 1024 * 1024;
