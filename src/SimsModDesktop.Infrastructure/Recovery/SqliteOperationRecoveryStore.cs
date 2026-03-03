@@ -21,7 +21,7 @@ public sealed class SqliteOperationRecoveryStore : IOperationRecoveryStore
     {
     }
 
-    internal SqliteOperationRecoveryStore(string cacheRootPath)
+    public SqliteOperationRecoveryStore(string cacheRootPath)
         : this(new AppCacheDatabase(cacheRootPath))
     {
     }
