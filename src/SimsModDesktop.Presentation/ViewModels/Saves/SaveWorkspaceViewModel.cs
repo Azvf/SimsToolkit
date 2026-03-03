@@ -1,5 +1,5 @@
 using SimsModDesktop.Application.Saves;
-using SimsModDesktop.Application.Execution;
+using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.SaveData.Models;
 using SimsModDesktop.Presentation.ViewModels.Infrastructure;
@@ -36,7 +36,7 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
         ISaveHouseholdCoordinator coordinator,
         IFileDialogService fileDialogService,
         ITrayDependenciesLauncher trayDependenciesLauncher,
-        ITrayPreviewRunner trayPreviewRunner,
+        ITrayPreviewCoordinator trayPreviewCoordinator,
         ITrayThumbnailService trayThumbnailService)
     {
         _coordinator = coordinator;
@@ -44,7 +44,7 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
         _trayDependenciesLauncher = trayDependenciesLauncher;
 
         Filter = new SavePreviewFilterViewModel();
-        Surface = new TrayLikePreviewSurfaceViewModel(trayPreviewRunner, trayThumbnailService);
+        Surface = new TrayLikePreviewSurfaceViewModel(trayPreviewCoordinator, trayThumbnailService);
         Surface.Configure(Filter, ResolveCurrentCacheRoot, PreviewSurfaceSelectionMode.Single);
         Surface.SetFooter("Save Preview Log", ExportLogText);
         Surface.PropertyChanged += OnSurfacePropertyChanged;

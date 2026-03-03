@@ -1,5 +1,4 @@
 using Avalonia.Threading;
-using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Presentation.Dialogs;
@@ -16,7 +15,7 @@ public sealed class TrayPreviewWorkspaceViewModelTests
     {
         using var trayRoot = new TempDirectory();
         var filter = new TrayPreviewPanelViewModel();
-        var runner = new CountingTrayPreviewRunner();
+        var runner = new CountingTrayPreviewCoordinator();
         var workspace = new TrayPreviewWorkspaceViewModel(
             filter,
             runner,
@@ -45,60 +44,52 @@ public sealed class TrayPreviewWorkspaceViewModelTests
         await WaitForAsync(() => runner.LoadCount == 2);
     }
 
-    private sealed class CountingTrayPreviewRunner : ITrayPreviewRunner
+    private sealed class CountingTrayPreviewCoordinator : ITrayPreviewCoordinator
     {
         public int LoadCount { get; private set; }
 
-        public Task<TrayPreviewLoadRunResult> LoadPreviewAsync(
+        public Task<TrayPreviewLoadResult> LoadAsync(
             TrayPreviewInput input,
             CancellationToken cancellationToken = default)
         {
             LoadCount++;
-            return Task.FromResult(new TrayPreviewLoadRunResult
+            return Task.FromResult(new TrayPreviewLoadResult
             {
-                Status = ExecutionRunStatus.Success,
-                LoadResult = new TrayPreviewLoadResult
+                Summary = new SimsTrayPreviewSummary
                 {
-                    Summary = new SimsTrayPreviewSummary
-                    {
-                        TotalItems = 1,
-                        TotalFiles = 1,
-                        TotalBytes = 1024,
-                        TotalMB = 0.001
-                    },
-                    Page = new SimsTrayPreviewPage
-                    {
-                        PageIndex = 1,
-                        PageSize = 50,
-                        TotalItems = 1,
-                        TotalPages = 1,
-                        Items = [CreateItem("item-1")]
-                    },
-                    LoadedPageCount = 1
-                }
+                    TotalItems = 1,
+                    TotalFiles = 1,
+                    TotalBytes = 1024,
+                    TotalMB = 0.001
+                },
+                Page = new SimsTrayPreviewPage
+                {
+                    PageIndex = 1,
+                    PageSize = 50,
+                    TotalItems = 1,
+                    TotalPages = 1,
+                    Items = [CreateItem("item-1")]
+                },
+                LoadedPageCount = 1
             });
         }
 
-        public Task<TrayPreviewPageRunResult> LoadPageAsync(
+        public Task<TrayPreviewPageResult> LoadPageAsync(
             int requestedPageIndex,
             CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(new TrayPreviewPageRunResult
+            return Task.FromResult(new TrayPreviewPageResult
             {
-                Status = ExecutionRunStatus.Success,
-                PageResult = new TrayPreviewPageResult
+                Page = new SimsTrayPreviewPage
                 {
-                    Page = new SimsTrayPreviewPage
-                    {
-                        PageIndex = 1,
-                        PageSize = 50,
-                        TotalItems = 1,
-                        TotalPages = 1,
-                        Items = [CreateItem("item-1")]
-                    },
-                    LoadedPageCount = 1,
-                    FromCache = false
-                }
+                    PageIndex = 1,
+                    PageSize = 50,
+                    TotalItems = 1,
+                    TotalPages = 1,
+                    Items = [CreateItem("item-1")]
+                },
+                LoadedPageCount = 1,
+                FromCache = false
             });
         }
 

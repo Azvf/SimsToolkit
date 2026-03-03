@@ -2,7 +2,6 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
-using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 using SimsModDesktop.Presentation.ViewModels.Panels;
@@ -20,7 +19,7 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
     private const int InitialPriorityThumbnailCount = 12;
     private const int MaxConcurrentThumbnailLoads = 8;
 
-    private readonly ITrayPreviewRunner _trayPreviewRunner;
+    private readonly ITrayPreviewCoordinator _trayPreviewCoordinator;
     private readonly ITrayThumbnailService _trayThumbnailService;
     private readonly HashSet<string> _selectedKeys = new(StringComparer.OrdinalIgnoreCase);
 
@@ -48,10 +47,10 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
     private bool _refreshRequestedWhilePaused;
 
     public TrayLikePreviewSurfaceViewModel(
-        ITrayPreviewRunner trayPreviewRunner,
+        ITrayPreviewCoordinator trayPreviewCoordinator,
         ITrayThumbnailService trayThumbnailService)
     {
-        _trayPreviewRunner = trayPreviewRunner;
+        _trayPreviewCoordinator = trayPreviewCoordinator;
         _trayThumbnailService = trayThumbnailService;
 
         PreviewItems = new ObservableCollection<TrayPreviewListItemViewModel>();
@@ -278,7 +277,7 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
         RefreshCommand.NotifyCanExecuteChanged();
         if (invalidateCaches)
         {
-            _trayPreviewRunner.Invalidate(_trayPathProvider?.Invoke());
+            _trayPreviewCoordinator.Invalidate(_trayPathProvider?.Invoke());
         }
 
         if (_backgroundLoadingPaused)
@@ -307,7 +306,7 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
         _autoReloadCts?.Dispose();
         _autoReloadCts = null;
 
-        _trayPreviewRunner.Invalidate();
+        _trayPreviewCoordinator.Invalidate();
         _trayThumbnailService.ResetMemoryCache();
         _hasLoadedOnce = false;
         ClearItems(statusText);
@@ -413,7 +412,7 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
         try
         {
             var input = _filter.BuildInput(trayPath);
-            if (_trayPreviewRunner.TryGetCached(input, out var cached))
+            if (_trayPreviewCoordinator.TryGetCached(input, out var cached))
             {
                 await ExecuteOnUiAsync(() =>
                 {
@@ -423,24 +422,24 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
                 return;
             }
 
-            var result = await _trayPreviewRunner.LoadPreviewAsync(input).ConfigureAwait(false);
-            if (result.Status == ExecutionRunStatus.Success && result.LoadResult is not null)
+            var result = await _trayPreviewCoordinator.LoadAsync(input).ConfigureAwait(false);
+            if (result is not null)
             {
                 await ExecuteOnUiAsync(() =>
                 {
-                    ApplyLoadResult(result.LoadResult);
+                    ApplyLoadResult(result);
                     StatusText = "Preview loaded.";
                 }).ConfigureAwait(false);
                 return;
             }
-
-            if (result.Status == ExecutionRunStatus.Cancelled)
-            {
-                return;
-            }
-
-            await ExecuteOnUiAsync(() =>
-                ClearItems(string.IsNullOrWhiteSpace(result.ErrorMessage) ? "Preview load failed." : result.ErrorMessage))
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            await ExecuteOnUiAsync(() => ClearItems(string.IsNullOrWhiteSpace(ex.Message) ? "Preview load failed." : ex.Message))
                 .ConfigureAwait(false);
         }
         finally
@@ -459,26 +458,27 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
         await ExecuteOnUiAsync(() => IsBusy = true).ConfigureAwait(false);
         try
         {
-            var result = await _trayPreviewRunner.LoadPageAsync(requestedPageIndex).ConfigureAwait(false);
-            if (result.Status == ExecutionRunStatus.Success && result.PageResult is not null)
+            var result = await _trayPreviewCoordinator.LoadPageAsync(requestedPageIndex).ConfigureAwait(false);
+            if (result is not null)
             {
                 await ExecuteOnUiAsync(() =>
                 {
-                    ApplyPage(result.PageResult.Page, result.PageResult.LoadedPageCount);
-                    StatusText = result.PageResult.FromCache
+                    ApplyPage(result.Page, result.LoadedPageCount);
+                    StatusText = result.FromCache
                         ? "Loaded cached page."
                         : "Preview page loaded.";
                 }).ConfigureAwait(false);
                 return;
             }
-
-            if (result.Status == ExecutionRunStatus.Cancelled)
-            {
-                return;
-            }
-
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
             await ExecuteOnUiAsync(() =>
-                StatusText = string.IsNullOrWhiteSpace(result.ErrorMessage) ? "Preview page load failed." : result.ErrorMessage)
+                StatusText = string.IsNullOrWhiteSpace(ex.Message) ? "Preview page load failed." : ex.Message)
                 .ConfigureAwait(false);
         }
         finally
@@ -674,7 +674,7 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
 
     private void ClearItems(string statusText)
     {
-        _trayPreviewRunner.Reset();
+        _trayPreviewCoordinator.Reset();
         _selectedKeys.Clear();
         _selectionAnchorKey = null;
         SelectedItem = null;

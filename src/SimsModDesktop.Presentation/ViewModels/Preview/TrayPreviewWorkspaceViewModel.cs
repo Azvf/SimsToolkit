@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using SimsModDesktop.Application.Execution;
+using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.TrayDependencyEngine;
 using SimsModDesktop.Presentation.ViewModels.Infrastructure;
@@ -18,14 +18,14 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
 
     public TrayPreviewWorkspaceViewModel(
         TrayPreviewPanelViewModel filter,
-        ITrayPreviewRunner trayPreviewRunner,
+        ITrayPreviewCoordinator trayPreviewCoordinator,
         ITrayThumbnailService trayThumbnailService,
         IFileDialogService fileDialogService,
         ITrayDependencyExportService trayDependencyExportService,
         TrayDependenciesPanelViewModel trayDependencies)
     {
         Filter = filter;
-        Surface = new TrayLikePreviewSurfaceViewModel(trayPreviewRunner, trayThumbnailService);
+        Surface = new TrayLikePreviewSurfaceViewModel(trayPreviewCoordinator, trayThumbnailService);
         _fileDialogService = fileDialogService;
         _trayDependencyExportService = trayDependencyExportService;
         _trayDependencies = trayDependencies;

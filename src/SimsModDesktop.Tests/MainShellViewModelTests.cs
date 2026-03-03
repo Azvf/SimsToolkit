@@ -184,7 +184,7 @@ public sealed class MainShellViewModelTests
             new FakeSaveHouseholdCoordinator(),
             fileDialog,
             new TrayDependenciesLauncher(workspaceVm, workspaceVm.TrayDependencies, navigation),
-            new TrayPreviewRunner(new FakeTrayPreviewCoordinator()),
+            new FakeTrayPreviewCoordinator(),
             trayThumbnailService);
         return new MainShellViewModel(
             workspaceVm,
@@ -214,21 +214,9 @@ public sealed class MainShellViewModelTests
         var trayPreview = new TrayPreviewPanelViewModel();
         var sharedFileOps = new SharedFileOpsPanelViewModel();
 
-        var moduleRegistry = new ActionModuleRegistry(new IActionModule[]
-        {
-            new OrganizeActionModule(organize),
-            new TextureCompressActionModule(textureCompress),
-            new FlattenActionModule(flatten),
-            new NormalizeActionModule(normalize),
-            new MergeActionModule(merge),
-            new FindDupActionModule(findDup),
-            new TrayDependenciesActionModule(trayDependencies),
-            new TrayPreviewActionModule(trayPreview)
-        });
-        var trayPreviewRunner = new TrayPreviewRunner(trayPreviewCoordinator);
         var trayPreviewWorkspace = new TrayPreviewWorkspaceViewModel(
             trayPreview,
-            trayPreviewRunner,
+            trayPreviewCoordinator,
             trayThumbnailService,
             new FakeFileDialogService(),
             new FakeTrayDependencyExportService(),
@@ -243,8 +231,8 @@ public sealed class MainShellViewModelTests
             new FakeFileDialogService());
 
         return new MainWindowViewModel(
-            new ToolkitExecutionRunner(new FakeExecutionCoordinator()),
-            trayPreviewRunner,
+            new FakeExecutionCoordinator(),
+            trayPreviewCoordinator,
             new FakeTrayDependencyExportService(),
             new FakeTrayDependencyAnalysisService(),
             new FakeFileDialogService(),

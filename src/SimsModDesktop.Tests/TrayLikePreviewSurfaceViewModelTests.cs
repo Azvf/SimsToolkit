@@ -1,5 +1,4 @@
 using Avalonia.Threading;
-using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Presentation.ViewModels.Preview;
@@ -15,7 +14,7 @@ public sealed class TrayLikePreviewSurfaceViewModelTests
         var items = Enumerable.Range(1, 20)
             .Select(index => CreateItem(index))
             .ToArray();
-        var runner = new SinglePageTrayPreviewRunner(items);
+        var runner = new SinglePageTrayPreviewCoordinator(items);
         var thumbnails = new TrackingTrayThumbnailService(items.Length, delayMs: 80);
         var surface = new TrayLikePreviewSurfaceViewModel(runner, thumbnails);
         var filter = new TrayLikePreviewFilterViewModel();
@@ -42,7 +41,7 @@ public sealed class TrayLikePreviewSurfaceViewModelTests
         var items = Enumerable.Range(1, 20)
             .Select(index => CreateItem(index))
             .ToArray();
-        var runner = new SinglePageTrayPreviewRunner(items);
+        var runner = new SinglePageTrayPreviewCoordinator(items);
         var thumbnails = new TrackingTrayThumbnailService(items.Length, blockUntilCancellation: true);
         var surface = new TrayLikePreviewSurfaceViewModel(runner, thumbnails);
         var filter = new TrayLikePreviewFilterViewModel();
@@ -60,64 +59,56 @@ public sealed class TrayLikePreviewSurfaceViewModelTests
         Assert.True(surface.PreviewItems.All(item => item.IsThumbnailLoading || item.IsThumbnailPlaceholderVisible));
     }
 
-    private sealed class SinglePageTrayPreviewRunner : ITrayPreviewRunner
+    private sealed class SinglePageTrayPreviewCoordinator : ITrayPreviewCoordinator
     {
         private readonly IReadOnlyList<SimsTrayPreviewItem> _items;
 
-        public SinglePageTrayPreviewRunner(IReadOnlyList<SimsTrayPreviewItem> items)
+        public SinglePageTrayPreviewCoordinator(IReadOnlyList<SimsTrayPreviewItem> items)
         {
             _items = items;
         }
 
-        public Task<TrayPreviewLoadRunResult> LoadPreviewAsync(
+        public Task<TrayPreviewLoadResult> LoadAsync(
             TrayPreviewInput input,
             CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(new TrayPreviewLoadRunResult
+            return Task.FromResult(new TrayPreviewLoadResult
             {
-                Status = ExecutionRunStatus.Success,
-                LoadResult = new TrayPreviewLoadResult
+                Summary = new SimsTrayPreviewSummary
                 {
-                    Summary = new SimsTrayPreviewSummary
-                    {
-                        TotalItems = _items.Count,
-                        TotalFiles = _items.Count,
-                        TotalBytes = _items.Count * 1024L,
-                        TotalMB = _items.Count / 1024d
-                    },
-                    Page = new SimsTrayPreviewPage
-                    {
-                        PageIndex = 1,
-                        PageSize = _items.Count,
-                        TotalItems = _items.Count,
-                        TotalPages = 1,
-                        Items = _items
-                    },
-                    LoadedPageCount = 1
-                }
+                    TotalItems = _items.Count,
+                    TotalFiles = _items.Count,
+                    TotalBytes = _items.Count * 1024L,
+                    TotalMB = _items.Count / 1024d
+                },
+                Page = new SimsTrayPreviewPage
+                {
+                    PageIndex = 1,
+                    PageSize = _items.Count,
+                    TotalItems = _items.Count,
+                    TotalPages = 1,
+                    Items = _items
+                },
+                LoadedPageCount = 1
             });
         }
 
-        public Task<TrayPreviewPageRunResult> LoadPageAsync(
+        public Task<TrayPreviewPageResult> LoadPageAsync(
             int requestedPageIndex,
             CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(new TrayPreviewPageRunResult
+            return Task.FromResult(new TrayPreviewPageResult
             {
-                Status = ExecutionRunStatus.Success,
-                PageResult = new TrayPreviewPageResult
+                Page = new SimsTrayPreviewPage
                 {
-                    Page = new SimsTrayPreviewPage
-                    {
-                        PageIndex = 1,
-                        PageSize = _items.Count,
-                        TotalItems = _items.Count,
-                        TotalPages = 1,
-                        Items = _items
-                    },
-                    LoadedPageCount = 1,
-                    FromCache = false
-                }
+                    PageIndex = 1,
+                    PageSize = _items.Count,
+                    TotalItems = _items.Count,
+                    TotalPages = 1,
+                    Items = _items
+                },
+                LoadedPageCount = 1,
+                FromCache = false
             });
         }
 

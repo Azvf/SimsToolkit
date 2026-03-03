@@ -33,8 +33,8 @@ public sealed class MainWindowViewModel : ObservableObject
         PropertyNameCaseInsensitive = true
     };
 
-    private readonly IToolkitExecutionRunner _toolkitExecutionRunner;
-    private readonly ITrayPreviewRunner _trayPreviewRunner;
+    private readonly IExecutionCoordinator _executionCoordinator;
+    private readonly ITrayPreviewCoordinator _trayPreviewCoordinator;
     private readonly ITrayThumbnailService _trayThumbnailService;
     private readonly ITrayDependencyExportService _trayDependencyExportService;
     private readonly ITrayDependencyAnalysisService _trayDependencyAnalysisService;
@@ -91,8 +91,8 @@ public sealed class MainWindowViewModel : ObservableObject
     private string? _trayPreviewSelectionAnchorKey;
 
     public MainWindowViewModel(
-        IToolkitExecutionRunner toolkitExecutionRunner,
-        ITrayPreviewRunner trayPreviewRunner,
+        IExecutionCoordinator executionCoordinator,
+        ITrayPreviewCoordinator trayPreviewCoordinator,
         ITrayDependencyExportService trayDependencyExportService,
         ITrayDependencyAnalysisService trayDependencyAnalysisService,
         IFileDialogService fileDialogService,
@@ -119,8 +119,8 @@ public sealed class MainWindowViewModel : ObservableObject
         IOperationRecoveryCoordinator? operationRecoveryCoordinator = null,
         IActionResultRepository? actionResultRepository = null)
     {
-        _toolkitExecutionRunner = toolkitExecutionRunner;
-        _trayPreviewRunner = trayPreviewRunner;
+        _executionCoordinator = executionCoordinator;
+        _trayPreviewCoordinator = trayPreviewCoordinator;
         _trayDependencyExportService = trayDependencyExportService;
         _trayDependencyAnalysisService = trayDependencyAnalysisService;
         _trayThumbnailService = trayThumbnailService;
@@ -1356,61 +1356,16 @@ public sealed class MainWindowViewModel : ObservableObject
         try
         {
             await MarkRecoveryStartedAsync(operationId);
-            var runResult = await _toolkitExecutionRunner.RunAsync(
-                cliPlan,
-                onOutput: AppendLog,
-                onProgress: HandleProgress,
-                cancellationToken: _executionCts.Token);
-            stopwatch.Stop();
-
-            if (runResult.Status == ExecutionRunStatus.Success)
+            SimsExecutionResult result;
+            try
             {
-                var result = runResult.ExecutionResult!;
-                AppendLog($"[exit] code={result.ExitCode}");
-                StatusMessage = result.ExitCode == 0
-                    ? LF("status.executionCompleted", stopwatch.Elapsed.ToString("mm\\:ss"))
-                    : LF("status.executionFailedExit", result.ExitCode, stopwatch.Elapsed.ToString("mm\\:ss"));
-                SetProgress(
-                    isIndeterminate: false,
-                    percent: result.ExitCode == 0 ? 100 : 0,
-                    message: result.ExitCode == 0 ? L("progress.completed") : L("progress.failed"));
-
-                if (result.ExitCode != 0)
-                {
-                    await MarkRecoveryCompletedAsync(
-                        operationId,
-                        new RecoverableOperationCompletion
-                        {
-                            Status = OperationRecoveryStatus.Failed,
-                            FailureMessage = $"Process exited with code {result.ExitCode}.",
-                            ResultSummaryJson = JsonSerializer.Serialize(new
-                            {
-                                result.ExitCode,
-                                Elapsed = stopwatch.Elapsed.ToString("mm\\:ss")
-                            })
-                        });
-                    await SaveResultHistoryAsync(input.Action, "Toolkit", $"Exit code {result.ExitCode}", operationId);
-                    recoveryCompleted = true;
-                    await ShowErrorPopupAsync(L("status.executionFailed"));
-                }
-                else
-                {
-                    await MarkRecoveryCompletedAsync(
-                        operationId,
-                        new RecoverableOperationCompletion
-                        {
-                            Status = OperationRecoveryStatus.Succeeded,
-                            ResultSummaryJson = JsonSerializer.Serialize(new
-                            {
-                                result.ExitCode,
-                                Elapsed = stopwatch.Elapsed.ToString("mm\\:ss")
-                            })
-                        });
-                    await SaveResultHistoryAsync(input.Action, "Toolkit", "Completed", operationId);
-                    recoveryCompleted = true;
-                }
+                result = await _executionCoordinator.ExecuteAsync(
+                    cliPlan.Input,
+                    AppendLog,
+                    HandleProgress,
+                    _executionCts.Token);
             }
-            else if (runResult.Status == ExecutionRunStatus.Cancelled)
+            catch (OperationCanceledException)
             {
                 AppendLog("[cancelled]");
                 StatusMessage = L("status.executionCancelled");
@@ -1423,12 +1378,13 @@ public sealed class MainWindowViewModel : ObservableObject
                     });
                 await SaveResultHistoryAsync(input.Action, "Toolkit", "Cancelled", operationId);
                 recoveryCompleted = true;
+                return;
             }
-            else
+            catch (Exception ex)
             {
-                var errorMessage = string.IsNullOrWhiteSpace(runResult.ErrorMessage)
+                var errorMessage = string.IsNullOrWhiteSpace(ex.Message)
                     ? L("status.unknownExecutionError")
-                    : runResult.ErrorMessage;
+                    : ex.Message;
                 AppendLog("[error] " + errorMessage);
                 StatusMessage = L("status.executionFailed");
                 SetProgress(isIndeterminate: false, percent: 0, message: L("progress.executionFailed"));
@@ -1442,6 +1398,51 @@ public sealed class MainWindowViewModel : ObservableObject
                 await SaveResultHistoryAsync(input.Action, "Toolkit", errorMessage, operationId);
                 recoveryCompleted = true;
                 await ShowErrorPopupAsync(L("status.executionFailed"));
+                return;
+            }
+            stopwatch.Stop();
+            AppendLog($"[exit] code={result.ExitCode}");
+            StatusMessage = result.ExitCode == 0
+                ? LF("status.executionCompleted", stopwatch.Elapsed.ToString("mm\\:ss"))
+                : LF("status.executionFailedExit", result.ExitCode, stopwatch.Elapsed.ToString("mm\\:ss"));
+            SetProgress(
+                isIndeterminate: false,
+                percent: result.ExitCode == 0 ? 100 : 0,
+                message: result.ExitCode == 0 ? L("progress.completed") : L("progress.failed"));
+
+            if (result.ExitCode != 0)
+            {
+                await MarkRecoveryCompletedAsync(
+                    operationId,
+                    new RecoverableOperationCompletion
+                    {
+                        Status = OperationRecoveryStatus.Failed,
+                        FailureMessage = $"Process exited with code {result.ExitCode}.",
+                        ResultSummaryJson = JsonSerializer.Serialize(new
+                        {
+                            result.ExitCode,
+                            Elapsed = stopwatch.Elapsed.ToString("mm\\:ss")
+                        })
+                    });
+                await SaveResultHistoryAsync(input.Action, "Toolkit", $"Exit code {result.ExitCode}", operationId);
+                recoveryCompleted = true;
+                await ShowErrorPopupAsync(L("status.executionFailed"));
+            }
+            else
+            {
+                await MarkRecoveryCompletedAsync(
+                    operationId,
+                    new RecoverableOperationCompletion
+                    {
+                        Status = OperationRecoveryStatus.Succeeded,
+                        ResultSummaryJson = JsonSerializer.Serialize(new
+                        {
+                            result.ExitCode,
+                            Elapsed = stopwatch.Elapsed.ToString("mm\\:ss")
+                        })
+                    });
+                await SaveResultHistoryAsync(input.Action, "Toolkit", "Completed", operationId);
+                recoveryCompleted = true;
             }
         }
         catch (Exception ex)
@@ -1799,9 +1800,7 @@ public sealed class MainWindowViewModel : ObservableObject
         _executionCts = new CancellationTokenSource();
         var startedAt = DateTimeOffset.Now;
         var stopwatch = Stopwatch.StartNew();
-        var recoveryCompleted = false;
-
-        _trayPreviewRunner.Reset();
+        _trayPreviewCoordinator.Reset();
         ClearLog();
         ClearTrayPreview();
         IsBusy = true;
@@ -1814,96 +1813,73 @@ public sealed class MainWindowViewModel : ObservableObject
         try
         {
             await MarkRecoveryStartedAsync(operationId);
-            var runResult = await _trayPreviewRunner.LoadPreviewAsync(input, _executionCts.Token);
+            var result = await _trayPreviewCoordinator.LoadAsync(input, _executionCts.Token);
             stopwatch.Stop();
+            SetTrayPreviewSummary(result.Summary);
+            SetTrayPreviewPage(result.Page, result.LoadedPageCount);
 
-            if (runResult.Status == ExecutionRunStatus.Success)
+            AppendLog($"[preview] trayPath={input.TrayPath}");
+            if (!string.IsNullOrWhiteSpace(input.AuthorFilter))
             {
-                var result = runResult.LoadResult!;
-                SetTrayPreviewSummary(result.Summary);
-                SetTrayPreviewPage(result.Page, result.LoadedPageCount);
+                AppendLog($"[preview] authorFilter={input.AuthorFilter}");
+            }
 
-                AppendLog($"[preview] trayPath={input.TrayPath}");
-                if (!string.IsNullOrWhiteSpace(input.AuthorFilter))
+            if (!string.IsNullOrWhiteSpace(input.SearchQuery))
+            {
+                AppendLog($"[preview] search={input.SearchQuery}");
+            }
+
+            AppendLog($"[preview] presetType={input.PresetTypeFilter}");
+            AppendLog($"[preview] timeFilter={input.TimeFilter}");
+            AppendLog($"[preview] pageSize={input.PageSize}");
+            AppendLog($"[preview] totalItems={result.Summary.TotalItems}");
+
+            StatusMessage =
+                LF("status.trayPreviewLoaded", result.Summary.TotalItems, result.Page.TotalPages, stopwatch.Elapsed.ToString("mm\\:ss"));
+            SetProgress(isIndeterminate: false, percent: 100, message: L("progress.trayLoaded"));
+            await MarkRecoveryCompletedAsync(
+                operationId,
+                new RecoverableOperationCompletion
                 {
-                    AppendLog($"[preview] authorFilter={input.AuthorFilter}");
-                }
-
-                if (!string.IsNullOrWhiteSpace(input.SearchQuery))
+                    Status = OperationRecoveryStatus.Succeeded,
+                    ResultSummaryJson = JsonSerializer.Serialize(new
+                    {
+                        result.Summary.TotalItems,
+                        result.Page.TotalPages
+                    })
+                });
+            await SaveResultHistoryAsync(SimsAction.TrayPreview, "TrayPreview", $"Loaded {result.Summary.TotalItems} items", operationId);
+        }
+        catch (OperationCanceledException)
+        {
+            AppendLog("[cancelled]");
+            StatusMessage = L("status.trayPreviewCancelled");
+            SetProgress(isIndeterminate: false, percent: 0, message: L("progress.cancelled"));
+            await MarkRecoveryCompletedAsync(
+                operationId,
+                new RecoverableOperationCompletion
                 {
-                    AppendLog($"[preview] search={input.SearchQuery}");
-                }
-
-                AppendLog($"[preview] presetType={input.PresetTypeFilter}");
-                AppendLog($"[preview] timeFilter={input.TimeFilter}");
-                AppendLog($"[preview] pageSize={input.PageSize}");
-                AppendLog($"[preview] totalItems={result.Summary.TotalItems}");
-
-                StatusMessage =
-                    LF("status.trayPreviewLoaded", result.Summary.TotalItems, result.Page.TotalPages, stopwatch.Elapsed.ToString("mm\\:ss"));
-                SetProgress(isIndeterminate: false, percent: 100, message: L("progress.trayLoaded"));
-                await MarkRecoveryCompletedAsync(
-                    operationId,
-                    new RecoverableOperationCompletion
-                    {
-                        Status = OperationRecoveryStatus.Succeeded,
-                        ResultSummaryJson = JsonSerializer.Serialize(new
-                        {
-                            result.Summary.TotalItems,
-                            result.Page.TotalPages
-                        })
-                    });
-                await SaveResultHistoryAsync(SimsAction.TrayPreview, "TrayPreview", $"Loaded {result.Summary.TotalItems} items", operationId);
-                recoveryCompleted = true;
-            }
-            else if (runResult.Status == ExecutionRunStatus.Cancelled)
-            {
-                AppendLog("[cancelled]");
-                StatusMessage = L("status.trayPreviewCancelled");
-                SetProgress(isIndeterminate: false, percent: 0, message: L("progress.cancelled"));
-                await MarkRecoveryCompletedAsync(
-                    operationId,
-                    new RecoverableOperationCompletion
-                    {
-                        Status = OperationRecoveryStatus.Cancelled
-                    });
-                await SaveResultHistoryAsync(SimsAction.TrayPreview, "TrayPreview", "Cancelled", operationId);
-                recoveryCompleted = true;
-            }
-            else
-            {
-                var errorMessage = string.IsNullOrWhiteSpace(runResult.ErrorMessage)
-                    ? L("status.unknownTrayPreviewError")
-                    : runResult.ErrorMessage;
-                AppendLog("[error] " + errorMessage);
-                StatusMessage = L("status.trayPreviewFailed");
-                SetProgress(isIndeterminate: false, percent: 0, message: L("progress.trayFailed"));
-                await MarkRecoveryCompletedAsync(
-                    operationId,
-                    new RecoverableOperationCompletion
-                    {
-                        Status = OperationRecoveryStatus.Failed,
-                        FailureMessage = errorMessage
-                    });
-                await SaveResultHistoryAsync(SimsAction.TrayPreview, "TrayPreview", errorMessage, operationId);
-                recoveryCompleted = true;
-                await ShowErrorPopupAsync(L("status.trayPreviewFailed"));
-            }
+                    Status = OperationRecoveryStatus.Cancelled
+                });
+            await SaveResultHistoryAsync(SimsAction.TrayPreview, "TrayPreview", "Cancelled", operationId);
         }
         catch (Exception ex)
         {
-            if (!recoveryCompleted)
-            {
-                await MarkRecoveryCompletedAsync(
-                    operationId,
-                    new RecoverableOperationCompletion
-                    {
-                        Status = OperationRecoveryStatus.Failed,
-                        FailureMessage = ex.Message
-                    });
-            }
-
-            throw;
+            var errorMessage = string.IsNullOrWhiteSpace(ex.Message)
+                ? L("status.unknownTrayPreviewError")
+                : ex.Message;
+            AppendLog("[error] " + errorMessage);
+            StatusMessage = L("status.trayPreviewFailed");
+            SetProgress(isIndeterminate: false, percent: 0, message: L("progress.trayFailed"));
+            await MarkRecoveryCompletedAsync(
+                operationId,
+                new RecoverableOperationCompletion
+                {
+                    Status = OperationRecoveryStatus.Failed,
+                    FailureMessage = errorMessage
+                });
+            await SaveResultHistoryAsync(SimsAction.TrayPreview, "TrayPreview", errorMessage, operationId);
+            await ShowErrorPopupAsync(L("status.trayPreviewFailed"));
         }
         finally
         {
@@ -2117,24 +2093,21 @@ public sealed class MainWindowViewModel : ObservableObject
         SetTrayPreviewPageLoading(true);
         try
         {
-            var runResult = await _trayPreviewRunner.LoadPageAsync(requestedPageIndex);
-            if (runResult.Status == ExecutionRunStatus.Success)
-            {
-                var result = runResult.PageResult!;
-                SetTrayPreviewPage(result.Page, result.LoadedPageCount);
-                StatusMessage = LF("status.trayPageLoaded", result.Page.PageIndex, result.Page.TotalPages);
-                return;
-            }
-
-            if (runResult.Status == ExecutionRunStatus.Cancelled)
-            {
-                StatusMessage = L("status.trayPageCancelled");
-                return;
-            }
-
-            var errorMessage = string.IsNullOrWhiteSpace(runResult.ErrorMessage)
+            var result = await _trayPreviewCoordinator.LoadPageAsync(requestedPageIndex);
+            SetTrayPreviewPage(result.Page, result.LoadedPageCount);
+            StatusMessage = LF("status.trayPageLoaded", result.Page.PageIndex, result.Page.TotalPages);
+            return;
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = L("status.trayPageCancelled");
+            return;
+        }
+        catch (Exception ex)
+        {
+            var errorMessage = string.IsNullOrWhiteSpace(ex.Message)
                 ? L("status.unknownTrayPreviewPageError")
-                : runResult.ErrorMessage;
+                : ex.Message;
             AppendLog("[error] " + errorMessage);
             StatusMessage = L("status.trayPageFailed");
             await ShowErrorPopupAsync(L("status.trayPageFailed"));
@@ -2163,7 +2136,7 @@ public sealed class MainWindowViewModel : ObservableObject
             return;
         }
 
-        if (_trayPreviewRunner.TryGetCached(input, out var cached))
+        if (_trayPreviewCoordinator.TryGetCached(input, out var cached))
         {
             SetTrayPreviewSummary(cached.Summary);
             SetTrayPreviewPage(cached.Page, cached.LoadedPageCount);
@@ -2900,56 +2873,6 @@ public sealed class MainWindowViewModel : ObservableObject
         }
 
         return true;
-    }
-
-    private static bool TryCompleteTrayDependencyExport(
-        ToolkitRunResult runResult,
-        IReadOnlyList<string> outputLines,
-        out bool ignoredMissingOnly,
-        out string error)
-    {
-        ignoredMissingOnly = false;
-        error = string.Empty;
-
-        if (runResult.Status == ExecutionRunStatus.Cancelled)
-        {
-            error = "Referenced mod export was cancelled.";
-            return false;
-        }
-
-        if (runResult.Status == ExecutionRunStatus.Failed)
-        {
-            if (IsIgnorableMissingModFileFailure(runResult.ErrorMessage, outputLines))
-            {
-                ignoredMissingOnly = true;
-                return true;
-            }
-
-            error = string.IsNullOrWhiteSpace(runResult.ErrorMessage)
-                ? "Referenced mod export failed."
-                : runResult.ErrorMessage.Trim();
-            return false;
-        }
-
-        var exitCode = runResult.ExecutionResult?.ExitCode ?? 0;
-        if (exitCode == 0)
-        {
-            return true;
-        }
-
-        if (IsIgnorableMissingModFileFailure(runResult.ErrorMessage, outputLines))
-        {
-            ignoredMissingOnly = true;
-            return true;
-        }
-
-        var detail = outputLines
-            .LastOrDefault(line => !string.IsNullOrWhiteSpace(line))
-            ?.Trim();
-        error = string.IsNullOrWhiteSpace(detail)
-            ? $"Referenced mod export failed with exit code {exitCode}."
-            : $"Referenced mod export failed with exit code {exitCode}: {detail}";
-        return false;
     }
 
     private static bool IsIgnorableMissingModFileFailure(string errorMessage, IReadOnlyList<string> outputLines)

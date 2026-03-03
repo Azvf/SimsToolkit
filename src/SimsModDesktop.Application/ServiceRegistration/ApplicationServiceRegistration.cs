@@ -46,9 +46,6 @@ public static class ApplicationServiceRegistration
         services.AddSingleton<IFileTransformationEngine, UnifiedFileTransformationEngine>();
         services.AddSingleton<ITrayPreviewCoordinator, TrayPreviewCoordinator>();
         services.AddSingleton<IToolkitActionPlanner, ToolkitActionPlanner>();
-        services.AddSingleton<IToolkitExecutionRunner, ToolkitExecutionRunner>();
-        services.AddSingleton<ITrayPreviewRunner, TrayPreviewRunner>();
-
         services.AddSingleton<IBuildBuyItemDescriptorService, BuildBuyPlaceholderDescriptorService>();
         services.AddSingleton<ICasItemDescriptorService, CasItemDescriptorService>();
         services.AddSingleton<IFastModItemIndexService, FastModItemIndexService>();
