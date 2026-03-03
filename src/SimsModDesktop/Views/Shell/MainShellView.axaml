@@ -12,217 +12,300 @@
     <Grid x:Name="ShellRoot"
           Focusable="True"
           PointerPressed="OnShellPointerPressed">
-        <Grid Margin="16" ColumnSpacing="24" RowDefinitions="*" MinHeight="0">
+        <Grid Margin="16" ColumnSpacing="{Binding ShellColumnSpacing}" RowDefinitions="*" MinHeight="0">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="{Binding SidebarWidth, Mode=OneWay}" MinWidth="72" MaxWidth="300" />
+                <ColumnDefinition Width="Auto" MinWidth="56" MaxWidth="300" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <Border Classes="sidebar-shell" Padding="0,12,0,12">
-            <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="16">
-                <!-- Header & Toggle -->
-                <Grid ColumnDefinitions="*,Auto" Margin="12,0" Height="32">
-                    <StackPanel Spacing="4" VerticalAlignment="Center" IsVisible="{Binding IsSidebarExpanded}">
-                        <TextBlock Classes="sidebar-kicker" Text="SimsToolkit" />
-                        <TextBlock Classes="sidebar-minimal-title" Text="Workspace" />
-                    </StackPanel>
-                    
-                    <Button Grid.Column="1" 
-                            Classes="secondary"
-                            Padding="8"
-                            CornerRadius="8"
-                            Width="32" Height="32"
-                            VerticalAlignment="Center"
-                            HorizontalAlignment="{Binding IsSidebarExpanded, Converter={x:Static shellViews:MainShellView.BooleanToHorizontalAlignmentConverter}}"
-                            Command="{Binding ToggleSidebarCommand}">
-                        <PathIcon Data="{StaticResource Icon.Menu}" Width="12" Height="12" />
-                    </Button>
-                </Grid>
+            <Border Classes="sidebar-shell"
+                    Width="{Binding SidebarWidth}"
+                    HorizontalAlignment="Left"
+                    Padding="0,12,0,12">
+                <ScrollViewer Width="{Binding SidebarWidth}"
+                              HorizontalAlignment="Left"
+                              MinHeight="0"
+                              HorizontalScrollBarVisibility="Disabled"
+                              VerticalScrollBarVisibility="Auto">
+                    <StackPanel Spacing="16">
+                        <DockPanel Margin="8,0" MinHeight="40" IsVisible="{Binding IsSidebarExpanded}">
+                            <Button DockPanel.Dock="Right"
+                                    Classes="secondary"
+                                    Padding="0"
+                                    CornerRadius="12"
+                                    Width="40"
+                                    Height="40"
+                                    VerticalAlignment="Center"
+                                    Command="{Binding ToggleSidebarCommand}">
+                                <PathIcon Data="{StaticResource Icon.Menu}" Width="14" Height="14" />
+                            </Button>
 
-                <Border Grid.Row="1"
-                        Margin="12,0"
-                        Classes="sidebar-subtle-block"
-                        Classes.path-health-interactive="{Binding IsPathHealthExpanded}"
-                        Padding="8"
-                        IsHitTestVisible="{Binding IsPathHealthExpanded}"
-                        IsVisible="{Binding IsSidebarExpanded}"
-                        PointerPressed="OnPathHealthPointerPressed">
-                    <Grid>
-                        <!-- Simplified Health Indicator (Visible when collapsed or expanded) -->
-                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8" IsVisible="{Binding !IsPathHealthExpanded}">
-                             <Border Classes="status-dot"
-                                     Classes.status-ok="{Binding HasAllCorePathsValid}"
-                                     Classes.status-missing="{Binding !HasAllCorePathsValid}"
-                                     VerticalAlignment="Center"
-                                     HorizontalAlignment="Center"
-                                     ToolTip.Tip="Path Health Status"/>
-                             <TextBlock Grid.Column="1" 
-                                        Text="Path Status" 
-                                        VerticalAlignment="Center" 
-                                        Classes="helper-text"/>
-                        </Grid>
+                            <StackPanel Spacing="4" VerticalAlignment="Center" IsVisible="{Binding ShowSidebarBranding}">
+                                <TextBlock Classes="sidebar-kicker" Text="SimsToolkit" />
+                                <TextBlock Classes="sidebar-minimal-title" Text="Workspace" />
+                            </StackPanel>
+                        </DockPanel>
 
-                        <Grid ColumnDefinitions="*,Auto"
-                              RowDefinitions="Auto,Auto,Auto,Auto"
-                              ColumnSpacing="8"
-                              RowSpacing="6"
-                              IsVisible="{Binding IsPathHealthExpanded}">
-                            <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                <Border Classes="status-dot"
+                        <Button IsVisible="{Binding IsSidebarCollapsed}"
+                                Classes="secondary"
+                                Width="40"
+                                Height="40"
+                                Padding="0"
+                                CornerRadius="12"
+                                HorizontalAlignment="Center"
+                                Command="{Binding ToggleSidebarCommand}">
+                            <PathIcon Data="{StaticResource Icon.Menu}" Width="14" Height="14" />
+                        </Button>
+
+                        <Border Margin="8,0"
+                                Classes="sidebar-subtle-block"
+                                Classes.sidebar-compact-chip="{Binding IsSidebarCollapsed}"
+                                Classes.path-health-interactive="{Binding IsPathHealthExpanded}"
+                                Padding="8"
+                                IsHitTestVisible="{Binding IsPathHealthExpanded}"
+                                IsVisible="{Binding ShowCompactPathHealth}"
+                                PointerPressed="OnPathHealthPointerPressed">
+                            <Grid>
+                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8" IsVisible="{Binding IsSidebarExpanded}">
+                                    <Border Classes="status-dot"
+                                            Classes.status-ok="{Binding HasAllCorePathsValid}"
+                                            Classes.status-missing="{Binding !HasAllCorePathsValid}"
+                                            VerticalAlignment="Center"
+                                            HorizontalAlignment="Center"
+                                            ToolTip.Tip="Path Health Status" />
+                                    <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+                                        <TextBlock Classes="helper-text" Text="Workspace Paths" />
+                                        <TextBlock Classes="helper-text" Text="{Binding PathHealthSummary}" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <Border IsVisible="{Binding IsSidebarCollapsed}"
+                                        Classes="status-dot"
+                                        Classes.status-ok="{Binding HasAllCorePathsValid}"
+                                        Classes.status-missing="{Binding !HasAllCorePathsValid}"
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center"
+                                        ToolTip.Tip="{Binding PathHealthSummary}" />
+                            </Grid>
+                        </Border>
+
+                        <Border Margin="8,0"
+                                Classes="sidebar-subtle-block"
+                                Classes.path-health-interactive="{Binding IsPathHealthExpanded}"
+                                Padding="8"
+                                IsHitTestVisible="{Binding IsPathHealthExpanded}"
+                                IsVisible="{Binding ShowDetailedPathHealth}"
+                                PointerPressed="OnPathHealthPointerPressed">
+                            <Grid ColumnDefinitions="*,Auto"
+                                  RowDefinitions="Auto,Auto,Auto,Auto"
+                                  ColumnSpacing="8"
+                                  RowSpacing="6">
+                                <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <Border Classes="status-dot"
+                                            Classes.status-ok="{Binding HasGameExecutable}"
+                                            Classes.status-warning="{Binding IsGameExecutableWarning}"
+                                            Classes.status-missing="{Binding IsGameExecutableMissing}" />
+                                    <TextBlock VerticalAlignment="Center" Text="Game" />
+                                </StackPanel>
+                                <Border Grid.Row="0"
+                                        Grid.Column="1"
+                                        Classes="status-pill"
                                         Classes.status-ok="{Binding HasGameExecutable}"
                                         Classes.status-warning="{Binding IsGameExecutableWarning}"
-                                        Classes.status-missing="{Binding IsGameExecutableMissing}" />
-                                <TextBlock VerticalAlignment="Center" Text="Game" />
-                            </StackPanel>
-                            <Border Grid.Row="0"
-                                    Grid.Column="1"
-                                    Classes="status-pill"
-                                    Classes.status-ok="{Binding HasGameExecutable}"
-                                    Classes.status-warning="{Binding IsGameExecutableWarning}"
-                                    Classes.status-missing="{Binding IsGameExecutableMissing}">
-                                <TextBlock Classes="status-pill-text" Text="{Binding GameStatusBadgeText}" />
-                            </Border>
+                                        Classes.status-missing="{Binding IsGameExecutableMissing}">
+                                    <TextBlock Classes="status-pill-text" Text="{Binding GameStatusBadgeText}" />
+                                </Border>
 
-                            <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                <Border Classes="status-dot"
+                                <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <Border Classes="status-dot"
+                                            Classes.status-ok="{Binding HasModsPath}"
+                                            Classes.status-warning="{Binding IsModsPathWarning}"
+                                            Classes.status-missing="{Binding IsModsPathMissing}" />
+                                    <TextBlock VerticalAlignment="Center" Text="Mods" />
+                                </StackPanel>
+                                <Border Grid.Row="1"
+                                        Grid.Column="1"
+                                        Classes="status-pill"
                                         Classes.status-ok="{Binding HasModsPath}"
                                         Classes.status-warning="{Binding IsModsPathWarning}"
-                                        Classes.status-missing="{Binding IsModsPathMissing}" />
-                                <TextBlock VerticalAlignment="Center" Text="Mods" />
-                            </StackPanel>
-                            <Border Grid.Row="1"
-                                    Grid.Column="1"
-                                    Classes="status-pill"
-                                    Classes.status-ok="{Binding HasModsPath}"
-                                    Classes.status-warning="{Binding IsModsPathWarning}"
-                                    Classes.status-missing="{Binding IsModsPathMissing}">
-                                <TextBlock Classes="status-pill-text" Text="{Binding ModsStatusBadgeText}" />
-                            </Border>
+                                        Classes.status-missing="{Binding IsModsPathMissing}">
+                                    <TextBlock Classes="status-pill-text" Text="{Binding ModsStatusBadgeText}" />
+                                </Border>
 
-                            <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                <Border Classes="status-dot"
+                                <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <Border Classes="status-dot"
+                                            Classes.status-ok="{Binding HasTrayPath}"
+                                            Classes.status-warning="{Binding IsTrayPathWarning}"
+                                            Classes.status-missing="{Binding IsTrayPathMissing}" />
+                                    <TextBlock VerticalAlignment="Center" Text="Tray" />
+                                </StackPanel>
+                                <Border Grid.Row="2"
+                                        Grid.Column="1"
+                                        Classes="status-pill"
                                         Classes.status-ok="{Binding HasTrayPath}"
                                         Classes.status-warning="{Binding IsTrayPathWarning}"
-                                        Classes.status-missing="{Binding IsTrayPathMissing}" />
-                                <TextBlock VerticalAlignment="Center" Text="Tray" />
-                            </StackPanel>
-                            <Border Grid.Row="2"
-                                    Grid.Column="1"
-                                    Classes="status-pill"
-                                    Classes.status-ok="{Binding HasTrayPath}"
-                                    Classes.status-warning="{Binding IsTrayPathWarning}"
-                                    Classes.status-missing="{Binding IsTrayPathMissing}">
-                                <TextBlock Classes="status-pill-text" Text="{Binding TrayStatusBadgeText}" />
-                            </Border>
+                                        Classes.status-missing="{Binding IsTrayPathMissing}">
+                                    <TextBlock Classes="status-pill-text" Text="{Binding TrayStatusBadgeText}" />
+                                </Border>
 
-                            <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                <Border Classes="status-dot"
+                                <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <Border Classes="status-dot"
+                                            Classes.status-ok="{Binding HasSavesPath}"
+                                            Classes.status-warning="{Binding IsSavesPathWarning}"
+                                            Classes.status-missing="{Binding IsSavesPathMissing}" />
+                                    <TextBlock VerticalAlignment="Center" Text="Saves" />
+                                </StackPanel>
+                                <Border Grid.Row="3"
+                                        Grid.Column="1"
+                                        Classes="status-pill"
                                         Classes.status-ok="{Binding HasSavesPath}"
                                         Classes.status-warning="{Binding IsSavesPathWarning}"
-                                        Classes.status-missing="{Binding IsSavesPathMissing}" />
-                                <TextBlock VerticalAlignment="Center" Text="Saves" />
-                            </StackPanel>
-                            <Border Grid.Row="3"
-                                    Grid.Column="1"
-                                    Classes="status-pill"
-                                    Classes.status-ok="{Binding HasSavesPath}"
-                                    Classes.status-warning="{Binding IsSavesPathWarning}"
-                                    Classes.status-missing="{Binding IsSavesPathMissing}">
-                                <TextBlock Classes="status-pill-text" Text="{Binding SavesStatusBadgeText}" />
-                            </Border>
-                        </Grid>
-                    </Grid>
-                </Border>
-
-                <ScrollViewer Grid.Row="2" MinHeight="0" VerticalScrollBarVisibility="Auto">
-                    <StackPanel Spacing="4" Margin="0,0,8,0">
-                        <!-- Toolkit -->
-                        <Button Classes="sidebar-link-minimal"
-                                Classes.sidebar-active="{Binding IsToolkitSectionSelected}"
-                                Command="{Binding SelectSectionCommand}"
-                                CommandParameter="Toolkit"
-                                ToolTip.Tip="Toolkit">
-                            <Grid ColumnDefinitions="24,*" ColumnSpacing="12">
-                                <PathIcon Grid.Column="0" Data="{StaticResource Icon.Toolkit}" Width="16" Height="16" HorizontalAlignment="Center" />
-                                <TextBlock Grid.Column="1" Text="Toolkit" VerticalAlignment="Center" IsVisible="{Binding IsSidebarExpanded}" />
+                                        Classes.status-missing="{Binding IsSavesPathMissing}">
+                                    <TextBlock Classes="status-pill-text" Text="{Binding SavesStatusBadgeText}" />
+                                </Border>
                             </Grid>
-                        </Button>
-                        
-                        <!-- Mods -->
-                        <Button Classes="sidebar-link-minimal"
-                                Classes.sidebar-active="{Binding IsModsSectionSelected}"
-                                Command="{Binding SelectSectionCommand}"
-                                CommandParameter="Mods"
-                                ToolTip.Tip="Mods">
-                            <Grid ColumnDefinitions="24,*" ColumnSpacing="12">
-                                <PathIcon Grid.Column="0" Data="{StaticResource Icon.Mods}" Width="16" Height="16" HorizontalAlignment="Center" />
-                                <TextBlock Grid.Column="1" Text="Mods" VerticalAlignment="Center" IsVisible="{Binding IsSidebarExpanded}" />
-                            </Grid>
-                        </Button>
+                        </Border>
 
-                        <!-- Tray -->
-                        <Button Classes="sidebar-link-minimal"
-                                Classes.sidebar-active="{Binding IsTraySectionSelected}"
-                                Command="{Binding SelectSectionCommand}"
-                                CommandParameter="Tray"
-                                ToolTip.Tip="Tray">
-                            <Grid ColumnDefinitions="24,*" ColumnSpacing="12">
-                                <PathIcon Grid.Column="0" Data="{StaticResource Icon.Tray}" Width="16" Height="16" HorizontalAlignment="Center" />
-                                <TextBlock Grid.Column="1" Text="Tray" VerticalAlignment="Center" IsVisible="{Binding IsSidebarExpanded}" />
-                            </Grid>
-                        </Button>
+                        <StackPanel Spacing="4" Margin="8,0">
+                            <Button Classes="sidebar-link-minimal"
+                                    Classes.sidebar-active="{Binding IsToolkitSectionSelected}"
+                                    Classes.sidebar-link-collapsed="{Binding IsSidebarCollapsed}"
+                                    Command="{Binding SelectSectionCommand}"
+                                    CommandParameter="Toolkit"
+                                    ToolTip.Tip="Toolkit">
+                                <Grid>
+                                    <Grid ColumnDefinitions="24,*" ColumnSpacing="12" IsVisible="{Binding IsSidebarExpanded}">
+                                        <PathIcon Grid.Column="0" Data="{StaticResource Icon.Toolkit}" Width="16" Height="16" HorizontalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Text="Toolkit" VerticalAlignment="Center" />
+                                    </Grid>
+                                    <PathIcon IsVisible="{Binding IsSidebarCollapsed}"
+                                              Data="{StaticResource Icon.Toolkit}"
+                                              Width="16"
+                                              Height="16"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                                </Grid>
+                            </Button>
 
-                        <!-- Saves -->
-                        <Button Classes="sidebar-link-minimal"
-                                Classes.sidebar-active="{Binding IsSavesSectionSelected}"
-                                Command="{Binding SelectSectionCommand}"
-                                CommandParameter="Saves"
-                                ToolTip.Tip="Saves">
-                            <Grid ColumnDefinitions="24,*" ColumnSpacing="12">
-                                <PathIcon Grid.Column="0" Data="{StaticResource Icon.Saves}" Width="16" Height="16" HorizontalAlignment="Center" />
-                                <TextBlock Grid.Column="1" Text="Saves" VerticalAlignment="Center" IsVisible="{Binding IsSidebarExpanded}" />
-                            </Grid>
-                        </Button>
+                            <Button Classes="sidebar-link-minimal"
+                                    Classes.sidebar-active="{Binding IsModsSectionSelected}"
+                                    Classes.sidebar-link-collapsed="{Binding IsSidebarCollapsed}"
+                                    Command="{Binding SelectSectionCommand}"
+                                    CommandParameter="Mods"
+                                    ToolTip.Tip="Mods">
+                                <Grid>
+                                    <Grid ColumnDefinitions="24,*" ColumnSpacing="12" IsVisible="{Binding IsSidebarExpanded}">
+                                        <PathIcon Grid.Column="0" Data="{StaticResource Icon.Mods}" Width="16" Height="16" HorizontalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Text="Mods" VerticalAlignment="Center" />
+                                    </Grid>
+                                    <PathIcon IsVisible="{Binding IsSidebarCollapsed}"
+                                              Data="{StaticResource Icon.Mods}"
+                                              Width="16"
+                                              Height="16"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                                </Grid>
+                            </Button>
 
-                        <!-- Settings -->
-                        <Button Classes="sidebar-link-minimal"
-                                Classes.sidebar-active="{Binding IsSettingsSectionSelected}"
-                                Command="{Binding SelectSectionCommand}"
-                                CommandParameter="Settings"
-                                ToolTip.Tip="Settings">
-                            <Grid ColumnDefinitions="24,*" ColumnSpacing="12">
-                                <PathIcon Grid.Column="0" Data="{StaticResource Icon.Settings}" Width="16" Height="16" HorizontalAlignment="Center" />
-                                <TextBlock Grid.Column="1" Text="Settings" VerticalAlignment="Center" IsVisible="{Binding IsSidebarExpanded}" />
+                            <Button Classes="sidebar-link-minimal"
+                                    Classes.sidebar-active="{Binding IsTraySectionSelected}"
+                                    Classes.sidebar-link-collapsed="{Binding IsSidebarCollapsed}"
+                                    Command="{Binding SelectSectionCommand}"
+                                    CommandParameter="Tray"
+                                    ToolTip.Tip="Tray">
+                                <Grid>
+                                    <Grid ColumnDefinitions="24,*" ColumnSpacing="12" IsVisible="{Binding IsSidebarExpanded}">
+                                        <PathIcon Grid.Column="0" Data="{StaticResource Icon.Tray}" Width="16" Height="16" HorizontalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Text="Tray" VerticalAlignment="Center" />
+                                    </Grid>
+                                    <PathIcon IsVisible="{Binding IsSidebarCollapsed}"
+                                              Data="{StaticResource Icon.Tray}"
+                                              Width="16"
+                                              Height="16"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                                </Grid>
+                            </Button>
+
+                            <Button Classes="sidebar-link-minimal"
+                                    Classes.sidebar-active="{Binding IsSavesSectionSelected}"
+                                    Classes.sidebar-link-collapsed="{Binding IsSidebarCollapsed}"
+                                    Command="{Binding SelectSectionCommand}"
+                                    CommandParameter="Saves"
+                                    ToolTip.Tip="Saves">
+                                <Grid>
+                                    <Grid ColumnDefinitions="24,*" ColumnSpacing="12" IsVisible="{Binding IsSidebarExpanded}">
+                                        <PathIcon Grid.Column="0" Data="{StaticResource Icon.Saves}" Width="16" Height="16" HorizontalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Text="Saves" VerticalAlignment="Center" />
+                                    </Grid>
+                                    <PathIcon IsVisible="{Binding IsSidebarCollapsed}"
+                                              Data="{StaticResource Icon.Saves}"
+                                              Width="16"
+                                              Height="16"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                                </Grid>
+                            </Button>
+
+                            <Button Classes="sidebar-link-minimal"
+                                    Classes.sidebar-active="{Binding IsSettingsSectionSelected}"
+                                    Classes.sidebar-link-collapsed="{Binding IsSidebarCollapsed}"
+                                    Command="{Binding SelectSectionCommand}"
+                                    CommandParameter="Settings"
+                                    ToolTip.Tip="Settings">
+                                <Grid>
+                                    <Grid ColumnDefinitions="24,*" ColumnSpacing="12" IsVisible="{Binding IsSidebarExpanded}">
+                                        <PathIcon Grid.Column="0" Data="{StaticResource Icon.Settings}" Width="16" Height="16" HorizontalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Text="Settings" VerticalAlignment="Center" />
+                                    </Grid>
+                                    <PathIcon IsVisible="{Binding IsSidebarCollapsed}"
+                                              Data="{StaticResource Icon.Settings}"
+                                              Width="16"
+                                              Height="16"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                                </Grid>
+                            </Button>
+                        </StackPanel>
+
+                        <Button Margin="8,4,8,0"
+                                Classes="primary sidebar-launch-minimal"
+                                Classes.sidebar-link-collapsed="{Binding IsSidebarCollapsed}"
+                                Height="48"
+                                IsEnabled="{Binding CanLaunchGame}"
+                                Command="{Binding LaunchGameCommand}"
+                                ToolTip.Tip="{Binding LaunchButtonText}">
+                            <Grid>
+                                <StackPanel IsVisible="{Binding IsSidebarExpanded}"
+                                            Orientation="Horizontal"
+                                            Spacing="8"
+                                            VerticalAlignment="Center">
+                                    <PathIcon Data="{StaticResource Icon.Play}" Width="14" Height="14" />
+                                    <TextBlock Text="{Binding LaunchButtonText}"
+                                               VerticalAlignment="Center"
+                                               FontWeight="Bold"
+                                               TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <PathIcon IsVisible="{Binding IsSidebarCollapsed}"
+                                          Data="{StaticResource Icon.Play}"
+                                          Width="14"
+                                          Height="14"
+                                          HorizontalAlignment="Center"
+                                          VerticalAlignment="Center" />
                             </Grid>
                         </Button>
                     </StackPanel>
                 </ScrollViewer>
+            </Border>
 
-                <Button Grid.Row="3"
-                        Margin="12,0"
-                        Classes="primary sidebar-launch-minimal"
-                        Height="48"
-                        VerticalContentAlignment="Center"
-                        HorizontalContentAlignment="Center"
-                        IsEnabled="{Binding CanLaunchGame}"
-                        Command="{Binding LaunchGameCommand}"
-                        ToolTip.Tip="{Binding LaunchButtonText}">
-                     <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="8">
-                         <PathIcon Data="{StaticResource Icon.Play}" Width="14" Height="14" />
-                         <TextBlock Text="{Binding LaunchButtonText}" IsVisible="{Binding IsSidebarExpanded}" VerticalAlignment="Center" FontWeight="Bold" />
-                     </Grid>
-                </Button>
-            </Grid>
-        </Border>
+            <Grid Grid.Column="1" MinHeight="0">
+                <Grid MinHeight="0">
+                    <Border Classes="card" Padding="24" IsVisible="{Binding IsSavesVisible}">
+                        <saves:SavesView DataContext="{Binding SavesVm}" />
+                    </Border>
 
-        <Grid Grid.Column="1" MinHeight="0">
-            <Grid MinHeight="0">
-                <Border Classes="card" Padding="24" IsVisible="{Binding IsSavesVisible}">
-                    <saves:SavesView DataContext="{Binding SavesVm}" />
-                </Border>
-
-                <Border Classes="card" Padding="24" IsVisible="{Binding IsSettingsVisible}">
-                    <StackPanel Spacing="24">
+                    <Border Classes="card" Padding="24" IsVisible="{Binding IsSettingsVisible}">
+                        <StackPanel Spacing="24">
                         <TextBlock Classes="section-title" Text="Settings" />
 
                         <Border Classes="settings-section" Padding="20">
@@ -313,18 +396,16 @@
                                 </StackPanel>
                             </StackPanel>
                         </Border>
-                    </StackPanel>
-                </Border>
+                        </StackPanel>
+                    </Border>
 
-                <Grid IsVisible="{Binding IsWorkspaceSectionVisible}" MinHeight="0">
-                    <workspace:WorkspaceView DataContext="{Binding WorkspaceVm}" MinHeight="0" />
+                    <Grid IsVisible="{Binding IsWorkspaceSectionVisible}" MinHeight="0">
+                        <workspace:WorkspaceView DataContext="{Binding WorkspaceVm}" MinHeight="0" />
+                    </Grid>
                 </Grid>
             </Grid>
 
         </Grid>
-
-        </Grid>
     </Grid>
 </UserControl>
-
 

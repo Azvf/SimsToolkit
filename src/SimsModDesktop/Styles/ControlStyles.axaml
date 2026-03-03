@@ -85,6 +85,13 @@
         <Setter Property="CornerRadius" Value="{DynamicResource Radius.Medium}" />
     </Style>
 
+    <Style Selector="Border.sidebar-subtle-block.sidebar-compact-chip">
+        <Setter Property="Width" Value="40" />
+        <Setter Property="MinHeight" Value="40" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="HorizontalAlignment" Value="Center" />
+    </Style>
+
     <Style Selector="Border.path-health-interactive">
         <Setter Property="Cursor" Value="Hand" />
     </Style>
@@ -308,6 +315,14 @@
         <Setter Property="FontWeight" Value="Medium" />
     </Style>
 
+    <Style Selector="Button.sidebar-link-minimal.sidebar-link-collapsed">
+        <Setter Property="Width" Value="40" />
+        <Setter Property="Height" Value="40" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="HorizontalAlignment" Value="Center" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+    </Style>
+
     <Style Selector="Button.sidebar-link-minimal:pointerover">
         <Setter Property="Background" Value="{DynamicResource Brush.SurfaceHover}" />
         <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
@@ -342,6 +357,17 @@
         <Setter Property="FontWeight" Value="Bold" />
         <Setter Property="CornerRadius" Value="24" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="HorizontalContentAlignment" Value="Left" />
+        <Setter Property="Padding" Value="16,0" />
+    </Style>
+
+    <Style Selector="Button.sidebar-launch-minimal.sidebar-link-collapsed">
+        <Setter Property="Width" Value="40" />
+        <Setter Property="Height" Value="40" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="HorizontalAlignment" Value="Center" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="CornerRadius" Value="20" />
     </Style>
 
     <Style Selector="Button.inspector-action">

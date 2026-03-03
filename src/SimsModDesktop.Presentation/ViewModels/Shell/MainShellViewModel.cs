@@ -78,12 +78,20 @@ public sealed class MainShellViewModel : ObservableObject
         {
             if (SetProperty(ref _isSidebarExpanded, value))
             {
+                OnPropertyChanged(nameof(IsSidebarCollapsed));
                 OnPropertyChanged(nameof(SidebarWidth));
+                OnPropertyChanged(nameof(ShellColumnSpacing));
+                OnPropertyChanged(nameof(ShowSidebarBranding));
+                OnPropertyChanged(nameof(ShowCompactPathHealth));
+                OnPropertyChanged(nameof(ShowDetailedPathHealth));
             }
         }
     }
 
-    public double SidebarWidth => IsSidebarExpanded ? 240 : 72;
+    public bool IsSidebarCollapsed => !IsSidebarExpanded;
+    public double SidebarWidth => IsSidebarExpanded ? 240 : 56;
+    public double ShellColumnSpacing => IsSidebarExpanded ? 24 : 8;
+    public bool ShowSidebarBranding => IsSidebarExpanded;
 
     public AppSection SelectedSection
     {
@@ -181,6 +189,8 @@ public sealed class MainShellViewModel : ObservableObject
     public bool HasSavesPath => _settingsController.HasSavesPath;
     public bool HasAllCorePathsValid => _settingsController.HasAllCorePathsValid;
     public bool IsPathHealthExpanded => _settingsController.IsPathHealthExpanded;
+    public bool ShowCompactPathHealth => IsSidebarCollapsed || !IsPathHealthExpanded;
+    public bool ShowDetailedPathHealth => IsSidebarExpanded && IsPathHealthExpanded;
     public bool IsGameExecutableWarning => _settingsController.IsGameExecutableWarning;
     public bool IsModsPathWarning => _settingsController.IsModsPathWarning;
     public bool IsTrayPathWarning => _settingsController.IsTrayPathWarning;
@@ -325,6 +335,13 @@ public sealed class MainShellViewModel : ObservableObject
         if (string.Equals(e.PropertyName, nameof(CanLaunchGame), StringComparison.Ordinal))
         {
             LaunchGameCommand.NotifyCanExecuteChanged();
+        }
+
+        if (string.Equals(e.PropertyName, nameof(IsPathHealthExpanded), StringComparison.Ordinal) ||
+            string.Equals(e.PropertyName, nameof(HasAllCorePathsValid), StringComparison.Ordinal))
+        {
+            OnPropertyChanged(nameof(ShowCompactPathHealth));
+            OnPropertyChanged(nameof(ShowDetailedPathHealth));
         }
 
         if (string.Equals(e.PropertyName, nameof(HasAllCorePathsValid), StringComparison.Ordinal))

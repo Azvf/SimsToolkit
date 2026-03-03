@@ -68,6 +68,28 @@ public sealed class MainShellViewModelTests
     }
 
     [Fact]
+    public void SidebarCollapse_UsesCompactPathHealthState()
+    {
+        var vm = CreateShellViewModel();
+
+        Assert.True(vm.IsSidebarExpanded);
+        Assert.False(vm.IsSidebarCollapsed);
+        Assert.True(vm.ShowDetailedPathHealth);
+        Assert.False(vm.ShowCompactPathHealth);
+        Assert.Equal(240, vm.SidebarWidth);
+        Assert.Equal(24, vm.ShellColumnSpacing);
+
+        vm.ToggleSidebarCommand.Execute(null);
+
+        Assert.False(vm.IsSidebarExpanded);
+        Assert.True(vm.IsSidebarCollapsed);
+        Assert.False(vm.ShowDetailedPathHealth);
+        Assert.True(vm.ShowCompactPathHealth);
+        Assert.Equal(56, vm.SidebarWidth);
+        Assert.Equal(8, vm.ShellColumnSpacing);
+    }
+
+    [Fact]
     public async Task ClearCache_UpdatesStatusMessage()
     {
         var cacheService = new FakeAppCacheMaintenanceService
