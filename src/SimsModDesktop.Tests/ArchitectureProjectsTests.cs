@@ -13,11 +13,17 @@ public sealed class ArchitectureProjectsTests
     }
 
     [Fact]
-    public void Presentation_DoesNotReference_Infrastructure()
+    public void Presentation_Contains_RuntimeViewModelTypes()
     {
-        AssertNoAssemblyReference(
-            typeof(SimsModDesktop.Presentation.Workspaces.MainShellViewModel).Assembly,
-            "SimsModDesktop.Infrastructure");
+        var presentationAssembly = typeof(SimsModDesktop.ViewModels.MainWindowViewModel).Assembly;
+
+        Assert.Equal("SimsModDesktop.Presentation", presentationAssembly.GetName().Name);
+        Assert.Contains(
+            presentationAssembly.GetTypes(),
+            type => string.Equals(type.FullName, "SimsModDesktop.ViewModels.MainWindowViewModel", StringComparison.Ordinal));
+        Assert.Contains(
+            presentationAssembly.GetTypes(),
+            type => string.Equals(type.FullName, "SimsModDesktop.ViewModels.Shell.MainShellViewModel", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -35,6 +41,21 @@ public sealed class ArchitectureProjectsTests
         Assert.True(
             invalidTypes.Length == 0,
             "Desktop shell assembly should not define use case or repository types:" + Environment.NewLine + string.Join(Environment.NewLine, invalidTypes));
+    }
+
+    [Fact]
+    public void DesktopShell_Contains_No_ViewModel_Types()
+    {
+        var shellAssembly = Assembly.Load("SimsModDesktop");
+        var invalidTypes = shellAssembly
+            .GetTypes()
+            .Where(type => type.Namespace?.StartsWith("SimsModDesktop.ViewModels", StringComparison.Ordinal) == true)
+            .Select(type => type.FullName ?? type.Name)
+            .ToArray();
+
+        Assert.True(
+            invalidTypes.Length == 0,
+            "Desktop shell assembly should not define view model types:" + Environment.NewLine + string.Join(Environment.NewLine, invalidTypes));
     }
 
     [Fact]

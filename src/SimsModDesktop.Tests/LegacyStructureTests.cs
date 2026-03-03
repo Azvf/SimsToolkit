@@ -33,6 +33,36 @@ public sealed class LegacyStructureTests
     }
 
     [Fact]
+    public void DesktopShell_ViewModelsFolder_DoesNotExist()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var legacyViewModelsPath = Path.Combine(repositoryRoot, "src", "SimsModDesktop", "ViewModels");
+        Assert.False(
+            Directory.Exists(legacyViewModelsPath),
+            $"Desktop shell view models folder should not exist: {legacyViewModelsPath}");
+    }
+
+    [Fact]
+    public void DesktopShell_ModelsFolder_DoesNotExist()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var legacyModelsPath = Path.Combine(repositoryRoot, "src", "SimsModDesktop", "Models");
+        Assert.False(
+            Directory.Exists(legacyModelsPath),
+            $"Desktop shell models folder should not exist: {legacyModelsPath}");
+    }
+
+    [Fact]
+    public void DesktopShell_PresentationFolder_DoesNotExist()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var legacyPresentationPath = Path.Combine(repositoryRoot, "src", "SimsModDesktop", "Presentation");
+        Assert.False(
+            Directory.Exists(legacyPresentationPath),
+            $"Desktop shell presentation folder should not exist: {legacyPresentationPath}");
+    }
+
+    [Fact]
     public void Solution_DoesNotContain_DuplicateShellProject()
     {
         var repositoryRoot = FindRepositoryRoot();

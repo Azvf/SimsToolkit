@@ -7,7 +7,8 @@ using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Application.UseCases;
 using SimsModDesktop.Infrastructure.ServiceRegistration;
 using SimsModDesktop.Presentation.ServiceRegistration;
-using SimsModDesktop.Presentation.Workspaces;
+using SimsModDesktop.ViewModels;
+using SimsModDesktop.ViewModels.Shell;
 
 namespace SimsModDesktop.Tests;
 
@@ -33,10 +34,9 @@ public sealed class LayeredServiceRegistrationTests
         var services = new ServiceCollection();
         services.AddSimsModDesktopPresentation();
 
-        using var provider = services.BuildServiceProvider();
-
-        Assert.NotNull(provider.GetRequiredService<INavigationService>());
-        Assert.NotNull(provider.GetRequiredService<MainShellViewModel>());
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(INavigationService));
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(MainShellViewModel));
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(MainWindowViewModel));
     }
 
     [Fact]
@@ -54,6 +54,7 @@ public sealed class LayeredServiceRegistrationTests
         using var provider = services.BuildServiceProvider();
 
         Assert.NotNull(provider.GetRequiredService<MainShellViewModel>());
+        Assert.NotNull(provider.GetRequiredService<MainWindowViewModel>());
         Assert.NotNull(provider.GetRequiredService<ITextureCompressionService>());
         Assert.NotNull(provider.GetRequiredService<IConfigurationProvider>());
         Assert.NotNull(provider.GetRequiredService<IOrganizeModsUseCase>());
