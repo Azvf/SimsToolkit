@@ -22,7 +22,7 @@ public sealed class ActionResultRepository : IActionResultRepository
     {
     }
 
-    internal ActionResultRepository(string cacheRootPath)
+    public ActionResultRepository(string cacheRootPath)
         : this(new AppCacheDatabase(cacheRootPath))
     {
     }
