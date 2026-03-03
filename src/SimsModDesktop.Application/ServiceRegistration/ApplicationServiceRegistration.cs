@@ -46,6 +46,7 @@ public static class ApplicationServiceRegistration
         services.AddSingleton<IFileTransformationEngine, UnifiedFileTransformationEngine>();
         services.AddSingleton<ITrayPreviewCoordinator, TrayPreviewCoordinator>();
         services.AddSingleton<IMainWindowPlanBuilder, MainWindowPlanBuilder>();
+        services.AddSingleton<IToolkitActionPlanner, ToolkitActionPlanner>();
         services.AddSingleton<IToolkitExecutionRunner, ToolkitExecutionRunner>();
         services.AddSingleton<ITrayPreviewRunner, TrayPreviewRunner>();
         services.AddSingleton<IActionModule, OrganizeActionModule>();

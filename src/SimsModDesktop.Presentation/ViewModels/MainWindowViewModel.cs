@@ -43,8 +43,7 @@ public sealed class MainWindowViewModel : ObservableObject
     private readonly ILocalizationService _localization;
     private readonly ISettingsStore _settingsStore;
     private readonly IMainWindowSettingsProjection _settingsProjection;
-    private readonly IActionModuleRegistry _moduleRegistry;
-    private readonly IMainWindowPlanBuilder _planBuilder;
+    private readonly IToolkitActionPlanner _toolkitActionPlanner;
     private readonly IOperationRecoveryCoordinator? _operationRecoveryCoordinator;
     private readonly IActionResultRepository? _actionResultRepository;
     private readonly ITextureCompressionService _textureCompressionService;
@@ -101,8 +100,7 @@ public sealed class MainWindowViewModel : ObservableObject
         ILocalizationService localization,
         ISettingsStore settingsStore,
         IMainWindowSettingsProjection settingsProjection,
-        IActionModuleRegistry moduleRegistry,
-        IMainWindowPlanBuilder planBuilder,
+        IToolkitActionPlanner toolkitActionPlanner,
         ModPreviewWorkspaceViewModel modPreviewWorkspace,
         TrayPreviewWorkspaceViewModel trayPreviewWorkspace,
         OrganizePanelViewModel organize,
@@ -131,8 +129,7 @@ public sealed class MainWindowViewModel : ObservableObject
         _localization = localization;
         _settingsStore = settingsStore;
         _settingsProjection = settingsProjection;
-        _moduleRegistry = moduleRegistry;
-        _planBuilder = planBuilder;
+        _toolkitActionPlanner = toolkitActionPlanner;
         _operationRecoveryCoordinator = operationRecoveryCoordinator;
         _actionResultRepository = actionResultRepository;
         _textureCompressionService = textureCompressionService;
@@ -156,14 +153,7 @@ public sealed class MainWindowViewModel : ObservableObject
         TrayExportTasks = new ObservableCollection<TrayExportTaskItemViewModel>();
         TrayExportTasks.CollectionChanged += OnTrayExportTasksChanged;
 
-        var registeredToolkitActions = _moduleRegistry.All
-            .Select(module => module.Action)
-            .Where(action => action != SimsAction.TrayPreview)
-            .ToHashSet();
-
-        AvailableToolkitActions = Enum.GetValues<SimsAction>()
-            .Where(action => action != SimsAction.TrayPreview && registeredToolkitActions.Contains(action))
-            .ToArray();
+        AvailableToolkitActions = _toolkitActionPlanner.AvailableToolkitActions;
 
         BrowseFolderCommand = new AsyncRelayCommand<string>(BrowseFolderAsync, _ => !IsBusy, disableWhileRunning: false);
         BrowseCsvPathCommand = new AsyncRelayCommand<string>(BrowseCsvPathAsync, _ => !IsBusy, disableWhileRunning: false);
@@ -579,7 +569,7 @@ public sealed class MainWindowViewModel : ObservableObject
     public bool IsTrayPreviewWorkspace => Workspace == AppWorkspace.TrayPreview;
     public bool IsSharedFileOpsVisible =>
         IsToolkitWorkspace &&
-        _moduleRegistry.All.Any(module => module.Action == SelectedAction && module.UsesSharedFileOps);
+        _toolkitActionPlanner.UsesSharedFileOps(SelectedAction);
 
     public bool HasValidModPreviewPath =>
         !string.IsNullOrWhiteSpace(ModPreview.ModsRoot) &&
@@ -748,7 +738,7 @@ public sealed class MainWindowViewModel : ObservableObject
         IsTrayPreviewLogDrawerOpen = resolved.UiState.TrayPreviewLogDrawerOpen;
         IsToolkitAdvancedOpen = resolved.UiState.ToolkitAdvancedOpen;
 
-        _settingsProjection.LoadModuleSettings(settings, _moduleRegistry);
+        _toolkitActionPlanner.LoadModuleSettings(settings);
         SelectedAction = resolved.SelectedAction;
         Workspace = resolved.Workspace;
 
@@ -988,10 +978,7 @@ public sealed class MainWindowViewModel : ObservableObject
             ShowOverridesOnly = ModPreview.ShowOverridesOnly
         };
 
-        foreach (var module in _moduleRegistry.All)
-        {
-            module.SaveToSettings(settings);
-        }
+        _toolkitActionPlanner.SaveModuleSettings(settings);
 
         await _settingsStore.SaveAsync(settings, cancellationToken);
     }
@@ -1066,10 +1053,9 @@ public sealed class MainWindowViewModel : ObservableObject
 
             if (IsToolkitWorkspace)
             {
-                var module = _moduleRegistry.Get(SelectedAction);
                 if (SelectedAction == SimsAction.TrayDependencies)
                 {
-                    if (!_planBuilder.TryBuildTrayDependenciesPlan(CreatePlanBuilderState(), out _, out var trayDependencyError))
+                    if (!_toolkitActionPlanner.TryBuildTrayDependenciesPlan(CreatePlanBuilderState(), out _, out var trayDependencyError))
                     {
                         HasValidationErrors = true;
                         ValidationSummaryText = LF("validation.failed", trayDependencyError);
@@ -1078,14 +1064,14 @@ public sealed class MainWindowViewModel : ObservableObject
                 }
                 else if (SelectedAction == SimsAction.TextureCompress)
                 {
-                    if (!_planBuilder.TryBuildTextureCompressionPlan(CreatePlanBuilderState(), out _, out var textureCompressError))
+                    if (!_toolkitActionPlanner.TryBuildTextureCompressionPlan(CreatePlanBuilderState(), out _, out var textureCompressError))
                     {
                         HasValidationErrors = true;
                         ValidationSummaryText = LF("validation.failed", textureCompressError);
                         return;
                     }
                 }
-                else if (!_planBuilder.TryBuildToolkitCliPlan(CreatePlanBuilderState(), out _, out _, out var error))
+                else if (!_toolkitActionPlanner.TryBuildToolkitCliPlan(CreatePlanBuilderState(), out _, out var error))
                 {
                     HasValidationErrors = true;
                     ValidationSummaryText = LF("validation.failed", error);
@@ -1093,7 +1079,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 }
 
                 HasValidationErrors = false;
-                ValidationSummaryText = LF("validation.okToolkit", module.DisplayName);
+                ValidationSummaryText = LF("validation.okToolkit", _toolkitActionPlanner.GetDisplayName(SelectedAction));
                 return;
             }
 
@@ -1106,7 +1092,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 return;
             }
 
-            if (!_planBuilder.TryBuildTrayPreviewInput(CreatePlanBuilderState(), out _, out var trayPreviewError))
+            if (!_toolkitActionPlanner.TryBuildTrayPreviewInput(CreatePlanBuilderState(), out _, out var trayPreviewError))
             {
                 HasValidationErrors = true;
                 ValidationSummaryText = LF("validation.failed", trayPreviewError);
@@ -1328,7 +1314,7 @@ public sealed class MainWindowViewModel : ObservableObject
             return;
         }
 
-        if (!_planBuilder.TryBuildToolkitCliPlan(CreatePlanBuilderState(), out _, out var cliPlan, out var error))
+        if (!_toolkitActionPlanner.TryBuildToolkitCliPlan(CreatePlanBuilderState(), out var cliPlan, out var error))
         {
             StatusMessage = error;
             AppendLog("[validation] " + error);
@@ -1484,7 +1470,7 @@ public sealed class MainWindowViewModel : ObservableObject
 
     private async Task RunTextureCompressionAsync()
     {
-        if (!_planBuilder.TryBuildTextureCompressionPlan(CreatePlanBuilderState(), out var plan, out var error))
+        if (!_toolkitActionPlanner.TryBuildTextureCompressionPlan(CreatePlanBuilderState(), out var plan, out var error))
         {
             StatusMessage = error;
             AppendLog("[validation] " + error);
@@ -1598,7 +1584,7 @@ public sealed class MainWindowViewModel : ObservableObject
 
     private async Task RunTrayDependenciesAsync()
     {
-        if (!_planBuilder.TryBuildTrayDependenciesPlan(CreatePlanBuilderState(), out var plan, out var error))
+        if (!_toolkitActionPlanner.TryBuildTrayDependenciesPlan(CreatePlanBuilderState(), out var plan, out var error))
         {
             StatusMessage = error;
             AppendLog("[validation] " + error);
@@ -1793,7 +1779,7 @@ public sealed class MainWindowViewModel : ObservableObject
         TrayPreviewInput input;
         if (explicitInput is null)
         {
-            if (!_planBuilder.TryBuildTrayPreviewInput(CreatePlanBuilderState(), out var built, out var validationError))
+            if (!_toolkitActionPlanner.TryBuildTrayPreviewInput(CreatePlanBuilderState(), out var built, out var validationError))
             {
                 StatusMessage = validationError;
                 AppendLog("[validation] " + validationError);
@@ -2172,7 +2158,7 @@ public sealed class MainWindowViewModel : ObservableObject
             return;
         }
 
-        if (!_planBuilder.TryBuildTrayPreviewInput(CreatePlanBuilderState(), out var input, out _))
+        if (!_toolkitActionPlanner.TryBuildTrayPreviewInput(CreatePlanBuilderState(), out var input, out _))
         {
             return;
         }
