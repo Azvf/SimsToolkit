@@ -268,32 +268,6 @@
                             </Button>
                         </StackPanel>
 
-                        <Button Margin="8,4,8,0"
-                                Classes="primary sidebar-launch-minimal"
-                                Classes.sidebar-link-collapsed="{Binding IsSidebarCollapsed}"
-                                Height="48"
-                                IsEnabled="{Binding CanLaunchGame}"
-                                Command="{Binding LaunchGameCommand}"
-                                ToolTip.Tip="{Binding LaunchButtonText}">
-                            <Grid>
-                                <StackPanel IsVisible="{Binding IsSidebarExpanded}"
-                                            Orientation="Horizontal"
-                                            Spacing="8"
-                                            VerticalAlignment="Center">
-                                    <PathIcon Data="{StaticResource Icon.Play}" Width="14" Height="14" />
-                                    <TextBlock Text="{Binding LaunchButtonText}"
-                                               VerticalAlignment="Center"
-                                               FontWeight="Bold"
-                                               TextTrimming="CharacterEllipsis" />
-                                </StackPanel>
-                                <PathIcon IsVisible="{Binding IsSidebarCollapsed}"
-                                          Data="{StaticResource Icon.Play}"
-                                          Width="14"
-                                          Height="14"
-                                          HorizontalAlignment="Center"
-                                          VerticalAlignment="Center" />
-                            </Grid>
-                        </Button>
                     </StackPanel>
                 </ScrollViewer>
             </Border>
@@ -408,4 +382,3 @@
         </Grid>
     </Grid>
 </UserControl>
-

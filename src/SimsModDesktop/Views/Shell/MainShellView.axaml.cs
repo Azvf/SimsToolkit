@@ -9,9 +9,6 @@ namespace SimsModDesktop.Views.Shell;
 
 public partial class MainShellView : UserControl
 {
-    public static readonly IValueConverter BooleanToHorizontalAlignmentConverter =
-        new FuncValueConverter<bool, HorizontalAlignment>(b => b ? HorizontalAlignment.Right : HorizontalAlignment.Center);
-
     private MainShellViewModel? _shellVm;
 
     public MainShellView()
