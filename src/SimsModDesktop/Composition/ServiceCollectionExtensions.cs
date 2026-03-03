@@ -1,30 +1,18 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using SimsModDesktop.Application.Cli;
-using SimsModDesktop.Application.Configuration;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Modules;
-using SimsModDesktop.Application.Mods;
 using SimsModDesktop.Application.Recovery;
-using SimsModDesktop.Application.Requests;
-using SimsModDesktop.Application.Results;
-using SimsModDesktop.Application.Saves;
-using SimsModDesktop.Application.Services;
-using SimsModDesktop.Application.Settings;
-using SimsModDesktop.Application.TextureCompression;
-using SimsModDesktop.Application.TrayPreview;
-using SimsModDesktop.Application.Validation;
+using SimsModDesktop.Application.ServiceRegistration;
 using SimsModDesktop.Infrastructure.Dialogs;
 using SimsModDesktop.Infrastructure.Execution;
 using SimsModDesktop.Infrastructure.Localization;
-using SimsModDesktop.Infrastructure.Services;
+using SimsModDesktop.Infrastructure.ServiceRegistration;
 using SimsModDesktop.Infrastructure.Settings;
-using SimsModDesktop.Infrastructure.TextureProcessing;
 using SimsModDesktop.Infrastructure.Windowing;
-using SimsModDesktop.Models;
 using SimsModDesktop.PackageCore;
+using SimsModDesktop.Presentation.ServiceRegistration;
 using SimsModDesktop.Services;
-using SimsModDesktop.SaveData.Services;
 using SimsModDesktop.TrayDependencyEngine;
 using SimsModDesktop.ViewModels.Shell;
 using SimsModDesktop.ViewModels;
@@ -39,6 +27,8 @@ internal static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddSimsDesktopInfrastructure(this IServiceCollection services)
     {
+        services.AddSimsModDesktopInfrastructure();
+
         services.AddLogging(builder =>
         {
             builder.AddConsole();
@@ -51,104 +41,21 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<IRecoveryPromptService, AvaloniaRecoveryPromptService>();
         services.AddSingleton<ILocalizationService, JsonLocalizationService>();
         services.AddSingleton<ISettingsStore, JsonSettingsStore>();
-        services.AddSingleton<IMainWindowSettingsProjection, MainWindowSettingsProjection>();
+        services.AddSingleton<IAppThemeService, AppThemeService>();
 
-        // 跨平台配置管理
-        services.AddSingleton<IConfigurationProvider, CrossPlatformConfigurationProvider>();
-
-        
-        // 跨平台执行引擎
         services.AddSingleton<IExecutionEngine, PowerShellExecutionEngine>();
-        services.AddSingleton<IExecutionEngineRoutingPolicy, ExecutionEngineRoutingPolicy>();
-        services.AddSingleton<ISimsPowerShellRunner, SimsPowerShellRunner>();
-        
-        // 跨平台文件操作服务
-        services.AddSingleton<IFileOperationService, CrossPlatformFileOperationService>();
-        services.AddSingleton<IHashComputationService, CrossPlatformHashComputationService>();
-        services.AddSingleton<IFileTransformationEngine, UnifiedFileTransformationEngine>();
-        services.AddSingleton<ImageSharpPngDecoder>();
-        services.AddSingleton<PfimDdsDecoder>();
-        services.AddSingleton<ITextureDecodeService, CompositeTextureDecodeService>();
-        services.AddSingleton<ITextureDimensionProbe, TextureDimensionProbe>();
-        services.AddSingleton<ITextureResizeService, ImageSharpResizeService>();
-        services.AddSingleton<ITextureEncodeService, BcnTextureEncodeService>();
-        services.AddSingleton<ITextureTranscodePipeline, TextureTranscodePipeline>();
-        services.AddSingleton<ITextureCompressionService, TextureCompressionService>();
-        services.AddSingleton<IModPackageTextureAnalysisStore, SqliteModPackageTextureAnalysisStore>();
-        services.AddSingleton<IModPackageTextureAnalysisService, ModPackageTextureAnalysisService>();
-        services.AddSingleton<IModPackageTextureEditStore, SqliteModPackageTextureEditStore>();
-        services.AddSingleton<IModPackageTextureEditService, ModPackageTextureEditService>();
-        services.AddSingleton<IModPackageScanService, ModPackageScanService>();
-        services.AddSingleton<IModItemIndexStore, SqliteModItemIndexStore>();
-        services.AddSingleton<ISims4StblLookup, Sims4StblLookup>();
-        services.AddSingleton<ICasItemDescriptorService, CasItemDescriptorService>();
-        services.AddSingleton<IBuildBuyItemDescriptorService, BuildBuyPlaceholderDescriptorService>();
-        services.AddSingleton<IFastModItemIndexService, FastModItemIndexService>();
-        services.AddSingleton<IDeepModItemEnrichmentService, DeepModItemEnrichmentService>();
-        services.AddSingleton<IModItemIndexService, ModItemIndexService>();
-        services.AddSingleton<IModItemCatalogService, SqliteModItemCatalogService>();
-        services.AddSingleton<IModItemInspectService, SqliteModItemInspectService>();
-        services.AddSingleton<IModItemIndexScheduler, ModItemIndexScheduler>();
-
-        
-        // 原有服务
-        services.AddSingleton<TrayThumbnailCacheStore>();
-        services.AddSingleton<TrayMetadataIndexStore>();
-        services.AddSingleton<IAppCacheMaintenanceService, AppCacheMaintenanceService>();
-        services.AddSingleton<ITrayMetadataService, TrayMetadataService>();
-        services.AddSingleton<TrayEmbeddedImageExtractor>();
-        services.AddSingleton<ITrayThumbnailService, TrayThumbnailService>();
-        services.AddSingleton<ISimsTrayPreviewService, SimsTrayPreviewService>();
-        services.AddSingleton<IModPreviewCatalogService, ModPreviewCatalogService>();
         services.AddSingleton<IDbpfPackageCatalog, DbpfPackageCatalog>();
         services.AddSingleton<IDbpfResourceReader, DbpfResourceReader>();
         services.AddSingleton<IPackageIndexCache, PackageIndexCache>();
         services.AddSingleton<ITrayDependencyExportService, TrayDependencyExportService>();
         services.AddSingleton<ITrayDependencyAnalysisService, TrayDependencyAnalysisService>();
-        services.AddSingleton<INavigationService, NavigationService>();
-        services.AddSingleton<ITS4PathDiscoveryService, TS4PathDiscoveryService>();
-        services.AddSingleton<IGameLaunchService, GameLaunchService>();
-        services.AddSingleton<ISaveCatalogService, SaveCatalogService>();
-        services.AddSingleton<ISaveHouseholdReader, SaveHouseholdReader>();
-        services.AddSingleton<IHouseholdTrayExporter, HouseholdTrayExporter>();
-        services.AddSingleton<ISavePreviewCacheStore, SavePreviewCacheStore>();
-        services.AddSingleton<ISavePreviewCacheBuilder, SavePreviewCacheBuilder>();
-        services.AddSingleton<ISaveHouseholdCoordinator, SaveHouseholdCoordinator>();
-        services.AddSingleton<IActionResultRepository, ActionResultRepository>();
-        services.AddSingleton<IOperationRecoveryStore, SqliteOperationRecoveryStore>();
-        services.AddSingleton<IOperationRecoveryCoordinator, OperationRecoveryCoordinator>();
         services.AddSingleton<ITrayDependenciesLauncher, TrayDependenciesLauncher>();
         return services;
     }
 
     public static IServiceCollection AddSimsDesktopExecution(this IServiceCollection services)
     {
-        services.AddSingleton<IActionCliArgumentMapper, OrganizeCliArgumentMapper>();
-        services.AddSingleton<IActionCliArgumentMapper, FlattenCliArgumentMapper>();
-        services.AddSingleton<IActionCliArgumentMapper, NormalizeCliArgumentMapper>();
-        services.AddSingleton<IActionCliArgumentMapper, MergeCliArgumentMapper>();
-        services.AddSingleton<IActionCliArgumentMapper, FindDupCliArgumentMapper>();
-        services.AddSingleton<ISimsCliArgumentBuilder, SimsCliArgumentBuilder>();
-
-        services.AddSingleton<IActionInputValidator<SharedFileOpsInput>, SharedFileOpsInputValidator>();
-        services.AddSingleton<IActionInputValidator<OrganizeInput>, OrganizeInputValidator>();
-        services.AddSingleton<IActionInputValidator<FlattenInput>, FlattenInputValidator>();
-        services.AddSingleton<IActionInputValidator<NormalizeInput>, NormalizeInputValidator>();
-        services.AddSingleton<IActionInputValidator<MergeInput>, MergeInputValidator>();
-        services.AddSingleton<IActionInputValidator<FindDupInput>, FindDupInputValidator>();
-        services.AddSingleton<IActionInputValidator<TrayPreviewInput>, TrayPreviewInputValidator>();
-
-        services.AddActionExecutionStrategy<OrganizeInput>(SimsAction.Organize);
-        services.AddActionExecutionStrategy<FlattenInput>(SimsAction.Flatten);
-        services.AddActionExecutionStrategy<NormalizeInput>(SimsAction.Normalize);
-        services.AddActionExecutionStrategy<MergeInput>(SimsAction.Merge);
-        services.AddActionExecutionStrategy<FindDupInput>(SimsAction.FindDuplicates);
-
-        services.AddSingleton<IExecutionCoordinator, ExecutionCoordinator>();
-        services.AddSingleton<ITrayPreviewCoordinator, TrayPreviewCoordinator>();
-        services.AddSingleton<IMainWindowPlanBuilder, MainWindowPlanBuilder>();
-        services.AddSingleton<IToolkitExecutionRunner, ToolkitExecutionRunner>();
-        services.AddSingleton<ITrayPreviewRunner, TrayPreviewRunner>();
+        services.AddSimsModDesktopApplication();
 
         return services;
     }
@@ -174,20 +81,21 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<ITrayDependenciesModuleState>(sp => sp.GetRequiredService<TrayDependenciesPanelViewModel>());
         services.AddSingleton<ITrayPreviewModuleState>(sp => sp.GetRequiredService<TrayPreviewPanelViewModel>());
 
-        services.AddSingleton<IActionModule>(sp => new OrganizeActionModule(sp.GetRequiredService<IOrganizeModuleState>()));
-        services.AddSingleton<IActionModule>(sp => new FlattenActionModule(sp.GetRequiredService<IFlattenModuleState>()));
-        services.AddSingleton<IActionModule>(sp => new NormalizeActionModule(sp.GetRequiredService<INormalizeModuleState>()));
-        services.AddSingleton<IActionModule>(sp => new MergeActionModule(sp.GetRequiredService<IMergeModuleState>()));
-        services.AddSingleton<IActionModule>(sp => new FindDupActionModule(sp.GetRequiredService<IFindDupModuleState>()));
-        services.AddSingleton<IActionModule>(sp => new TrayDependenciesActionModule(sp.GetRequiredService<ITrayDependenciesModuleState>()));
-        services.AddSingleton<IActionModule>(sp => new TrayPreviewActionModule(sp.GetRequiredService<ITrayPreviewModuleState>()));
-
-        services.AddSingleton<IActionModuleRegistry>(sp => new ActionModuleRegistry(sp.GetServices<IActionModule>()));
+        services.AddSingleton<IActionModule, OrganizeActionModule>();
+        services.AddSingleton<IActionModule, FlattenActionModule>();
+        services.AddSingleton<IActionModule, NormalizeActionModule>();
+        services.AddSingleton<IActionModule, MergeActionModule>();
+        services.AddSingleton<IActionModule, FindDupActionModule>();
+        services.AddSingleton<IActionModule, TrayDependenciesActionModule>();
+        services.AddSingleton<IActionModule, TrayPreviewActionModule>();
+        services.AddSingleton<IActionModuleRegistry, ActionModuleRegistry>();
         return services;
     }
 
     public static IServiceCollection AddSimsDesktopPresentation(this IServiceCollection services)
     {
+        services.AddSimsModDesktopPresentation();
+
         services.AddSingleton<ModPreviewWorkspaceViewModel>();
         services.AddSingleton<TrayPreviewWorkspaceViewModel>();
         services.AddSingleton<MainWindowViewModel>();
@@ -195,15 +103,5 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<MainShellViewModel>();
         services.AddTransient<MainWindow>();
         return services;
-    }
-
-    private static void AddActionExecutionStrategy<TInput>(this IServiceCollection services, SimsAction action)
-        where TInput : class, ISimsExecutionInput
-    {
-        services.AddSingleton<IActionExecutionStrategy>(sp =>
-            new ActionExecutionStrategy<TInput>(
-                action,
-                sp.GetRequiredService<IActionInputValidator<TInput>>(),
-                sp.GetRequiredService<ISimsCliArgumentBuilder>()));
     }
 }
