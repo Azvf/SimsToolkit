@@ -774,28 +774,35 @@ public sealed class MainWindowViewModelInteractionTests
             new NoOpModItemInspectService(),
             NullModPackageTextureEditService.Instance,
             fileDialogService ?? new FakeFileDialogService());
+        var toolkitActionPlanner = new ToolkitActionPlanner(
+            organize,
+            textureCompress,
+            flatten,
+            normalize,
+            merge,
+            findDup,
+            trayDependencies,
+            trayPreview);
+        var recoveryController = new MainWindowRecoveryController();
 
         return new MainWindowViewModel(
-            execution,
             trayPreviewCoordinator,
             trayDependencyExportService ?? new FakeTrayDependencyExportService(),
-            trayDependencyAnalysisService ?? new FakeTrayDependencyAnalysisService(),
             fileDialogService ?? new FakeFileDialogService(),
             confirmation,
             new JsonLocalizationService(),
             new MainWindowSettingsPersistenceController(settingsStore ?? new FakeSettingsStore(new AppSettings())),
             new MainWindowSettingsProjection(),
-            new ToolkitActionPlanner(
-                organize,
-                textureCompress,
-                flatten,
-                normalize,
-                merge,
-                findDup,
-                trayDependencies,
-                trayPreview),
+            toolkitActionPlanner,
+            new MainWindowExecutionController(
+                execution,
+                trayDependencyAnalysisService ?? new FakeTrayDependencyAnalysisService(),
+                toolkitActionPlanner,
+                recoveryController,
+                CreateTextureCompressionService(),
+                new TextureDimensionProbe()),
             new MainWindowStatusController(),
-            new MainWindowRecoveryController(),
+            recoveryController,
             new MainWindowTrayPreviewStateController(),
             new MainWindowTrayPreviewSelectionController(),
             modPreviewWorkspace,
@@ -810,9 +817,7 @@ public sealed class MainWindowViewModelInteractionTests
             modPreview: modPreview,
             trayPreview: trayPreview,
             sharedFileOps: sharedFileOps,
-            trayThumbnailService: trayThumbnailService ?? new FailingTrayThumbnailService(),
-            textureCompressionService: CreateTextureCompressionService(),
-            textureDimensionProbe: new TextureDimensionProbe());
+            trayThumbnailService: trayThumbnailService ?? new FailingTrayThumbnailService());
     }
 
     private static ITextureCompressionService CreateTextureCompressionService()

@@ -27,22 +27,19 @@ namespace SimsModDesktop.Presentation.ViewModels;
 public sealed partial class MainWindowViewModel : ObservableObject
 {
     private const string DefaultLanguageCode = "en-US";
-    private readonly IExecutionCoordinator _executionCoordinator;
     private readonly ITrayPreviewCoordinator _trayPreviewCoordinator;
     private readonly ITrayThumbnailService _trayThumbnailService;
     private readonly ITrayDependencyExportService _trayDependencyExportService;
-    private readonly ITrayDependencyAnalysisService _trayDependencyAnalysisService;
     private readonly IFileDialogService _fileDialogService;
     private readonly IConfirmationDialogService _confirmationDialogService;
     private readonly ILocalizationService _localization;
     private readonly MainWindowSettingsPersistenceController _settingsPersistenceController;
     private readonly IMainWindowSettingsProjection _settingsProjection;
     private readonly IToolkitActionPlanner _toolkitActionPlanner;
+    private readonly MainWindowExecutionController _executionController;
     private readonly MainWindowRecoveryController _recoveryController;
     private readonly MainWindowTrayPreviewStateController _trayPreviewStateController;
     private readonly MainWindowTrayPreviewSelectionController _trayPreviewSelectionController;
-    private readonly ITextureCompressionService _textureCompressionService;
-    private readonly ITextureDimensionProbe _textureDimensionProbe;
 
     private readonly MainWindowStatusController _statusController;
     private CancellationTokenSource? _executionCts;
@@ -65,16 +62,15 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private int _trayPreviewThumbnailBatchId;
 
     public MainWindowViewModel(
-        IExecutionCoordinator executionCoordinator,
         ITrayPreviewCoordinator trayPreviewCoordinator,
         ITrayDependencyExportService trayDependencyExportService,
-        ITrayDependencyAnalysisService trayDependencyAnalysisService,
         IFileDialogService fileDialogService,
         IConfirmationDialogService confirmationDialogService,
         ILocalizationService localization,
         MainWindowSettingsPersistenceController settingsPersistenceController,
         IMainWindowSettingsProjection settingsProjection,
         IToolkitActionPlanner toolkitActionPlanner,
+        MainWindowExecutionController executionController,
         MainWindowStatusController statusController,
         MainWindowRecoveryController recoveryController,
         MainWindowTrayPreviewStateController trayPreviewStateController,
@@ -91,14 +87,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
         ModPreviewPanelViewModel modPreview,
         TrayPreviewPanelViewModel trayPreview,
         SharedFileOpsPanelViewModel sharedFileOps,
-        ITrayThumbnailService trayThumbnailService,
-        ITextureCompressionService textureCompressionService,
-        ITextureDimensionProbe textureDimensionProbe)
+        ITrayThumbnailService trayThumbnailService)
     {
-        _executionCoordinator = executionCoordinator;
         _trayPreviewCoordinator = trayPreviewCoordinator;
         _trayDependencyExportService = trayDependencyExportService;
-        _trayDependencyAnalysisService = trayDependencyAnalysisService;
         _trayThumbnailService = trayThumbnailService;
         _fileDialogService = fileDialogService;
         _confirmationDialogService = confirmationDialogService;
@@ -106,12 +98,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _settingsPersistenceController = settingsPersistenceController;
         _settingsProjection = settingsProjection;
         _toolkitActionPlanner = toolkitActionPlanner;
+        _executionController = executionController;
         _statusController = statusController;
         _recoveryController = recoveryController;
         _trayPreviewStateController = trayPreviewStateController;
         _trayPreviewSelectionController = trayPreviewSelectionController;
-        _textureCompressionService = textureCompressionService;
-        _textureDimensionProbe = textureDimensionProbe;
         ModPreviewWorkspace = modPreviewWorkspace;
         TrayPreviewWorkspace = trayPreviewWorkspace;
 

@@ -236,28 +236,35 @@ public sealed class MainShellViewModelTests
             new NoOpModItemInspectService(),
             NullModPackageTextureEditService.Instance,
             new FakeFileDialogService());
+        var toolkitActionPlanner = new ToolkitActionPlanner(
+            organize,
+            textureCompress,
+            flatten,
+            normalize,
+            merge,
+            findDup,
+            trayDependencies,
+            trayPreview);
+        var recoveryController = new MainWindowRecoveryController();
 
         return new MainWindowViewModel(
-            new FakeExecutionCoordinator(),
             trayPreviewCoordinator,
             new FakeTrayDependencyExportService(),
-            new FakeTrayDependencyAnalysisService(),
             new FakeFileDialogService(),
             new FakeConfirmationDialogService(),
             new JsonLocalizationService(),
             new MainWindowSettingsPersistenceController(settingsStore),
             new MainWindowSettingsProjection(),
-            new ToolkitActionPlanner(
-                organize,
-                textureCompress,
-                flatten,
-                normalize,
-                merge,
-                findDup,
-                trayDependencies,
-                trayPreview),
+            toolkitActionPlanner,
+            new MainWindowExecutionController(
+                new FakeExecutionCoordinator(),
+                new FakeTrayDependencyAnalysisService(),
+                toolkitActionPlanner,
+                recoveryController,
+                CreateTextureCompressionService(),
+                new TextureDimensionProbe()),
             new MainWindowStatusController(),
-            new MainWindowRecoveryController(),
+            recoveryController,
             new MainWindowTrayPreviewStateController(),
             new MainWindowTrayPreviewSelectionController(),
             modPreviewWorkspace,
@@ -272,9 +279,7 @@ public sealed class MainShellViewModelTests
             modPreview: modPreview,
             trayPreview: trayPreview,
             sharedFileOps: sharedFileOps,
-            trayThumbnailService: trayThumbnailService,
-            textureCompressionService: CreateTextureCompressionService(),
-            textureDimensionProbe: new TextureDimensionProbe());
+            trayThumbnailService: trayThumbnailService);
     }
 
     private static ITextureCompressionService CreateTextureCompressionService()
