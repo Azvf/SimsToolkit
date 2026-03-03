@@ -1,7 +1,6 @@
 using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.TextureCompression;
-using SimsModDesktop.Models;
 
 namespace SimsModDesktop.Application.Execution;
 

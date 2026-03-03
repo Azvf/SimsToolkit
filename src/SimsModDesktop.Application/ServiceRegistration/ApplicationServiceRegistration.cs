@@ -34,11 +34,11 @@ public static class ApplicationServiceRegistration
         services.AddSingleton<IActionInputValidator<FindDupInput>, FindDupInputValidator>();
         services.AddSingleton<IActionInputValidator<TrayPreviewInput>, TrayPreviewInputValidator>();
 
-        services.AddActionExecutionStrategy<OrganizeInput>(Models.SimsAction.Organize);
-        services.AddActionExecutionStrategy<FlattenInput>(Models.SimsAction.Flatten);
-        services.AddActionExecutionStrategy<NormalizeInput>(Models.SimsAction.Normalize);
-        services.AddActionExecutionStrategy<MergeInput>(Models.SimsAction.Merge);
-        services.AddActionExecutionStrategy<FindDupInput>(Models.SimsAction.FindDuplicates);
+        services.AddActionExecutionStrategy<OrganizeInput>(SimsAction.Organize);
+        services.AddActionExecutionStrategy<FlattenInput>(SimsAction.Flatten);
+        services.AddActionExecutionStrategy<NormalizeInput>(SimsAction.Normalize);
+        services.AddActionExecutionStrategy<MergeInput>(SimsAction.Merge);
+        services.AddActionExecutionStrategy<FindDupInput>(SimsAction.FindDuplicates);
 
         services.AddSingleton<IExecutionEngineRoutingPolicy, ExecutionEngineRoutingPolicy>();
         services.AddSingleton<IExecutionCoordinator, ExecutionCoordinator>();
@@ -69,7 +69,7 @@ public static class ApplicationServiceRegistration
         return services;
     }
 
-    private static void AddActionExecutionStrategy<TInput>(this IServiceCollection services, Models.SimsAction action)
+    private static void AddActionExecutionStrategy<TInput>(this IServiceCollection services, SimsAction action)
         where TInput : class, Requests.ISimsExecutionInput
     {
         services.AddSingleton<IActionExecutionStrategy>(sp =>

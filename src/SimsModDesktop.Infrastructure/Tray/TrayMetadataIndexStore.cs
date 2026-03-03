@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Dapper;
 using SimsModDesktop.Infrastructure.Persistence;
-using SimsModDesktop.Models;
 
 namespace SimsModDesktop.Infrastructure.Tray;
 

@@ -1,6 +1,5 @@
 using SimsModDesktop.Application.Requests;
 using Microsoft.Extensions.Logging;
-using SimsModDesktop.Models;
 using SimsModDesktop.Application.Execution;
 
 namespace SimsModDesktop.Application.Execution;

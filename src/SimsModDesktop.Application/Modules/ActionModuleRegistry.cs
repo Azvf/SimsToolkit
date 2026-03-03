@@ -1,4 +1,3 @@
-using SimsModDesktop.Models;
 
 namespace SimsModDesktop.Application.Modules;
 

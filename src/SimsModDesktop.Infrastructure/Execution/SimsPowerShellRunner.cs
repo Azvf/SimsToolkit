@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using SimsModDesktop.Application.Cli;
 using SimsModDesktop.Application.Execution;
-using SimsModDesktop.Models;
 
 namespace SimsModDesktop.Infrastructure.Execution;
 

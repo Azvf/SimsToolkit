@@ -1,5 +1,4 @@
 using SimsModDesktop.Application.Cli;
-using SimsModDesktop.Models;
 
 namespace SimsModDesktop.Application.Execution;
 

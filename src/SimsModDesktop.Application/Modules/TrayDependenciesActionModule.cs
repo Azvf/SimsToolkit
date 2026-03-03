@@ -1,6 +1,5 @@
 using System.Text.Json.Nodes;
 using SimsModDesktop.Application.Validation;
-using SimsModDesktop.Models;
 using SimsModDesktop.TrayDependencyEngine;
 
 namespace SimsModDesktop.Application.Modules;

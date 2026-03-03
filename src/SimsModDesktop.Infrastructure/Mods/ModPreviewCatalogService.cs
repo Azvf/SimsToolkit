@@ -1,4 +1,3 @@
-using SimsModDesktop.Models;
 using System.Threading.Channels;
 
 namespace SimsModDesktop.Infrastructure.Mods;

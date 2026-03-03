@@ -2,7 +2,6 @@ using System.Security.Cryptography;
 using System.Text;
 using Dapper;
 using SimsModDesktop.Infrastructure.Persistence;
-using SimsModDesktop.Models;
 
 namespace SimsModDesktop.Infrastructure.Tray;
 

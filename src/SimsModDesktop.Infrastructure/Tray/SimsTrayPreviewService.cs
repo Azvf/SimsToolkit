@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
-using SimsModDesktop.Models;
 
 namespace SimsModDesktop.Infrastructure.Tray;
 

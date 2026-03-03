@@ -1,6 +1,5 @@
 using System.Text.Json.Nodes;
 using SimsModDesktop.Application.TextureCompression;
-using SimsModDesktop.Models;
 
 namespace SimsModDesktop.Application.Modules;
 

@@ -4,7 +4,7 @@ namespace SimsModDesktop.Application.Cli;
 
 public sealed class SimsCliArgumentBuilder : ISimsCliArgumentBuilder
 {
-    private readonly IReadOnlyDictionary<Models.SimsAction, IActionCliArgumentMapper> _mappers;
+    private readonly IReadOnlyDictionary<SimsAction, IActionCliArgumentMapper> _mappers;
 
     public SimsCliArgumentBuilder(IEnumerable<IActionCliArgumentMapper> mappers)
     {
@@ -63,7 +63,7 @@ public sealed class SimsCliArgumentBuilder : ISimsCliArgumentBuilder
         };
     }
 
-    private IActionCliArgumentMapper GetMapper(Models.SimsAction action)
+    private IActionCliArgumentMapper GetMapper(SimsAction action)
     {
         if (_mappers.TryGetValue(action, out var mapper))
         {
