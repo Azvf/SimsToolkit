@@ -796,6 +796,7 @@ public sealed class MainWindowViewModelInteractionTests
                 trayPreview),
             new MainWindowStatusController(),
             new MainWindowRecoveryController(),
+            new MainWindowTrayPreviewStateController(),
             modPreviewWorkspace,
             trayPreviewWorkspace,
             organize,

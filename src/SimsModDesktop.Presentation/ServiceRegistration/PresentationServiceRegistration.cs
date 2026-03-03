@@ -22,6 +22,7 @@ public static class PresentationServiceRegistration
         services.AddSingleton<MainWindowStatusController>();
         services.AddSingleton<MainWindowSettingsPersistenceController>();
         services.AddSingleton<MainWindowRecoveryController>();
+        services.AddSingleton<MainWindowTrayPreviewStateController>();
         services.AddSingleton<ShellSettingsController>();
         services.AddSingleton<ShellSystemOperationsController>();
 

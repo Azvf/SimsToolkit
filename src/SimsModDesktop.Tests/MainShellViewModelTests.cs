@@ -258,6 +258,7 @@ public sealed class MainShellViewModelTests
                 trayPreview),
             new MainWindowStatusController(),
             new MainWindowRecoveryController(),
+            new MainWindowTrayPreviewStateController(),
             modPreviewWorkspace,
             trayPreviewWorkspace,
             organize,

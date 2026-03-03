@@ -39,6 +39,7 @@ public sealed class MainWindowViewModel : ObservableObject
     private readonly IMainWindowSettingsProjection _settingsProjection;
     private readonly IToolkitActionPlanner _toolkitActionPlanner;
     private readonly MainWindowRecoveryController _recoveryController;
+    private readonly MainWindowTrayPreviewStateController _trayPreviewStateController;
     private readonly ITextureCompressionService _textureCompressionService;
     private readonly ITextureDimensionProbe _textureDimensionProbe;
     private readonly Stack<TrayPreviewListItemViewModel> _trayPreviewDetailHistory = new();
@@ -55,18 +56,7 @@ public sealed class MainWindowViewModel : ObservableObject
     private string _selectedLanguageCode = DefaultLanguageCode;
     private string _scriptPath = string.Empty;
     private bool _whatIf;
-    private int _trayPreviewCurrentPage = 1;
-    private int _trayPreviewTotalPages = 1;
-    private string _previewSummaryText = "No preview data loaded.";
-    private string _previewTotalItems = "0";
-    private string _previewTotalFiles = "0";
-    private string _previewTotalSize = "0 MB";
-    private string _previewLatestWrite = "-";
-    private string _previewPageText = "Page 0/0";
-    private string _previewLazyLoadText = "Lazy cache 0/0 pages";
-    private string _previewJumpPageText = string.Empty;
     private TrayPreviewListItemViewModel? _trayPreviewDetailItem;
-    private bool _hasTrayPreviewLoadedOnce;
     private string _validationSummaryText = string.Empty;
     private bool _hasValidationErrors;
     private bool _isToolkitLogDrawerOpen;
@@ -90,6 +80,7 @@ public sealed class MainWindowViewModel : ObservableObject
         IToolkitActionPlanner toolkitActionPlanner,
         MainWindowStatusController statusController,
         MainWindowRecoveryController recoveryController,
+        MainWindowTrayPreviewStateController trayPreviewStateController,
         ModPreviewWorkspaceViewModel modPreviewWorkspace,
         TrayPreviewWorkspaceViewModel trayPreviewWorkspace,
         OrganizePanelViewModel organize,
@@ -119,6 +110,7 @@ public sealed class MainWindowViewModel : ObservableObject
         _toolkitActionPlanner = toolkitActionPlanner;
         _statusController = statusController;
         _recoveryController = recoveryController;
+        _trayPreviewStateController = trayPreviewStateController;
         _textureCompressionService = textureCompressionService;
         _textureDimensionProbe = textureDimensionProbe;
         ModPreviewWorkspace = modPreviewWorkspace;
@@ -179,6 +171,7 @@ public sealed class MainWindowViewModel : ObservableObject
 
         _localization.PropertyChanged += OnLocalizationPropertyChanged;
         _statusController.PropertyChanged += OnStatusControllerPropertyChanged;
+        _trayPreviewStateController.PropertyChanged += OnTrayPreviewStateControllerPropertyChanged;
         _localization.SetLanguage(_selectedLanguageCode);
         _selectedLanguageCode = _localization.CurrentLanguageCode;
         ProgressMessage = L("progress.idle");
@@ -419,66 +412,50 @@ public sealed class MainWindowViewModel : ObservableObject
 
     public string PreviewSummaryText
     {
-        get => _previewSummaryText;
-        private set => SetProperty(ref _previewSummaryText, value);
+        get => _trayPreviewStateController.SummaryText;
     }
 
     public string PreviewTotalItems
     {
-        get => _previewTotalItems;
-        private set
-        {
-            if (!SetProperty(ref _previewTotalItems, value))
-            {
-                return;
-            }
-
-            OnPropertyChanged(nameof(TrayPreviewSelectionSummaryText));
-        }
+        get => _trayPreviewStateController.TotalItems;
     }
 
     public string PreviewTotalFiles
     {
-        get => _previewTotalFiles;
-        private set => SetProperty(ref _previewTotalFiles, value);
+        get => _trayPreviewStateController.TotalFiles;
     }
 
     public string PreviewTotalSize
     {
-        get => _previewTotalSize;
-        private set => SetProperty(ref _previewTotalSize, value);
+        get => _trayPreviewStateController.TotalSize;
     }
 
     public string PreviewLatestWrite
     {
-        get => _previewLatestWrite;
-        private set => SetProperty(ref _previewLatestWrite, value);
+        get => _trayPreviewStateController.LatestWrite;
     }
 
     public string PreviewPageText
     {
-        get => _previewPageText;
-        private set => SetProperty(ref _previewPageText, value);
+        get => _trayPreviewStateController.PageText;
     }
 
     public string PreviewLazyLoadText
     {
-        get => _previewLazyLoadText;
-        private set => SetProperty(ref _previewLazyLoadText, value);
+        get => _trayPreviewStateController.LazyLoadText;
     }
 
     public string PreviewJumpPageText
     {
-        get => _previewJumpPageText;
+        get => _trayPreviewStateController.JumpPageText;
         set
         {
-            if (!SetProperty(ref _previewJumpPageText, value))
+            if (string.Equals(_trayPreviewStateController.JumpPageText, value, StringComparison.Ordinal))
             {
                 return;
             }
 
-            OnPropertyChanged(nameof(CanJumpToPage));
-            PreviewJumpPageCommand.NotifyCanExecuteChanged();
+            _trayPreviewStateController.JumpPageText = value;
         }
     }
 
@@ -566,9 +543,9 @@ public sealed class MainWindowViewModel : ObservableObject
         ? "Tray Path comes from Settings."
         : "Set a valid Tray Path in Settings before loading preview.";
 
-    public bool CanGoPrevPage => !IsBusy && !_isTrayPreviewPageLoading && _trayPreviewCurrentPage > 1;
-    public bool CanGoNextPage => !IsBusy && !_isTrayPreviewPageLoading && _trayPreviewCurrentPage < _trayPreviewTotalPages;
-    public bool CanJumpToPage => !IsBusy && !_isTrayPreviewPageLoading && TryParsePreviewJumpPage(PreviewJumpPageText, out var page) && page >= 1 && page <= _trayPreviewTotalPages;
+    public bool CanGoPrevPage => !IsBusy && !_isTrayPreviewPageLoading && _trayPreviewStateController.CurrentPage > 1;
+    public bool CanGoNextPage => !IsBusy && !_isTrayPreviewPageLoading && _trayPreviewStateController.CurrentPage < _trayPreviewStateController.TotalPages;
+    public bool CanJumpToPage => !IsBusy && !_isTrayPreviewPageLoading && TryParsePreviewJumpPage(PreviewJumpPageText, out var page) && page >= 1 && page <= _trayPreviewStateController.TotalPages;
     public bool IsBuildSizeFilterVisible =>
         string.Equals(TrayPreview.PresetTypeFilter, "Lot", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(TrayPreview.PresetTypeFilter, "Room", StringComparison.OrdinalIgnoreCase);
@@ -621,8 +598,8 @@ public sealed class MainWindowViewModel : ObservableObject
          !TrayPreviewDetailItem.Item.HasDisplaySecondaryMeta &&
          !TrayPreviewDetailItem.Item.HasDisplayTertiaryMeta);
     public bool CanGoBackTrayPreviewDetail => _trayPreviewDetailHistory.Count > 0;
-    public bool IsTrayPreviewEmptyStatusOk => HasValidTrayPreviewPath && !_hasTrayPreviewLoadedOnce;
-    public bool IsTrayPreviewEmptyStatusWarning => HasValidTrayPreviewPath && _hasTrayPreviewLoadedOnce;
+    public bool IsTrayPreviewEmptyStatusOk => HasValidTrayPreviewPath && !_trayPreviewStateController.HasLoadedOnce;
+    public bool IsTrayPreviewEmptyStatusWarning => HasValidTrayPreviewPath && _trayPreviewStateController.HasLoadedOnce;
     public bool IsTrayPreviewEmptyStatusMissing => !HasValidTrayPreviewPath;
     public bool IsTrayPreviewPathMissing => !HasValidTrayPreviewPath;
 
@@ -635,7 +612,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 return L("preview.empty.pathMissing.title");
             }
 
-            if (_hasTrayPreviewLoadedOnce)
+            if (_trayPreviewStateController.HasLoadedOnce)
             {
                 return L("preview.empty.noResults.title");
             }
@@ -653,7 +630,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 return L("preview.empty.pathMissing.description");
             }
 
-            if (_hasTrayPreviewLoadedOnce)
+            if (_trayPreviewStateController.HasLoadedOnce)
             {
                 return L("preview.empty.noResults.description");
             }
@@ -671,7 +648,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 return L("preview.empty.status.pathMissing");
             }
 
-            if (_hasTrayPreviewLoadedOnce)
+            if (_trayPreviewStateController.HasLoadedOnce)
             {
                 return L("preview.empty.status.noResults");
             }
@@ -1875,12 +1852,12 @@ public sealed class MainWindowViewModel : ObservableObject
 
     private async Task LoadPreviousTrayPreviewPageAsync()
     {
-        await LoadTrayPreviewPageAsync(_trayPreviewCurrentPage - 1);
+        await LoadTrayPreviewPageAsync(_trayPreviewStateController.CurrentPage - 1);
     }
 
     private async Task LoadNextTrayPreviewPageAsync()
     {
-        await LoadTrayPreviewPageAsync(_trayPreviewCurrentPage + 1);
+        await LoadTrayPreviewPageAsync(_trayPreviewStateController.CurrentPage + 1);
     }
 
     private async Task JumpToTrayPreviewPageAsync()
@@ -2043,17 +2020,10 @@ public sealed class MainWindowViewModel : ObservableObject
             CancelTrayPreviewThumbnailLoading();
             ClearTrayPreviewSelection();
             ClearPreviewItems();
-            PreviewSummaryText = L("preview.noneLoaded");
-            PreviewTotalItems = "0";
-            PreviewTotalFiles = "0";
-            PreviewTotalSize = "0 MB";
-            PreviewLatestWrite = "-";
-            PreviewPageText = LF("preview.page", 0, 0);
-            PreviewLazyLoadText = LF("preview.lazyCache", 0, 0);
-            PreviewJumpPageText = string.Empty;
-            _hasTrayPreviewLoadedOnce = false;
-            _trayPreviewCurrentPage = 1;
-            _trayPreviewTotalPages = 1;
+            _trayPreviewStateController.Reset(
+                L("preview.noneLoaded"),
+                LF("preview.page", 0, 0),
+                LF("preview.lazyCache", 0, 0));
             NotifyTrayPreviewViewStateChanged();
             NotifyCommandStates();
         });
@@ -2063,17 +2033,17 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         ExecuteOnUi(() =>
         {
-            PreviewTotalItems = summary.TotalItems.ToString("N0");
-            PreviewTotalFiles = summary.TotalFiles.ToString("N0");
-            PreviewTotalSize = $"{summary.TotalMB:N2} MB";
-            PreviewLatestWrite = summary.LatestWriteTimeLocal == DateTime.MinValue
-                ? "-"
-                : summary.LatestWriteTimeLocal.ToString("yyyy-MM-dd HH:mm");
-
             var breakdown = string.IsNullOrWhiteSpace(summary.PresetTypeBreakdown)
                 ? L("preview.typeNa")
                 : LF("preview.type", summary.PresetTypeBreakdown);
-            PreviewSummaryText = LF("preview.summaryReady", breakdown);
+            _trayPreviewStateController.ApplySummary(
+                summary.TotalItems.ToString("N0"),
+                summary.TotalFiles.ToString("N0"),
+                $"{summary.TotalMB:N2} MB",
+                summary.LatestWriteTimeLocal == DateTime.MinValue
+                    ? "-"
+                    : summary.LatestWriteTimeLocal.ToString("yyyy-MM-dd HH:mm"),
+                LF("preview.summaryReady", breakdown));
         });
     }
 
@@ -2093,17 +2063,17 @@ public sealed class MainWindowViewModel : ObservableObject
 
             ApplyTrayPreviewDebugVisibility();
 
-            _hasTrayPreviewLoadedOnce = true;
-            _trayPreviewCurrentPage = page.PageIndex;
-            _trayPreviewTotalPages = Math.Max(page.TotalPages, 1);
-            PreviewTotalItems = page.TotalItems.ToString("N0");
             var firstItemIndex = page.Items.Count == 0 ? 0 : ((page.PageIndex - 1) * page.PageSize) + 1;
             var lastItemIndex = page.Items.Count == 0 ? 0 : firstItemIndex + page.Items.Count - 1;
             var safeTotalPages = Math.Max(page.TotalPages, 1);
-            PreviewSummaryText = LF("preview.range", firstItemIndex, lastItemIndex, page.TotalItems);
-            PreviewPageText = LF("preview.page", page.PageIndex, safeTotalPages);
-            PreviewLazyLoadText = LF("preview.lazyCache", loadedPageCount, safeTotalPages);
-            PreviewJumpPageText = page.PageIndex.ToString();
+            _trayPreviewStateController.ApplyPage(
+                page.PageIndex,
+                safeTotalPages,
+                page.TotalItems.ToString("N0"),
+                LF("preview.range", firstItemIndex, lastItemIndex, page.TotalItems),
+                LF("preview.page", page.PageIndex, safeTotalPages),
+                LF("preview.lazyCache", loadedPageCount, safeTotalPages),
+                page.PageIndex.ToString());
             NotifyTrayPreviewViewStateChanged();
             NotifyCommandStates();
         });
@@ -2372,7 +2342,7 @@ public sealed class MainWindowViewModel : ObservableObject
         var cts = new CancellationTokenSource();
         _ = LoadTrayPreviewThumbnailsAsync(
             itemsToLoad,
-            _trayPreviewCurrentPage,
+            _trayPreviewStateController.CurrentPage,
             batchId,
             cts,
             stageLabel: "expanded");
@@ -3140,6 +3110,56 @@ public sealed class MainWindowViewModel : ObservableObject
             case nameof(MainWindowStatusController.LogText):
                 OnPropertyChanged(nameof(LogText));
                 ClearLogCommand.NotifyCanExecuteChanged();
+                return;
+        }
+    }
+
+    private void OnTrayPreviewStateControllerPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        switch (e.PropertyName)
+        {
+            case nameof(MainWindowTrayPreviewStateController.SummaryText):
+                OnPropertyChanged(nameof(PreviewSummaryText));
+                return;
+            case nameof(MainWindowTrayPreviewStateController.TotalItems):
+                OnPropertyChanged(nameof(PreviewTotalItems));
+                OnPropertyChanged(nameof(TrayPreviewSelectionSummaryText));
+                return;
+            case nameof(MainWindowTrayPreviewStateController.TotalFiles):
+                OnPropertyChanged(nameof(PreviewTotalFiles));
+                return;
+            case nameof(MainWindowTrayPreviewStateController.TotalSize):
+                OnPropertyChanged(nameof(PreviewTotalSize));
+                return;
+            case nameof(MainWindowTrayPreviewStateController.LatestWrite):
+                OnPropertyChanged(nameof(PreviewLatestWrite));
+                return;
+            case nameof(MainWindowTrayPreviewStateController.PageText):
+                OnPropertyChanged(nameof(PreviewPageText));
+                return;
+            case nameof(MainWindowTrayPreviewStateController.LazyLoadText):
+                OnPropertyChanged(nameof(PreviewLazyLoadText));
+                return;
+            case nameof(MainWindowTrayPreviewStateController.JumpPageText):
+                OnPropertyChanged(nameof(PreviewJumpPageText));
+                OnPropertyChanged(nameof(CanJumpToPage));
+                PreviewJumpPageCommand.NotifyCanExecuteChanged();
+                return;
+            case nameof(MainWindowTrayPreviewStateController.CurrentPage):
+            case nameof(MainWindowTrayPreviewStateController.TotalPages):
+                OnPropertyChanged(nameof(CanGoPrevPage));
+                OnPropertyChanged(nameof(CanGoNextPage));
+                OnPropertyChanged(nameof(CanJumpToPage));
+                PreviewPrevPageCommand.NotifyCanExecuteChanged();
+                PreviewNextPageCommand.NotifyCanExecuteChanged();
+                PreviewJumpPageCommand.NotifyCanExecuteChanged();
+                return;
+            case nameof(MainWindowTrayPreviewStateController.HasLoadedOnce):
+                OnPropertyChanged(nameof(IsTrayPreviewEmptyStatusOk));
+                OnPropertyChanged(nameof(IsTrayPreviewEmptyStatusWarning));
+                OnPropertyChanged(nameof(TrayPreviewEmptyTitleText));
+                OnPropertyChanged(nameof(TrayPreviewEmptyDescriptionText));
+                OnPropertyChanged(nameof(TrayPreviewEmptyStatusText));
                 return;
         }
     }
