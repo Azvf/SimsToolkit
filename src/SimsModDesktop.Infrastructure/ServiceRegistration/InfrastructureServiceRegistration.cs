@@ -11,9 +11,11 @@ using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Application.UseCases;
 using SimsModDesktop.Infrastructure.Configuration;
 using SimsModDesktop.Infrastructure.Execution;
+using SimsModDesktop.Infrastructure.Localization;
 using SimsModDesktop.Infrastructure.Mods;
 using SimsModDesktop.Infrastructure.Saves;
 using SimsModDesktop.Infrastructure.Services;
+using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Infrastructure.TextureCompression;
 using SimsModDesktop.Infrastructure.TextureProcessing;
 using SimsModDesktop.Infrastructure.Tray;
@@ -29,7 +31,11 @@ public static class InfrastructureServiceRegistration
         ArgumentNullException.ThrowIfNull(services);
 
         services.AddSingleton<IConfigurationProvider, CrossPlatformConfigurationProvider>();
+        services.AddSingleton<ILocalizationService, JsonLocalizationService>();
+        services.AddSingleton<ISettingsStore, JsonSettingsStore>();
+        services.AddSingleton<IAppThemeService, AppThemeService>();
         services.AddSingleton<ISimsPowerShellRunner, SimsPowerShellRunner>();
+        services.AddSingleton<IExecutionEngine, PowerShellExecutionEngine>();
 
         services.AddSingleton<IFileOperationService, CrossPlatformFileOperationService>();
         services.AddSingleton<IHashComputationService, CrossPlatformHashComputationService>();

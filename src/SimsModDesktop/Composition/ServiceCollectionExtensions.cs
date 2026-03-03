@@ -25,9 +25,9 @@ namespace SimsModDesktop.Composition;
 
 internal static class ServiceCollectionExtensions
 {
-    public static IServiceCollection AddSimsDesktopInfrastructure(this IServiceCollection services)
+    public static IServiceCollection AddSimsDesktopShell(this IServiceCollection services)
     {
-        services.AddSimsModDesktopInfrastructure();
+        ArgumentNullException.ThrowIfNull(services);
 
         services.AddLogging(builder =>
         {
@@ -35,32 +35,34 @@ internal static class ServiceCollectionExtensions
             builder.SetMinimumLevel(LogLevel.Information);
         });
 
+        services.AddSimsModDesktopApplication();
+        services.AddSimsModDesktopPresentation();
+        services.AddSimsModDesktopInfrastructure();
+
+        services.AddDesktopShellAdapters();
+        services.AddLegacyShellViewModels();
+
+        return services;
+    }
+
+    private static IServiceCollection AddDesktopShellAdapters(this IServiceCollection services)
+    {
         services.AddSingleton<IWindowHostService, WindowHostService>();
         services.AddSingleton<IFileDialogService, AvaloniaFileDialogService>();
         services.AddSingleton<IConfirmationDialogService, AvaloniaConfirmationDialogService>();
         services.AddSingleton<IRecoveryPromptService, AvaloniaRecoveryPromptService>();
-        services.AddSingleton<ILocalizationService, JsonLocalizationService>();
-        services.AddSingleton<ISettingsStore, JsonSettingsStore>();
-        services.AddSingleton<IAppThemeService, AppThemeService>();
 
-        services.AddSingleton<IExecutionEngine, PowerShellExecutionEngine>();
         services.AddSingleton<IDbpfPackageCatalog, DbpfPackageCatalog>();
         services.AddSingleton<IDbpfResourceReader, DbpfResourceReader>();
         services.AddSingleton<IPackageIndexCache, PackageIndexCache>();
         services.AddSingleton<ITrayDependencyExportService, TrayDependencyExportService>();
         services.AddSingleton<ITrayDependencyAnalysisService, TrayDependencyAnalysisService>();
-        services.AddSingleton<ITrayDependenciesLauncher, TrayDependenciesLauncher>();
-        return services;
-    }
-
-    public static IServiceCollection AddSimsDesktopExecution(this IServiceCollection services)
-    {
-        services.AddSimsModDesktopApplication();
+        services.AddTransient<MainWindow>();
 
         return services;
     }
 
-    public static IServiceCollection AddSimsDesktopModules(this IServiceCollection services)
+    private static IServiceCollection AddLegacyShellViewModels(this IServiceCollection services)
     {
         services.AddSingleton<OrganizePanelViewModel>();
         services.AddSingleton<TextureCompressPanelViewModel>();
@@ -89,19 +91,15 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<IActionModule, TrayDependenciesActionModule>();
         services.AddSingleton<IActionModule, TrayPreviewActionModule>();
         services.AddSingleton<IActionModuleRegistry, ActionModuleRegistry>();
-        return services;
-    }
 
-    public static IServiceCollection AddSimsDesktopPresentation(this IServiceCollection services)
-    {
-        services.AddSimsModDesktopPresentation();
+        services.AddSingleton<ITrayDependenciesLauncher, TrayDependenciesLauncher>();
 
         services.AddSingleton<ModPreviewWorkspaceViewModel>();
         services.AddSingleton<TrayPreviewWorkspaceViewModel>();
         services.AddSingleton<MainWindowViewModel>();
         services.AddSingleton<SaveWorkspaceViewModel>();
         services.AddSingleton<MainShellViewModel>();
-        services.AddTransient<MainWindow>();
+
         return services;
     }
 }

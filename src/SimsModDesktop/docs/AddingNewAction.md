@@ -4,10 +4,10 @@ This project now follows a module-registry workflow for adding actions.
 
 ## Required touch points
 1. Add a new action input model in `Application/Requests`.
-2. Add a validator in `Application/Validation` and register it in `Composition/ServiceCollectionExtensions.cs` (`AddSimsDesktopExecution`).
-3. Add a CLI mapper in `Application/Cli/*CliArgumentMapper.cs` and register it in `Composition/ServiceCollectionExtensions.cs` (`AddSimsDesktopExecution`).
-4. Register an execution strategy (`ActionExecutionStrategy<TInput>`) for the action in `Composition/ServiceCollectionExtensions.cs` (`AddSimsDesktopExecution`).
-5. Add an action module in `Application/Modules`, expose `SupportedActionPatchKeys`, and register it in `Composition/ServiceCollectionExtensions.cs` (`AddSimsDesktopModules`).
+2. Add a validator in `Application/Validation`. The shell composition now pulls validators through `Composition/ServiceCollectionExtensions.cs` via `AddSimsDesktopShell()` and the layered `Application` registration.
+3. Add a CLI mapper in `Application/Cli/*CliArgumentMapper.cs`. The shell composition now resolves mappers through `AddSimsDesktopShell()` and the layered `Application` registration.
+4. Register an execution strategy (`ActionExecutionStrategy<TInput>`) in `Application/ServiceRegistration/ApplicationServiceRegistration.cs`.
+5. Add an action module in `Application/Modules`, expose `SupportedActionPatchKeys`, and register it through `AddSimsDesktopShell()`'s legacy shell view-model/module wiring.
 6. Add or extend a state contract in `Application/Modules/ActionModuleStateContracts.cs`.
 7. Add panel UI + panel ViewModel and implement the corresponding state contract interface.
 

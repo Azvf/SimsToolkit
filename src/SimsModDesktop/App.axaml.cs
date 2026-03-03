@@ -35,10 +35,7 @@ public partial class App : Avalonia.Application
     private static ServiceProvider BuildServiceProvider()
     {
         return new ServiceCollection()
-            .AddSimsDesktopInfrastructure()
-            .AddSimsDesktopExecution()
-            .AddSimsDesktopModules()
-            .AddSimsDesktopPresentation()
+            .AddSimsDesktopShell()
             .BuildServiceProvider();
     }
 }
