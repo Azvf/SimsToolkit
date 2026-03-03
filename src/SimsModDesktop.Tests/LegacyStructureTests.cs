@@ -7,14 +7,9 @@ public sealed class LegacyStructureTests
     {
         var repositoryRoot = FindRepositoryRoot();
         var legacyApplicationPath = Path.Combine(repositoryRoot, "src", "SimsModDesktop", "Application");
-
-        var remainingSourceFiles = Directory.Exists(legacyApplicationPath)
-            ? Directory.EnumerateFiles(legacyApplicationPath, "*.cs", SearchOption.AllDirectories).ToArray()
-            : Array.Empty<string>();
-
-        Assert.True(
-            remainingSourceFiles.Length == 0,
-            "Legacy application folder should be empty of source files:" + Environment.NewLine + string.Join(Environment.NewLine, remainingSourceFiles));
+        Assert.False(
+            Directory.Exists(legacyApplicationPath),
+            $"Legacy application folder should not exist: {legacyApplicationPath}");
     }
 
     [Fact]
