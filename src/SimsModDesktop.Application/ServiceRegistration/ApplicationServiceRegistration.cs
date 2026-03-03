@@ -42,6 +42,7 @@ public static class ApplicationServiceRegistration
 
         services.AddSingleton<IExecutionEngineRoutingPolicy, ExecutionEngineRoutingPolicy>();
         services.AddSingleton<IExecutionCoordinator, ExecutionCoordinator>();
+        services.AddSingleton<IFileTransformationEngine, UnifiedFileTransformationEngine>();
         services.AddSingleton<ITrayPreviewCoordinator, TrayPreviewCoordinator>();
         services.AddSingleton<IMainWindowPlanBuilder, MainWindowPlanBuilder>();
         services.AddSingleton<IToolkitExecutionRunner, ToolkitExecutionRunner>();
