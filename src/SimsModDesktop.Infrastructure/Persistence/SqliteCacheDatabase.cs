@@ -2,29 +2,18 @@ using Microsoft.Data.Sqlite;
 
 namespace SimsModDesktop.Infrastructure.Persistence;
 
-internal sealed class AppCacheDatabase
+public sealed class SqliteCacheDatabase
 {
     private readonly string _databasePath;
 
-    public AppCacheDatabase()
-        : this(
-            Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "SimsModDesktop",
-                "Cache"))
+    public SqliteCacheDatabase(string databasePath)
     {
-    }
-
-    public AppCacheDatabase(string cacheRootPath)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(cacheRootPath);
-        _databasePath = Path.Combine(cacheRootPath, "app-cache.db");
+        ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
+        _databasePath = databasePath;
     }
 
     public SqliteConnection OpenConnection()
     {
-        EnsureDatabasePathIsReady();
-
         var directory = Path.GetDirectoryName(_databasePath);
         if (!string.IsNullOrWhiteSpace(directory))
         {
@@ -50,22 +39,5 @@ internal sealed class AppCacheDatabase
         command.ExecuteNonQuery();
 
         return connection;
-    }
-
-    private void EnsureDatabasePathIsReady()
-    {
-        if (!Directory.Exists(_databasePath))
-        {
-            return;
-        }
-
-        if (!Directory.EnumerateFileSystemEntries(_databasePath).Any())
-        {
-            Directory.Delete(_databasePath, recursive: false);
-            return;
-        }
-
-        var backupPath = $"{_databasePath}.dir-backup-{DateTime.UtcNow:yyyyMMddHHmmss}";
-        Directory.Move(_databasePath, backupPath);
     }
 }
