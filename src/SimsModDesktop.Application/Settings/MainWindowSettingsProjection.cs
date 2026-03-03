@@ -1,38 +1,7 @@
-using SimsModDesktop.Application.Modules;
-
 namespace SimsModDesktop.Application.Settings;
 
 public sealed class MainWindowSettingsProjection : IMainWindowSettingsProjection
 {
-    public AppSettings Capture(MainWindowSettingsSnapshot snapshot, IActionModuleRegistry moduleRegistry)
-    {
-        ArgumentNullException.ThrowIfNull(snapshot);
-        ArgumentNullException.ThrowIfNull(moduleRegistry);
-
-        var settings = new AppSettings
-        {
-            UiLanguageCode = string.IsNullOrWhiteSpace(snapshot.UiLanguageCode) ? "en-US" : snapshot.UiLanguageCode.Trim(),
-            ScriptPath = snapshot.ScriptPath,
-            SelectedWorkspace = snapshot.Workspace,
-            SelectedAction = snapshot.SelectedAction,
-            WhatIf = snapshot.WhatIf,
-            ModPreview = CloneModPreview(snapshot.ModPreview),
-            SharedFileOps = CloneShared(snapshot.SharedFileOps),
-            UiState = CloneUiState(snapshot.UiState),
-            Navigation = CloneNavigation(snapshot.Navigation),
-            FeatureFlags = CloneFeatureFlags(snapshot.FeatureFlags),
-            GameLaunch = CloneGameLaunch(snapshot.GameLaunch),
-            Theme = CloneTheme(snapshot.Theme)
-        };
-
-        foreach (var module in moduleRegistry.All)
-        {
-            module.SaveToSettings(settings);
-        }
-
-        return settings;
-    }
-
     public MainWindowResolvedSettings Resolve(AppSettings settings, IReadOnlyList<SimsAction> availableToolkitActions)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -67,17 +36,6 @@ public sealed class MainWindowSettingsProjection : IMainWindowSettingsProjection
                 ? AppWorkspace.TrayPreview
                 : resolvedWorkspace
         };
-    }
-
-    public void LoadModuleSettings(AppSettings settings, IActionModuleRegistry moduleRegistry)
-    {
-        ArgumentNullException.ThrowIfNull(settings);
-        ArgumentNullException.ThrowIfNull(moduleRegistry);
-
-        foreach (var module in moduleRegistry.All)
-        {
-            module.LoadFromSettings(settings);
-        }
     }
 
     private static AppSettings.SharedFileOpsSettings CloneShared(AppSettings.SharedFileOpsSettings? value)
