@@ -7,7 +7,6 @@ global using SimsModDesktop.Application.TextureProcessing;
 global using SimsModDesktop.Application.TrayPreview;
 global using SimsModDesktop.Presentation.Models;
 global using SimsModDesktop.Infrastructure.Configuration;
-global using SimsModDesktop.Infrastructure.Execution;
 global using SimsModDesktop.Infrastructure.Mods;
 global using SimsModDesktop.Infrastructure.Saves;
 global using SimsModDesktop.Infrastructure.Services;

@@ -1,7 +1,7 @@
 
 namespace SimsModDesktop.Application.Execution;
 
-public sealed record MainWindowPlanBuilderState
+public sealed record ToolkitPlanningState
 {
     public string ScriptPath { get; init; } = string.Empty;
     public bool WhatIf { get; init; }

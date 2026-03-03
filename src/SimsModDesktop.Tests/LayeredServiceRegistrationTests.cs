@@ -1,7 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
-using SimsModDesktop.Application.Cli;
 using SimsModDesktop.Application.Configuration;
-using SimsModDesktop.Application.Results;
+using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.ServiceRegistration;
 using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Application.UseCases;
@@ -21,11 +20,9 @@ public sealed class LayeredServiceRegistrationTests
         services.AddLogging();
         services.AddSimsModDesktopApplication();
 
-        using var provider = services.BuildServiceProvider();
-
-        Assert.NotNull(provider.GetRequiredService<ISimsCliArgumentBuilder>());
-        Assert.NotNull(provider.GetRequiredService<IExecutionOutputParserRegistry>());
-        Assert.Equal(5, provider.GetServices<Application.Execution.IActionExecutionStrategy>().Count());
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IExecutionCoordinator));
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IToolkitActionPlanner));
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IFileTransformationEngine));
     }
 
     [Fact]

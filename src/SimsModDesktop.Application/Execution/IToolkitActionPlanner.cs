@@ -18,22 +18,22 @@ public interface IToolkitActionPlanner
     void SaveModuleSettings(AppSettings settings);
 
     bool TryBuildToolkitCliPlan(
-        MainWindowPlanBuilderState state,
+        ToolkitPlanningState state,
         out CliExecutionPlan plan,
         out string error);
 
     bool TryBuildTrayDependenciesPlan(
-        MainWindowPlanBuilderState state,
+        ToolkitPlanningState state,
         out TrayDependenciesExecutionPlan plan,
         out string error);
 
     bool TryBuildTrayPreviewInput(
-        MainWindowPlanBuilderState state,
+        ToolkitPlanningState state,
         out TrayPreviewInput input,
         out string error);
 
     bool TryBuildTextureCompressionPlan(
-        MainWindowPlanBuilderState state,
+        ToolkitPlanningState state,
         out TextureCompressionExecutionPlan plan,
         out string error);
 }

@@ -2170,9 +2170,9 @@ public sealed class MainWindowViewModel : ObservableObject
         }
     }
 
-    private MainWindowPlanBuilderState CreatePlanBuilderState()
+    private ToolkitPlanningState CreatePlanBuilderState()
     {
-        return new MainWindowPlanBuilderState
+        return new ToolkitPlanningState
         {
             ScriptPath = ScriptPath,
             WhatIf = WhatIf,

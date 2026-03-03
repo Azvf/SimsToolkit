@@ -10,7 +10,6 @@ using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Application.UseCases;
 using SimsModDesktop.Infrastructure.Configuration;
-using SimsModDesktop.Infrastructure.Execution;
 using SimsModDesktop.Infrastructure.Localization;
 using SimsModDesktop.Infrastructure.Mods;
 using SimsModDesktop.Infrastructure.Saves;
@@ -34,8 +33,6 @@ public static class InfrastructureServiceRegistration
         services.AddSingleton<ILocalizationService, JsonLocalizationService>();
         services.AddSingleton<ISettingsStore, JsonSettingsStore>();
         services.AddSingleton<IAppThemeService, AppThemeService>();
-        services.AddSingleton<ISimsPowerShellRunner, SimsPowerShellRunner>();
-        services.AddSingleton<IExecutionEngine, PowerShellExecutionEngine>();
 
         services.AddSingleton<IFileOperationService, CrossPlatformFileOperationService>();
         services.AddSingleton<IHashComputationService, CrossPlatformHashComputationService>();

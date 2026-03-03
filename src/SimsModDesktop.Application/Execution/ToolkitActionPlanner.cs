@@ -178,7 +178,7 @@ public sealed class ToolkitActionPlanner : IToolkitActionPlanner
     }
 
     public bool TryBuildToolkitCliPlan(
-        MainWindowPlanBuilderState state,
+        ToolkitPlanningState state,
         out CliExecutionPlan plan,
         out string error)
     {
@@ -256,7 +256,7 @@ public sealed class ToolkitActionPlanner : IToolkitActionPlanner
     }
 
     public bool TryBuildTrayDependenciesPlan(
-        MainWindowPlanBuilderState state,
+        ToolkitPlanningState state,
         out TrayDependenciesExecutionPlan plan,
         out string error)
     {
@@ -333,7 +333,7 @@ public sealed class ToolkitActionPlanner : IToolkitActionPlanner
     }
 
     public bool TryBuildTrayPreviewInput(
-        MainWindowPlanBuilderState state,
+        ToolkitPlanningState state,
         out TrayPreviewInput input,
         out string error)
     {
@@ -365,7 +365,7 @@ public sealed class ToolkitActionPlanner : IToolkitActionPlanner
     }
 
     public bool TryBuildTextureCompressionPlan(
-        MainWindowPlanBuilderState state,
+        ToolkitPlanningState state,
         out TextureCompressionExecutionPlan plan,
         out string error)
     {
@@ -427,7 +427,7 @@ public sealed class ToolkitActionPlanner : IToolkitActionPlanner
     }
 
     private static bool TryBuildGlobalExecutionOptions(
-        MainWindowPlanBuilderState state,
+        ToolkitPlanningState state,
         bool requireScriptPath,
         bool includeShared,
         out GlobalExecutionOptions options,

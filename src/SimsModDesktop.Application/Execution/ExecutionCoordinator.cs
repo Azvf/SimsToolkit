@@ -1,55 +1,38 @@
-using SimsModDesktop.Application.Requests;
 using Microsoft.Extensions.Logging;
-using SimsModDesktop.Application.Execution;
+using SimsModDesktop.Application.Requests;
+using SimsModDesktop.Application.Services;
+using SimsModDesktop.Application.Validation;
 
 namespace SimsModDesktop.Application.Execution;
 
 public sealed class ExecutionCoordinator : IExecutionCoordinator
 {
     private const string UnifiedExecutable = "UnifiedFileTransformationEngine";
+    private const string FindDupExecutable = "FindDuplicateFiles";
 
-    private readonly ISimsPowerShellRunner _runner;
     private readonly IFileTransformationEngine _transformationEngine;
-    private readonly IExecutionEngineRoutingPolicy _routingPolicy;
+    private readonly IHashComputationService _hashComputationService;
+    private readonly IFileOperationService _fileOperationService;
+    private readonly IActionInputValidator<FindDupInput> _findDupValidator;
     private readonly ILogger<ExecutionCoordinator> _logger;
-    private readonly IReadOnlyDictionary<SimsAction, IActionExecutionStrategy> _strategies;
 
     public ExecutionCoordinator(
-        ISimsPowerShellRunner runner,
         IFileTransformationEngine transformationEngine,
-        IExecutionEngineRoutingPolicy routingPolicy,
-        ILogger<ExecutionCoordinator> logger,
-        IEnumerable<IActionExecutionStrategy> strategies)
+        IHashComputationService hashComputationService,
+        IFileOperationService fileOperationService,
+        IActionInputValidator<FindDupInput> findDupValidator,
+        ILogger<ExecutionCoordinator> logger)
     {
-        ArgumentNullException.ThrowIfNull(runner);
         ArgumentNullException.ThrowIfNull(transformationEngine);
-        ArgumentNullException.ThrowIfNull(routingPolicy);
+        ArgumentNullException.ThrowIfNull(hashComputationService);
+        ArgumentNullException.ThrowIfNull(fileOperationService);
+        ArgumentNullException.ThrowIfNull(findDupValidator);
         ArgumentNullException.ThrowIfNull(logger);
-        ArgumentNullException.ThrowIfNull(strategies);
-
-        var allStrategies = strategies.ToList();
-        if (allStrategies.Count == 0)
-        {
-            throw new InvalidOperationException("No execution strategies were registered.");
-        }
-
-        var duplicateActions = allStrategies
-            .GroupBy(strategy => strategy.Action)
-            .Where(group => group.Count() > 1)
-            .Select(group => group.Key.ToString())
-            .OrderBy(name => name, StringComparer.Ordinal)
-            .ToArray();
-        if (duplicateActions.Length > 0)
-        {
-            throw new InvalidOperationException(
-                "Duplicate execution strategies were registered: " + string.Join(", ", duplicateActions));
-        }
-
-        _runner = runner;
         _transformationEngine = transformationEngine;
-        _routingPolicy = routingPolicy;
+        _hashComputationService = hashComputationService;
+        _fileOperationService = fileOperationService;
+        _findDupValidator = findDupValidator;
         _logger = logger;
-        _strategies = allStrategies.ToDictionary(strategy => strategy.Action);
     }
 
     public async Task<SimsExecutionResult> ExecuteAsync(
@@ -61,73 +44,26 @@ public sealed class ExecutionCoordinator : IExecutionCoordinator
         ArgumentNullException.ThrowIfNull(input);
         ArgumentNullException.ThrowIfNull(onOutput);
 
-        var strategy = GetStrategy(input.Action);
-        var routingDecision = await _routingPolicy.DecideAsync(input.Action, cancellationToken);
-        if (routingDecision.UseUnifiedEngine)
+        if (input is FindDupInput findDup)
         {
-            var unifiedResult = await TryExecuteUnifiedAsync(
-                input,
-                routingDecision,
-                onOutput,
-                onProgress,
-                cancellationToken);
-
-            if (unifiedResult.Completed)
-            {
-                return unifiedResult.Result!;
-            }
+            return await ExecuteFindDuplicatesAsync(findDup, onOutput, onProgress, cancellationToken);
         }
 
-        if (!strategy.TryValidate(input, out var validationError))
-        {
-            throw new InvalidOperationException(validationError);
-        }
-
-        var command = strategy.BuildCommand(input);
-        return await _runner.RunAsync(command, onOutput, onProgress, cancellationToken);
-    }
-
-    private IActionExecutionStrategy GetStrategy(SimsAction action)
-    {
-        if (_strategies.TryGetValue(action, out var strategy))
-        {
-            return strategy;
-        }
-
-        throw new InvalidOperationException($"Execution strategy is not registered: {action}.");
-    }
-
-    private async Task<UnifiedAttemptResult> TryExecuteUnifiedAsync(
-        ISimsExecutionInput input,
-        EngineRoutingDecision routingDecision,
-        Action<string> onOutput,
-        Action<SimsProgressUpdate>? onProgress,
-        CancellationToken cancellationToken)
-    {
         if (!TryBuildTransformationRequest(input, out var mode, out var options, out var mapError))
         {
-            onOutput($"[unified] skipped: {mapError}");
-            return routingDecision.EnableFallbackToPowerShell
-                ? UnifiedAttemptResult.NotCompleted()
-                : throw new InvalidOperationException($"Unified engine mapping failed: {mapError}");
+            throw new InvalidOperationException(mapError);
         }
 
         var validation = _transformationEngine.ValidateOptions(options);
         if (!validation.IsValid)
         {
             var message = string.Join("; ", validation.Errors);
-            onOutput($"[unified] validation failed: {message}");
-            if (routingDecision.EnableFallbackToPowerShell && routingDecision.FallbackOnValidationFailure)
-            {
-                return UnifiedAttemptResult.NotCompleted();
-            }
-
             throw new InvalidOperationException($"Unified engine validation failed: {message}");
         }
 
         try
         {
-            onOutput($"[unified] executing {mode} via {UnifiedExecutable}");
+            onOutput($"[toolkit] executing {mode} via {UnifiedExecutable}");
             var progressBridge = onProgress is null
                 ? null
                 : new Progress<TransformationProgress>(value =>
@@ -146,29 +82,178 @@ public sealed class ExecutionCoordinator : IExecutionCoordinator
             var executionResult = BuildUnifiedExecutionResult(input.Action, options, result);
             if (result.Success)
             {
-                onOutput($"[unified] success: {result.Message ?? "completed"}");
-                return UnifiedAttemptResult.Success(executionResult);
+                onOutput($"[toolkit] success: {result.Message ?? "completed"}");
+                return executionResult;
             }
 
-            onOutput($"[unified] failed: {result.ErrorMessage ?? result.Message ?? "unknown error"}");
-            if (routingDecision.EnableFallbackToPowerShell)
-            {
-                return UnifiedAttemptResult.NotCompleted();
-            }
-
-            return UnifiedAttemptResult.Success(executionResult);
+            onOutput($"[toolkit] failed: {result.ErrorMessage ?? result.Message ?? "unknown error"}");
+            return executionResult;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unified execution failed for action {Action}", input.Action);
-            onOutput($"[unified] exception: {ex.Message}");
-            if (routingDecision.EnableFallbackToPowerShell)
-            {
-                return UnifiedAttemptResult.NotCompleted();
-            }
-
+            onOutput($"[toolkit] exception: {ex.Message}");
             throw new InvalidOperationException($"Unified engine crashed: {ex.Message}", ex);
         }
+    }
+
+    private async Task<SimsExecutionResult> ExecuteFindDuplicatesAsync(
+        FindDupInput input,
+        Action<string> onOutput,
+        Action<SimsProgressUpdate>? onProgress,
+        CancellationToken cancellationToken)
+    {
+        if (!_findDupValidator.TryValidate(input, out var validationError))
+        {
+            throw new InvalidOperationException(validationError);
+        }
+
+        var rootPath = input.FindDupRootPath!;
+        var searchOption = input.FindDupRecurse ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
+        var allowedExtensions = BuildExtensionFilter(input.Shared);
+
+        onOutput($"[finddup] scanning {rootPath}");
+
+        var files = Directory.EnumerateFiles(rootPath, "*", searchOption)
+            .Where(path => allowedExtensions.Count == 0 || allowedExtensions.Contains(Path.GetExtension(path)))
+            .Select(path => new FileInfo(path))
+            .ToArray();
+
+        onOutput($"[finddup] candidate files: {files.Length}");
+        if (files.Length == 0)
+        {
+            return new SimsExecutionResult
+            {
+                ExitCode = 0,
+                Executable = FindDupExecutable,
+                Arguments = [rootPath, "files=0", "duplicates=0"]
+            };
+        }
+
+        var candidates = files
+            .GroupBy(info => info.Length)
+            .Where(group => group.Count() > 1)
+            .SelectMany(group => group)
+            .ToArray();
+
+        if (candidates.Length == 0)
+        {
+            onOutput("[finddup] no duplicate size groups found");
+            await TryWriteFindDupCsvAsync(input.FindDupOutputCsv, Array.Empty<FindDupCsvRow>(), onOutput, cancellationToken);
+
+            return new SimsExecutionResult
+            {
+                ExitCode = 0,
+                Executable = FindDupExecutable,
+                Arguments = [rootPath, $"files={files.Length}", "duplicates=0"]
+            };
+        }
+
+        var hashProgress = onProgress is null
+            ? null
+            : new Progress<HashProgress>(value =>
+            {
+                onProgress(new SimsProgressUpdate
+                {
+                    Stage = "FindDuplicates",
+                    Current = value.ProcessedCount,
+                    Total = value.TotalCount,
+                    Percent = value.PercentComplete,
+                    Detail = value.CurrentFile ?? string.Empty
+                });
+            });
+
+        var hashResults = await _hashComputationService.ComputeFileHashesAsync(
+            candidates.Select(info => info.FullName).ToArray(),
+            hashProgress,
+            cancellationToken);
+
+        var hashFailures = hashResults.Where(result => !result.IsSuccess).ToArray();
+        foreach (var failure in hashFailures)
+        {
+            onOutput($"[finddup] hash failed: {failure.FilePath} - {failure.Exception?.Message}");
+        }
+
+        var duplicateGroups = hashResults
+            .Where(result => result.IsSuccess)
+            .GroupBy(result => result.Hash, StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Count() > 1)
+            .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var csvRows = new List<FindDupCsvRow>();
+        var deletedFiles = 0;
+        var deleteFailures = 0;
+        var groupId = 1;
+
+        foreach (var group in duplicateGroups)
+        {
+            var ordered = group
+                .OrderBy(result => result.FilePath, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            foreach (var item in ordered)
+            {
+                csvRows.Add(new FindDupCsvRow(
+                    item.FilePath,
+                    item.Hash,
+                    item.FileSize,
+                    groupId,
+                    ordered.Length));
+            }
+
+            if (input.FindDupCleanup)
+            {
+                foreach (var duplicate in ordered.Skip(1))
+                {
+                    if (input.WhatIf)
+                    {
+                        onOutput($"[finddup] whatif delete {duplicate.FilePath}");
+                        continue;
+                    }
+
+                    var deleted = await _fileOperationService.DeleteFileAsync(duplicate.FilePath);
+                    if (deleted)
+                    {
+                        deletedFiles++;
+                        onOutput($"[finddup] deleted {duplicate.FilePath}");
+                    }
+                    else
+                    {
+                        deleteFailures++;
+                        onOutput($"[finddup] failed to delete {duplicate.FilePath}");
+                    }
+                }
+            }
+
+            groupId++;
+        }
+
+        onOutput($"[finddup] duplicate groups: {duplicateGroups.Length}");
+        onOutput($"[finddup] duplicate files: {csvRows.Count}");
+        if (input.FindDupCleanup)
+        {
+            onOutput(input.WhatIf
+                ? "[finddup] cleanup preview completed"
+                : $"[finddup] deleted {deletedFiles} duplicate files");
+        }
+
+        await TryWriteFindDupCsvAsync(input.FindDupOutputCsv, csvRows, onOutput, cancellationToken);
+
+        var exitCode = hashFailures.Length > 0 || deleteFailures > 0 ? 1 : 0;
+        return new SimsExecutionResult
+        {
+            ExitCode = exitCode,
+            Executable = FindDupExecutable,
+            Arguments =
+            [
+                rootPath,
+                $"files={files.Length}",
+                $"groups={duplicateGroups.Length}",
+                $"duplicates={csvRows.Count}",
+                $"deleted={deletedFiles}"
+            ]
+        };
     }
 
     private static SimsExecutionResult BuildUnifiedExecutionResult(
@@ -345,18 +430,64 @@ public sealed class ExecutionCoordinator : IExecutionCoordinator
         };
     }
 
-    private readonly struct UnifiedAttemptResult
+    private static HashSet<string> BuildExtensionFilter(SharedFileOpsInput input)
     {
-        private UnifiedAttemptResult(bool completed, SimsExecutionResult? result)
+        if (!input.ModFilesOnly || input.ModExtensions.Count == 0)
         {
-            Completed = completed;
-            Result = result;
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
 
-        public bool Completed { get; }
-        public SimsExecutionResult? Result { get; }
-
-        public static UnifiedAttemptResult Success(SimsExecutionResult result) => new(true, result);
-        public static UnifiedAttemptResult NotCompleted() => new(false, null);
+        return input.ModExtensions
+            .Where(extension => !string.IsNullOrWhiteSpace(extension))
+            .Select(extension => extension.StartsWith(".", StringComparison.Ordinal) ? extension : "." + extension)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
+
+    private static async Task TryWriteFindDupCsvAsync(
+        string? outputPath,
+        IReadOnlyList<FindDupCsvRow> rows,
+        Action<string> onOutput,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(outputPath))
+        {
+            return;
+        }
+
+        var directory = Path.GetDirectoryName(outputPath);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        await using var stream = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None);
+        await using var writer = new StreamWriter(stream);
+        await writer.WriteLineAsync("FilePath,Md5Hash,FileSize,GroupId,FileCount");
+
+        foreach (var row in rows)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await writer.WriteLineAsync(string.Join(",",
+                EscapeCsv(row.FilePath),
+                EscapeCsv(row.Hash),
+                row.FileSize.ToString(),
+                row.GroupId.ToString(),
+                row.FileCount.ToString()));
+        }
+
+        await writer.FlushAsync();
+        onOutput("Exported to: " + outputPath);
+    }
+
+    private static string EscapeCsv(string value)
+    {
+        if (value.Contains('"') || value.Contains(',') || value.Contains('\n') || value.Contains('\r'))
+        {
+            return "\"" + value.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
+        }
+
+        return value;
+    }
+
+    private sealed record FindDupCsvRow(string FilePath, string Hash, long FileSize, int GroupId, int FileCount);
 }
