@@ -40,10 +40,9 @@ public sealed class MainWindowViewModel : ObservableObject
     private readonly IToolkitActionPlanner _toolkitActionPlanner;
     private readonly MainWindowRecoveryController _recoveryController;
     private readonly MainWindowTrayPreviewStateController _trayPreviewStateController;
+    private readonly MainWindowTrayPreviewSelectionController _trayPreviewSelectionController;
     private readonly ITextureCompressionService _textureCompressionService;
     private readonly ITextureDimensionProbe _textureDimensionProbe;
-    private readonly Stack<TrayPreviewListItemViewModel> _trayPreviewDetailHistory = new();
-    private readonly HashSet<string> _selectedTrayPreviewKeys = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly MainWindowStatusController _statusController;
     private CancellationTokenSource? _executionCts;
@@ -56,7 +55,6 @@ public sealed class MainWindowViewModel : ObservableObject
     private string _selectedLanguageCode = DefaultLanguageCode;
     private string _scriptPath = string.Empty;
     private bool _whatIf;
-    private TrayPreviewListItemViewModel? _trayPreviewDetailItem;
     private string _validationSummaryText = string.Empty;
     private bool _hasValidationErrors;
     private bool _isToolkitLogDrawerOpen;
@@ -65,7 +63,6 @@ public sealed class MainWindowViewModel : ObservableObject
     private bool _isInitialized;
     private bool _isTrayExportQueueExpanded = true;
     private int _trayPreviewThumbnailBatchId;
-    private string? _trayPreviewSelectionAnchorKey;
 
     public MainWindowViewModel(
         IExecutionCoordinator executionCoordinator,
@@ -81,6 +78,7 @@ public sealed class MainWindowViewModel : ObservableObject
         MainWindowStatusController statusController,
         MainWindowRecoveryController recoveryController,
         MainWindowTrayPreviewStateController trayPreviewStateController,
+        MainWindowTrayPreviewSelectionController trayPreviewSelectionController,
         ModPreviewWorkspaceViewModel modPreviewWorkspace,
         TrayPreviewWorkspaceViewModel trayPreviewWorkspace,
         OrganizePanelViewModel organize,
@@ -111,6 +109,7 @@ public sealed class MainWindowViewModel : ObservableObject
         _statusController = statusController;
         _recoveryController = recoveryController;
         _trayPreviewStateController = trayPreviewStateController;
+        _trayPreviewSelectionController = trayPreviewSelectionController;
         _textureCompressionService = textureCompressionService;
         _textureDimensionProbe = textureDimensionProbe;
         ModPreviewWorkspace = modPreviewWorkspace;
@@ -172,6 +171,7 @@ public sealed class MainWindowViewModel : ObservableObject
         _localization.PropertyChanged += OnLocalizationPropertyChanged;
         _statusController.PropertyChanged += OnStatusControllerPropertyChanged;
         _trayPreviewStateController.PropertyChanged += OnTrayPreviewStateControllerPropertyChanged;
+        _trayPreviewSelectionController.PropertyChanged += OnTrayPreviewSelectionControllerPropertyChanged;
         _localization.SetLanguage(_selectedLanguageCode);
         _selectedLanguageCode = _localization.CurrentLanguageCode;
         ProgressMessage = L("progress.idle");
@@ -552,8 +552,8 @@ public sealed class MainWindowViewModel : ObservableObject
     public bool IsHouseholdSizeFilterVisible =>
         string.Equals(TrayPreview.PresetTypeFilter, "Household", StringComparison.OrdinalIgnoreCase);
     public bool HasTrayPreviewItems => PreviewItems.Count > 0;
-    public bool HasSelectedTrayPreviewItems => _selectedTrayPreviewKeys.Count > 0;
-    public int SelectedTrayPreviewCount => _selectedTrayPreviewKeys.Count;
+    public bool HasSelectedTrayPreviewItems => _trayPreviewSelectionController.HasSelectedItems;
+    public int SelectedTrayPreviewCount => _trayPreviewSelectionController.SelectedCount;
     public string TrayPreviewSelectionSummaryText => $"{SelectedTrayPreviewCount} selected / {PreviewItems.Count} on page / {PreviewTotalItems} total";
     public bool HasTrayExportTasks => TrayExportTasks.Count > 0;
     public bool HasCompletedTrayExportTasks => TrayExportTasks.Any(item => item.IsCompleted);
@@ -574,21 +574,7 @@ public sealed class MainWindowViewModel : ObservableObject
     public bool IsTrayPreviewGridMode => string.Equals(TrayPreview.LayoutMode, "Grid", StringComparison.OrdinalIgnoreCase);
     public TrayPreviewListItemViewModel? TrayPreviewDetailItem
     {
-        get => _trayPreviewDetailItem;
-        private set
-        {
-            if (!SetProperty(ref _trayPreviewDetailItem, value))
-            {
-                return;
-            }
-
-            OnPropertyChanged(nameof(IsTrayPreviewDetailVisible));
-            OnPropertyChanged(nameof(IsTrayPreviewDetailDescriptionEmpty));
-            OnPropertyChanged(nameof(IsTrayPreviewDetailOverviewEmpty));
-            OnPropertyChanged(nameof(CanGoBackTrayPreviewDetail));
-            GoBackTrayPreviewDetailCommand.NotifyCanExecuteChanged();
-            CloseTrayPreviewDetailCommand.NotifyCanExecuteChanged();
-        }
+        get => _trayPreviewSelectionController.DetailItem;
     }
     public bool IsTrayPreviewDetailVisible => TrayPreviewDetailItem is not null;
     public bool IsTrayPreviewDetailDescriptionEmpty => TrayPreviewDetailItem is null || !TrayPreviewDetailItem.Item.HasDisplayDescription;
@@ -597,7 +583,7 @@ public sealed class MainWindowViewModel : ObservableObject
         (!TrayPreviewDetailItem.Item.HasDisplayPrimaryMeta &&
          !TrayPreviewDetailItem.Item.HasDisplaySecondaryMeta &&
          !TrayPreviewDetailItem.Item.HasDisplayTertiaryMeta);
-    public bool CanGoBackTrayPreviewDetail => _trayPreviewDetailHistory.Count > 0;
+    public bool CanGoBackTrayPreviewDetail => _trayPreviewSelectionController.CanGoBackDetail;
     public bool IsTrayPreviewEmptyStatusOk => HasValidTrayPreviewPath && !_trayPreviewStateController.HasLoadedOnce;
     public bool IsTrayPreviewEmptyStatusWarning => HasValidTrayPreviewPath && _trayPreviewStateController.HasLoadedOnce;
     public bool IsTrayPreviewEmptyStatusMissing => !HasValidTrayPreviewPath;
@@ -2266,58 +2252,28 @@ public sealed class MainWindowViewModel : ObservableObject
         bool controlPressed,
         bool shiftPressed)
     {
-        ArgumentNullException.ThrowIfNull(selectedItem);
-
-        if (!PreviewItems.Contains(selectedItem))
-        {
-            return;
-        }
-
-        if (shiftPressed)
-        {
-            ApplyTrayPreviewRangeSelection(selectedItem, preserveExisting: controlPressed);
-            _trayPreviewSelectionAnchorKey = BuildTrayPreviewSelectionKey(selectedItem.Item);
-            return;
-        }
-
-        var targetSelected = !selectedItem.IsSelected;
-        SetTrayPreviewItemSelected(selectedItem, targetSelected);
-        _trayPreviewSelectionAnchorKey = BuildTrayPreviewSelectionKey(selectedItem.Item);
+        _trayPreviewSelectionController.ApplySelection(PreviewItems, selectedItem, controlPressed, shiftPressed);
     }
 
     private void OpenTrayPreviewDetails(TrayPreviewListItemViewModel selectedItem)
     {
         ArgumentNullException.ThrowIfNull(selectedItem);
-
-        if (TrayPreviewDetailItem is null)
-        {
-            _trayPreviewDetailHistory.Clear();
-        }
-        else if (!ReferenceEquals(TrayPreviewDetailItem, selectedItem))
-        {
-            _trayPreviewDetailHistory.Push(TrayPreviewDetailItem);
-        }
-
-        TrayPreviewDetailItem = selectedItem;
+        _trayPreviewSelectionController.OpenDetails(selectedItem);
         LoadTrayPreviewChildThumbnails(selectedItem);
     }
 
     private void GoBackTrayPreviewDetails()
     {
-        if (_trayPreviewDetailHistory.Count == 0)
+        var previousItem = _trayPreviewSelectionController.GoBackDetails();
+        if (previousItem is not null)
         {
-            return;
+            LoadTrayPreviewChildThumbnails(previousItem);
         }
-
-        var previousItem = _trayPreviewDetailHistory.Pop();
-        TrayPreviewDetailItem = previousItem;
-        LoadTrayPreviewChildThumbnails(previousItem);
     }
 
     private void CloseTrayPreviewDetails()
     {
-        _trayPreviewDetailHistory.Clear();
-        TrayPreviewDetailItem = null;
+        _trayPreviewSelectionController.CloseDetails();
     }
 
     private void LoadTrayPreviewChildThumbnails(TrayPreviewListItemViewModel parentItem)
@@ -2529,20 +2485,12 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             return;
         }
-
-        foreach (var item in PreviewItems)
-        {
-            SetTrayPreviewItemSelected(item, true);
-        }
-
-        _trayPreviewSelectionAnchorKey = BuildTrayPreviewSelectionKey(PreviewItems[^1].Item);
+        _trayPreviewSelectionController.SelectAllPage(PreviewItems);
     }
 
     private IReadOnlyList<TrayPreviewListItemViewModel> GetSelectedTrayPreviewItems()
     {
-        return PreviewItems
-            .Where(item => item.IsSelected)
-            .ToArray();
+        return _trayPreviewSelectionController.GetSelectedItems(PreviewItems);
     }
 
     private IReadOnlyList<string> GetSelectedTrayPreviewSourceFilePaths(IReadOnlyCollection<TrayPreviewListItemViewModel>? selectedItems = null)
@@ -2806,99 +2754,14 @@ public sealed class MainWindowViewModel : ObservableObject
         return true;
     }
 
-    private void ApplyTrayPreviewRangeSelection(TrayPreviewListItemViewModel selectedItem, bool preserveExisting)
-    {
-        var targetIndex = PreviewItems.IndexOf(selectedItem);
-        if (targetIndex < 0)
-        {
-            return;
-        }
-
-        var anchorIndex = -1;
-        if (!string.IsNullOrWhiteSpace(_trayPreviewSelectionAnchorKey))
-        {
-            anchorIndex = PreviewItems
-                .Select((item, index) => new { item, index })
-                .Where(entry => string.Equals(
-                    BuildTrayPreviewSelectionKey(entry.item.Item),
-                    _trayPreviewSelectionAnchorKey,
-                    StringComparison.OrdinalIgnoreCase))
-                .Select(entry => entry.index)
-                .DefaultIfEmpty(-1)
-                .First();
-        }
-
-        if (anchorIndex < 0)
-        {
-            if (!preserveExisting)
-            {
-                ClearTrayPreviewSelection();
-            }
-
-            SetTrayPreviewItemSelected(selectedItem, true);
-            return;
-        }
-
-        if (!preserveExisting)
-        {
-            ClearTrayPreviewSelection();
-        }
-
-        var startIndex = Math.Min(anchorIndex, targetIndex);
-        var endIndex = Math.Max(anchorIndex, targetIndex);
-        for (var index = startIndex; index <= endIndex; index++)
-        {
-            SetTrayPreviewItemSelected(PreviewItems[index], true);
-        }
-    }
-
     private void ClearTrayPreviewSelection()
     {
-        foreach (var item in PreviewItems.Where(item => item.IsSelected))
-        {
-            item.SetSelected(false);
-        }
-
-        if (_selectedTrayPreviewKeys.Count == 0 && string.IsNullOrWhiteSpace(_trayPreviewSelectionAnchorKey))
-        {
-            return;
-        }
-
-        _selectedTrayPreviewKeys.Clear();
-        _trayPreviewSelectionAnchorKey = null;
-        OnPropertyChanged(nameof(HasSelectedTrayPreviewItems));
-        OnPropertyChanged(nameof(SelectedTrayPreviewCount));
-        OnPropertyChanged(nameof(TrayPreviewSelectionSummaryText));
-        NotifyCommandStates();
-    }
-
-    private void SetTrayPreviewItemSelected(TrayPreviewListItemViewModel item, bool selected)
-    {
-        var key = BuildTrayPreviewSelectionKey(item.Item);
-        var changed = selected
-            ? _selectedTrayPreviewKeys.Add(key)
-            : _selectedTrayPreviewKeys.Remove(key);
-
-        item.SetSelected(selected);
-
-        if (changed)
-        {
-            OnPropertyChanged(nameof(HasSelectedTrayPreviewItems));
-            OnPropertyChanged(nameof(SelectedTrayPreviewCount));
-            OnPropertyChanged(nameof(TrayPreviewSelectionSummaryText));
-            NotifyCommandStates();
-        }
+        _trayPreviewSelectionController.ClearSelection(PreviewItems);
     }
 
     private bool IsTrayPreviewItemSelected(SimsTrayPreviewItem item)
     {
-        return _selectedTrayPreviewKeys.Contains(BuildTrayPreviewSelectionKey(item));
-    }
-
-    private static string BuildTrayPreviewSelectionKey(SimsTrayPreviewItem item)
-    {
-        ArgumentNullException.ThrowIfNull(item);
-        return $"{item.TrayRootPath}|{item.TrayItemKey}";
+        return _trayPreviewSelectionController.IsItemSelected(item);
     }
 
     private static void LaunchExplorer(string path, bool selectFile)
@@ -3160,6 +3023,35 @@ public sealed class MainWindowViewModel : ObservableObject
                 OnPropertyChanged(nameof(TrayPreviewEmptyTitleText));
                 OnPropertyChanged(nameof(TrayPreviewEmptyDescriptionText));
                 OnPropertyChanged(nameof(TrayPreviewEmptyStatusText));
+                return;
+        }
+    }
+
+    private void OnTrayPreviewSelectionControllerPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        switch (e.PropertyName)
+        {
+            case nameof(MainWindowTrayPreviewSelectionController.HasSelectedItems):
+                OnPropertyChanged(nameof(HasSelectedTrayPreviewItems));
+                OnPropertyChanged(nameof(TrayPreviewSelectionSummaryText));
+                NotifyCommandStates();
+                return;
+            case nameof(MainWindowTrayPreviewSelectionController.SelectedCount):
+                OnPropertyChanged(nameof(SelectedTrayPreviewCount));
+                OnPropertyChanged(nameof(TrayPreviewSelectionSummaryText));
+                NotifyCommandStates();
+                return;
+            case nameof(MainWindowTrayPreviewSelectionController.DetailItem):
+                OnPropertyChanged(nameof(TrayPreviewDetailItem));
+                OnPropertyChanged(nameof(IsTrayPreviewDetailVisible));
+                OnPropertyChanged(nameof(IsTrayPreviewDetailDescriptionEmpty));
+                OnPropertyChanged(nameof(IsTrayPreviewDetailOverviewEmpty));
+                GoBackTrayPreviewDetailCommand.NotifyCanExecuteChanged();
+                CloseTrayPreviewDetailCommand.NotifyCanExecuteChanged();
+                return;
+            case nameof(MainWindowTrayPreviewSelectionController.CanGoBackDetail):
+                OnPropertyChanged(nameof(CanGoBackTrayPreviewDetail));
+                GoBackTrayPreviewDetailCommand.NotifyCanExecuteChanged();
                 return;
         }
     }
