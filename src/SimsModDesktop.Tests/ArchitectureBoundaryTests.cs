@@ -1,5 +1,5 @@
 using System.Reflection;
-using SimsModDesktop.Application.Modules;
+using SimsModDesktop.Application.Execution;
 
 namespace SimsModDesktop.Tests;
 
@@ -8,7 +8,7 @@ public sealed class ArchitectureBoundaryTests
     [Fact]
     public void ApplicationLayer_DoesNotDependOnPanelViewModels()
     {
-        var assembly = typeof(IActionModule).Assembly;
+        var assembly = typeof(IToolkitActionPlanner).Assembly;
         var applicationTypes = assembly
             .GetTypes()
             .Where(type => type.Namespace?.StartsWith("SimsModDesktop.Application", StringComparison.Ordinal) == true)
