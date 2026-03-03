@@ -157,35 +157,7 @@ public sealed partial class MainWindowViewModel
     }
 
     private void OnTrayExportTasksChanged(object? sender, NotifyCollectionChangedEventArgs e)
-    {
-        if (e.NewItems is { Count: > 0 })
-        {
-            SetTrayExportQueueExpanded(true);
-        }
-
-        if (e.OldItems is not null)
-        {
-            foreach (var item in e.OldItems.OfType<TrayExportTaskItemViewModel>())
-            {
-                item.PropertyChanged -= OnTrayExportTaskPropertyChanged;
-            }
-        }
-
-        if (e.NewItems is not null)
-        {
-            foreach (var item in e.NewItems.OfType<TrayExportTaskItemViewModel>())
-            {
-                item.PropertyChanged += OnTrayExportTaskPropertyChanged;
-            }
-        }
-
-        NotifyTrayExportQueueChanged();
-    }
-
-    private void OnTrayExportTaskPropertyChanged(object? sender, PropertyChangedEventArgs e)
-    {
-        NotifyTrayExportQueueChanged();
-    }
+        => _trayExportController.OnTrayExportTasksChanged(CreateTrayExportHost(), sender, e);
 
     private void NotifyTrayPreviewFilterVisibilityChanged()
     {
@@ -212,18 +184,4 @@ public sealed partial class MainWindowViewModel
         OnPropertyChanged(nameof(TrayPreviewEmptyStatusText));
     }
 
-    private void NotifyTrayExportQueueChanged()
-    {
-        OnPropertyChanged(nameof(HasTrayExportTasks));
-        OnPropertyChanged(nameof(HasCompletedTrayExportTasks));
-        OnPropertyChanged(nameof(HasRunningTrayExportTasks));
-        OnPropertyChanged(nameof(IsTrayExportQueueDockVisible));
-        OnPropertyChanged(nameof(IsTrayExportQueueVisible));
-        OnPropertyChanged(nameof(TrayExportQueueSummaryText));
-        OnPropertyChanged(nameof(TrayExportQueueToggleText));
-        ClearCompletedTrayExportTasksCommand.NotifyCanExecuteChanged();
-        ToggleTrayExportQueueCommand.NotifyCanExecuteChanged();
-        OpenTrayExportTaskPathCommand.NotifyCanExecuteChanged();
-        ToggleTrayExportTaskDetailsCommand.NotifyCanExecuteChanged();
-    }
 }

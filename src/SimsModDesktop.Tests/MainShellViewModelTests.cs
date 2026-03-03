@@ -245,16 +245,17 @@ public sealed class MainShellViewModelTests
             findDup,
             trayDependencies,
             trayPreview);
+        var settingsPersistenceController = new MainWindowSettingsPersistenceController(settingsStore);
+        var settingsProjection = new MainWindowSettingsProjection();
         var recoveryController = new MainWindowRecoveryController();
+        var trayPreviewStateController = new MainWindowTrayPreviewStateController();
+        var trayPreviewSelectionController = new MainWindowTrayPreviewSelectionController();
+        var trayExportService = new FakeTrayDependencyExportService();
 
         return new MainWindowViewModel(
-            trayPreviewCoordinator,
-            new FakeTrayDependencyExportService(),
             new FakeFileDialogService(),
             new FakeConfirmationDialogService(),
             new JsonLocalizationService(),
-            new MainWindowSettingsPersistenceController(settingsStore),
-            new MainWindowSettingsProjection(),
             toolkitActionPlanner,
             new MainWindowExecutionController(
                 new FakeExecutionCoordinator(),
@@ -265,8 +266,22 @@ public sealed class MainShellViewModelTests
                 new TextureDimensionProbe()),
             new MainWindowStatusController(),
             recoveryController,
-            new MainWindowTrayPreviewStateController(),
-            new MainWindowTrayPreviewSelectionController(),
+            new MainWindowTrayPreviewController(
+                trayPreviewCoordinator,
+                trayThumbnailService,
+                toolkitActionPlanner,
+                recoveryController,
+                trayPreviewStateController,
+                trayPreviewSelectionController),
+            new MainWindowTrayExportController(trayExportService),
+            new MainWindowValidationController(toolkitActionPlanner),
+            new MainWindowLifecycleController(
+                settingsPersistenceController,
+                settingsProjection,
+                recoveryController,
+                toolkitActionPlanner),
+            trayPreviewStateController,
+            trayPreviewSelectionController,
             modPreviewWorkspace,
             trayPreviewWorkspace,
             organize,
@@ -278,8 +293,7 @@ public sealed class MainShellViewModelTests
             trayDependencies: trayDependencies,
             modPreview: modPreview,
             trayPreview: trayPreview,
-            sharedFileOps: sharedFileOps,
-            trayThumbnailService: trayThumbnailService);
+            sharedFileOps: sharedFileOps);
     }
 
     private static ITextureCompressionService CreateTextureCompressionService()

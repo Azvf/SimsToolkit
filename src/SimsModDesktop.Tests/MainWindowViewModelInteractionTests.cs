@@ -784,15 +784,17 @@ public sealed class MainWindowViewModelInteractionTests
             trayDependencies,
             trayPreview);
         var recoveryController = new MainWindowRecoveryController();
+        var trayPreviewStateController = new MainWindowTrayPreviewStateController();
+        var trayPreviewSelectionController = new MainWindowTrayPreviewSelectionController();
+        var effectiveTrayThumbnailService = trayThumbnailService ?? new FailingTrayThumbnailService();
+        var effectiveTrayExportService = trayDependencyExportService ?? new FakeTrayDependencyExportService();
+        var settingsPersistenceController = new MainWindowSettingsPersistenceController(settingsStore ?? new FakeSettingsStore(new AppSettings()));
+        var settingsProjection = new MainWindowSettingsProjection();
 
         return new MainWindowViewModel(
-            trayPreviewCoordinator,
-            trayDependencyExportService ?? new FakeTrayDependencyExportService(),
             fileDialogService ?? new FakeFileDialogService(),
             confirmation,
             new JsonLocalizationService(),
-            new MainWindowSettingsPersistenceController(settingsStore ?? new FakeSettingsStore(new AppSettings())),
-            new MainWindowSettingsProjection(),
             toolkitActionPlanner,
             new MainWindowExecutionController(
                 execution,
@@ -803,8 +805,22 @@ public sealed class MainWindowViewModelInteractionTests
                 new TextureDimensionProbe()),
             new MainWindowStatusController(),
             recoveryController,
-            new MainWindowTrayPreviewStateController(),
-            new MainWindowTrayPreviewSelectionController(),
+            new MainWindowTrayPreviewController(
+                trayPreviewCoordinator,
+                effectiveTrayThumbnailService,
+                toolkitActionPlanner,
+                recoveryController,
+                trayPreviewStateController,
+                trayPreviewSelectionController),
+            new MainWindowTrayExportController(effectiveTrayExportService),
+            new MainWindowValidationController(toolkitActionPlanner),
+            new MainWindowLifecycleController(
+                settingsPersistenceController,
+                settingsProjection,
+                recoveryController,
+                toolkitActionPlanner),
+            trayPreviewStateController,
+            trayPreviewSelectionController,
             modPreviewWorkspace,
             trayPreviewWorkspace,
             organize,
@@ -816,8 +832,7 @@ public sealed class MainWindowViewModelInteractionTests
             trayDependencies: trayDependencies,
             modPreview: modPreview,
             trayPreview: trayPreview,
-            sharedFileOps: sharedFileOps,
-            trayThumbnailService: trayThumbnailService ?? new FailingTrayThumbnailService());
+            sharedFileOps: sharedFileOps);
     }
 
     private static ITextureCompressionService CreateTextureCompressionService()
