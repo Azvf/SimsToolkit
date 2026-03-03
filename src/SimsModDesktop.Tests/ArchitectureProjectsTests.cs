@@ -37,6 +37,26 @@ public sealed class ArchitectureProjectsTests
             "App assembly should not define use case or repository types:" + Environment.NewLine + string.Join(Environment.NewLine, invalidTypes));
     }
 
+    [Fact]
+    public void Infrastructure_Implements_ApplicationPorts()
+    {
+        var applicationAssembly = typeof(SimsModDesktop.Application.UseCases.IUseCase<,>).Assembly;
+        var infrastructureAssembly = typeof(SimsModDesktop.Infrastructure.ServiceRegistration.InfrastructureServiceRegistration).Assembly;
+
+        var missingImplementations = applicationAssembly
+            .GetTypes()
+            .Where(type => type.IsInterface && type.Name.EndsWith("UseCase", StringComparison.Ordinal))
+            .Where(type => !infrastructureAssembly.GetTypes().Any(candidate =>
+                candidate is { IsAbstract: false, IsInterface: false } &&
+                type.IsAssignableFrom(candidate)))
+            .Select(type => type.FullName ?? type.Name)
+            .ToArray();
+
+        Assert.True(
+            missingImplementations.Length == 0,
+            "Infrastructure should implement every application use case port:" + Environment.NewLine + string.Join(Environment.NewLine, missingImplementations));
+    }
+
     private static void AssertNoAssemblyReference(Assembly assembly, string forbiddenAssemblyName)
     {
         var references = assembly.GetReferencedAssemblies();
