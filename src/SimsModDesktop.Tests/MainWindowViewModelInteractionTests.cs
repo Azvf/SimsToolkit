@@ -783,7 +783,7 @@ public sealed class MainWindowViewModelInteractionTests
             fileDialogService ?? new FakeFileDialogService(),
             confirmation,
             new JsonLocalizationService(),
-            settingsStore ?? new FakeSettingsStore(new AppSettings()),
+            new MainWindowSettingsPersistenceController(settingsStore ?? new FakeSettingsStore(new AppSettings())),
             new MainWindowSettingsProjection(),
             new ToolkitActionPlanner(
                 organize,

@@ -40,7 +40,7 @@ public sealed class MainWindowViewModel : ObservableObject
     private readonly IFileDialogService _fileDialogService;
     private readonly IConfirmationDialogService _confirmationDialogService;
     private readonly ILocalizationService _localization;
-    private readonly ISettingsStore _settingsStore;
+    private readonly MainWindowSettingsPersistenceController _settingsPersistenceController;
     private readonly IMainWindowSettingsProjection _settingsProjection;
     private readonly IToolkitActionPlanner _toolkitActionPlanner;
     private readonly IOperationRecoveryCoordinator? _operationRecoveryCoordinator;
@@ -53,7 +53,6 @@ public sealed class MainWindowViewModel : ObservableObject
     private readonly MainWindowStatusController _statusController;
     private CancellationTokenSource? _executionCts;
     private CancellationTokenSource? _validationDebounceCts;
-    private CancellationTokenSource? _settingsPersistDebounceCts;
     private CancellationTokenSource? _trayPreviewThumbnailCts;
     private bool _isTrayPreviewPageLoading;
     private bool _isBusy;
@@ -92,7 +91,7 @@ public sealed class MainWindowViewModel : ObservableObject
         IFileDialogService fileDialogService,
         IConfirmationDialogService confirmationDialogService,
         ILocalizationService localization,
-        ISettingsStore settingsStore,
+        MainWindowSettingsPersistenceController settingsPersistenceController,
         IMainWindowSettingsProjection settingsProjection,
         IToolkitActionPlanner toolkitActionPlanner,
         MainWindowStatusController statusController,
@@ -122,7 +121,7 @@ public sealed class MainWindowViewModel : ObservableObject
         _fileDialogService = fileDialogService;
         _confirmationDialogService = confirmationDialogService;
         _localization = localization;
-        _settingsStore = settingsStore;
+        _settingsPersistenceController = settingsPersistenceController;
         _settingsProjection = settingsProjection;
         _toolkitActionPlanner = toolkitActionPlanner;
         _statusController = statusController;
@@ -703,7 +702,7 @@ public sealed class MainWindowViewModel : ObservableObject
             await _actionResultRepository.InitializeAsync();
         }
 
-        var settings = await _settingsStore.LoadAsync();
+        var settings = await _settingsPersistenceController.LoadAsync();
         var resolved = _settingsProjection.Resolve(settings, AvailableToolkitActions);
 
         SelectedLanguageCode = resolved.UiLanguageCode;
@@ -749,7 +748,7 @@ public sealed class MainWindowViewModel : ObservableObject
     public async Task PersistSettingsAsync()
     {
         _validationDebounceCts?.Cancel();
-        _settingsPersistDebounceCts?.Cancel();
+        _settingsPersistenceController.CancelPending();
         CancelTrayPreviewThumbnailLoading();
         await SaveCurrentSettingsAsync();
     }
@@ -912,28 +911,16 @@ public sealed class MainWindowViewModel : ObservableObject
 
     private void QueueSettingsPersist()
     {
-        _settingsPersistDebounceCts?.Cancel();
-        _settingsPersistDebounceCts?.Dispose();
-        _settingsPersistDebounceCts = new CancellationTokenSource();
-        var cancellationToken = _settingsPersistDebounceCts.Token;
-
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await Task.Delay(250, cancellationToken);
-                await SaveCurrentSettingsAsync(cancellationToken);
-            }
-            catch (OperationCanceledException)
-            {
-            }
-        }, cancellationToken);
+        _settingsPersistenceController.QueuePersist(ApplyCurrentSettings);
     }
 
     private async Task SaveCurrentSettingsAsync(CancellationToken cancellationToken = default)
     {
-        var settings = await _settingsStore.LoadAsync(cancellationToken);
+        await _settingsPersistenceController.SaveAsync(ApplyCurrentSettings, cancellationToken);
+    }
 
+    private void ApplyCurrentSettings(AppSettings settings)
+    {
         settings.UiLanguageCode = string.IsNullOrWhiteSpace(SelectedLanguageCode)
             ? DefaultLanguageCode
             : SelectedLanguageCode.Trim();
@@ -967,8 +954,6 @@ public sealed class MainWindowViewModel : ObservableObject
         };
 
         _toolkitActionPlanner.SaveModuleSettings(settings);
-
-        await _settingsStore.SaveAsync(settings, cancellationToken);
     }
 
     private void OnMergeSourcePathsChanged(object? sender, NotifyCollectionChangedEventArgs e)

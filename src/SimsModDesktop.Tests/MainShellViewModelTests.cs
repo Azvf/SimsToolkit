@@ -245,7 +245,7 @@ public sealed class MainShellViewModelTests
             new FakeFileDialogService(),
             new FakeConfirmationDialogService(),
             new JsonLocalizationService(),
-            settingsStore,
+            new MainWindowSettingsPersistenceController(settingsStore),
             new MainWindowSettingsProjection(),
             new ToolkitActionPlanner(
                 organize,
