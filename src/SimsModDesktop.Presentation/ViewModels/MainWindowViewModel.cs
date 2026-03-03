@@ -27,11 +27,6 @@ namespace SimsModDesktop.Presentation.ViewModels;
 public sealed class MainWindowViewModel : ObservableObject
 {
     private const string DefaultLanguageCode = "en-US";
-    private static readonly JsonSerializerOptions RecoveryJsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
     private readonly IExecutionCoordinator _executionCoordinator;
     private readonly ITrayPreviewCoordinator _trayPreviewCoordinator;
     private readonly ITrayThumbnailService _trayThumbnailService;
@@ -757,15 +752,15 @@ public sealed class MainWindowViewModel : ObservableObject
             switch (record.Payload.PayloadKind)
             {
                 case "ToolkitCli":
-                    await RunToolkitPlanAsync(BuildToolkitCliPlan(record.Payload), record.OperationId);
+                    await RunToolkitPlanAsync(_recoveryController.BuildToolkitCliPlan(record.Payload), record.OperationId);
                     break;
                 case "TrayDependencies":
                     await RunTrayDependenciesPlanAsync(
-                        new TrayDependenciesExecutionPlan(BuildTrayDependenciesRequest(record.Payload)),
+                        new TrayDependenciesExecutionPlan(_recoveryController.BuildTrayDependenciesRequest(record.Payload)),
                         record.OperationId);
                     break;
                 case "TrayPreview":
-                    await RunTrayPreviewCoreAsync(BuildTrayPreviewInput(record.Payload), record.OperationId);
+                    await RunTrayPreviewCoreAsync(_recoveryController.BuildTrayPreviewInput(record.Payload), record.OperationId);
                     break;
                 default:
                     throw new InvalidOperationException($"Unsupported recovery payload kind: {record.Payload.PayloadKind}");
@@ -1302,7 +1297,7 @@ public sealed class MainWindowViewModel : ObservableObject
         }
 
         var input = cliPlan.Input;
-        var operationId = existingOperationId ?? await RegisterRecoveryAsync(BuildToolkitRecoveryPayload(cliPlan));
+        var operationId = existingOperationId ?? await RegisterRecoveryAsync(_recoveryController.BuildToolkitRecoveryPayload(cliPlan));
 
         _executionCts = new CancellationTokenSource();
         var startedAt = DateTimeOffset.Now;
@@ -1567,7 +1562,7 @@ public sealed class MainWindowViewModel : ObservableObject
             return;
         }
 
-        var operationId = existingOperationId ?? await RegisterRecoveryAsync(BuildTrayDependenciesRecoveryPayload(plan));
+        var operationId = existingOperationId ?? await RegisterRecoveryAsync(_recoveryController.BuildTrayDependenciesRecoveryPayload(plan));
 
         _executionCts = new CancellationTokenSource();
         var startedAt = DateTimeOffset.Now;
@@ -1758,7 +1753,7 @@ public sealed class MainWindowViewModel : ObservableObject
             input = explicitInput;
         }
 
-        var operationId = existingOperationId ?? await RegisterRecoveryAsync(BuildTrayPreviewRecoveryPayload(input));
+        var operationId = existingOperationId ?? await RegisterRecoveryAsync(_recoveryController.BuildTrayPreviewRecoveryPayload(input));
 
         _executionCts = new CancellationTokenSource();
         var startedAt = DateTimeOffset.Now;
@@ -1866,108 +1861,6 @@ public sealed class MainWindowViewModel : ObservableObject
     private Task SaveResultHistoryAsync(SimsAction action, string source, string summary, string? relatedOperationId) =>
         _recoveryController.SaveResultHistoryAsync(action, source, summary, relatedOperationId);
 
-    private static RecoverableOperationPayload BuildToolkitRecoveryPayload(CliExecutionPlan plan)
-    {
-        var input = plan.Input;
-        return new RecoverableOperationPayload
-        {
-            Workspace = AppWorkspace.Toolkit,
-            Action = input.Action,
-            DisplayTitle = BuildRecoveryTitle(RecoverableOperationLaunchSource.Toolkit, input.Action),
-            PayloadKind = "ToolkitCli",
-            PayloadJson = JsonSerializer.Serialize(
-                new ToolkitCliRecoveryPayload
-                {
-                    InputType = GetToolkitRecoveryInputType(input),
-                    InputJson = JsonSerializer.Serialize(input, input.GetType(), RecoveryJsonOptions)
-                },
-                RecoveryJsonOptions),
-            LaunchSource = RecoverableOperationLaunchSource.Toolkit
-        };
-    }
-
-    private static RecoverableOperationPayload BuildTrayDependenciesRecoveryPayload(TrayDependenciesExecutionPlan plan)
-    {
-        return new RecoverableOperationPayload
-        {
-            Workspace = AppWorkspace.Toolkit,
-            Action = SimsAction.TrayDependencies,
-            DisplayTitle = BuildRecoveryTitle(RecoverableOperationLaunchSource.TrayDependencies, SimsAction.TrayDependencies),
-            PayloadKind = "TrayDependencies",
-            PayloadJson = JsonSerializer.Serialize(plan.Request, RecoveryJsonOptions),
-            LaunchSource = RecoverableOperationLaunchSource.TrayDependencies
-        };
-    }
-
-    private static RecoverableOperationPayload BuildTrayPreviewRecoveryPayload(TrayPreviewInput input)
-    {
-        return new RecoverableOperationPayload
-        {
-            Workspace = AppWorkspace.TrayPreview,
-            Action = SimsAction.TrayPreview,
-            DisplayTitle = BuildRecoveryTitle(RecoverableOperationLaunchSource.TrayPreview, SimsAction.TrayPreview),
-            PayloadKind = "TrayPreview",
-            PayloadJson = JsonSerializer.Serialize(input, RecoveryJsonOptions),
-            LaunchSource = RecoverableOperationLaunchSource.TrayPreview
-        };
-    }
-
-    private static CliExecutionPlan BuildToolkitCliPlan(RecoverableOperationPayload payload)
-    {
-        var recovery = JsonSerializer.Deserialize<ToolkitCliRecoveryPayload>(payload.PayloadJson, RecoveryJsonOptions)
-            ?? throw new InvalidOperationException("Invalid toolkit recovery payload.");
-
-        ISimsExecutionInput input = recovery.InputType switch
-        {
-            nameof(OrganizeInput) => JsonSerializer.Deserialize<OrganizeInput>(recovery.InputJson, RecoveryJsonOptions)
-                ?? throw new InvalidOperationException("Invalid organize recovery payload."),
-            nameof(FlattenInput) => JsonSerializer.Deserialize<FlattenInput>(recovery.InputJson, RecoveryJsonOptions)
-                ?? throw new InvalidOperationException("Invalid flatten recovery payload."),
-            nameof(NormalizeInput) => JsonSerializer.Deserialize<NormalizeInput>(recovery.InputJson, RecoveryJsonOptions)
-                ?? throw new InvalidOperationException("Invalid normalize recovery payload."),
-            nameof(MergeInput) => JsonSerializer.Deserialize<MergeInput>(recovery.InputJson, RecoveryJsonOptions)
-                ?? throw new InvalidOperationException("Invalid merge recovery payload."),
-            nameof(FindDupInput) => JsonSerializer.Deserialize<FindDupInput>(recovery.InputJson, RecoveryJsonOptions)
-                ?? throw new InvalidOperationException("Invalid find-duplicates recovery payload."),
-            _ => throw new InvalidOperationException($"Unsupported toolkit recovery input type: {recovery.InputType}")
-        };
-
-        return new CliExecutionPlan(input);
-    }
-
-    private static TrayDependencyAnalysisRequest BuildTrayDependenciesRequest(RecoverableOperationPayload payload)
-    {
-        return JsonSerializer.Deserialize<TrayDependencyAnalysisRequest>(payload.PayloadJson, RecoveryJsonOptions)
-               ?? throw new InvalidOperationException("Invalid tray dependencies recovery payload.");
-    }
-
-    private static TrayPreviewInput BuildTrayPreviewInput(RecoverableOperationPayload payload)
-    {
-        return JsonSerializer.Deserialize<TrayPreviewInput>(payload.PayloadJson, RecoveryJsonOptions)
-               ?? throw new InvalidOperationException("Invalid tray preview recovery payload.");
-    }
-
-    private static string BuildRecoveryTitle(RecoverableOperationLaunchSource launchSource, SimsAction action)
-    {
-        return launchSource switch
-        {
-            RecoverableOperationLaunchSource.Toolkit => $"Resume previous {action} task",
-            RecoverableOperationLaunchSource.TrayDependencies => "Resume previous tray dependency analysis",
-            RecoverableOperationLaunchSource.TrayPreview => "Resume previous tray preview load",
-            _ => "Resume previous task"
-        };
-    }
-
-    private static string GetToolkitRecoveryInputType(ISimsExecutionInput input)
-    {
-        return input.GetType().Name;
-    }
-
-    private sealed record ToolkitCliRecoveryPayload
-    {
-        public string InputType { get; init; } = string.Empty;
-        public string InputJson { get; init; } = "{}";
-    }
 
     private void HandleTrayDependencyAnalysisProgress(TrayDependencyAnalysisProgress progress)
     {
