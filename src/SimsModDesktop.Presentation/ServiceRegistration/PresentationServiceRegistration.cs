@@ -32,6 +32,7 @@ public static class PresentationServiceRegistration
         services.AddSingleton<SharedFileOpsPanelViewModel>();
 
         services.AddSingleton<IOrganizeModuleState>(sp => sp.GetRequiredService<OrganizePanelViewModel>());
+        services.AddSingleton<ITextureCompressModuleState>(sp => sp.GetRequiredService<TextureCompressPanelViewModel>());
         services.AddSingleton<IFlattenModuleState>(sp => sp.GetRequiredService<FlattenPanelViewModel>());
         services.AddSingleton<INormalizeModuleState>(sp => sp.GetRequiredService<NormalizePanelViewModel>());
         services.AddSingleton<IMergeModuleState>(sp => sp.GetRequiredService<MergePanelViewModel>());
