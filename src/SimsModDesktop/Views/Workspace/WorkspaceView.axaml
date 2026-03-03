@@ -134,7 +134,7 @@
                             </Grid>
 
                             <Grid Grid.Row="1"
-                                  ColumnDefinitions="360,*"
+                                  ColumnDefinitions="*,420"
                                   ColumnSpacing="16"
                                   MinHeight="0">
                                 <Border Classes="card"
@@ -157,6 +157,7 @@
                                 <Border Grid.Column="1"
                                         Classes="card"
                                         Padding="16"
+                                        MaxWidth="420"
                                         MinHeight="0">
                                     <Grid RowDefinitions="Auto,*"
                                           RowSpacing="16"
@@ -164,7 +165,7 @@
                                         <StackPanel Spacing="4">
                                             <TextBlock Classes="sub-title" Text="Item Inspect" />
                                             <TextBlock Classes="helper-text"
-                                                       Text="The right pane stays fixed and updates with the selected catalog item." />
+                                                       Text="A compact inspect pane that updates with the selected catalog item." />
                                         </StackPanel>
 
                                         <preview:ModPreviewDetailSurfaceView Grid.Row="1"

@@ -16,7 +16,7 @@
                 <TextBlock Classes="tray-preview-empty-title"
                            Text="Select an indexed item." />
                 <TextBlock Classes="tray-preview-empty-description"
-                           Text="The right pane shows item inspect details, linked textures, and edit actions." />
+                           Text="Inspect details, linked textures, and edit actions appear here." />
             </StackPanel>
         </Border>
 
