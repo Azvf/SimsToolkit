@@ -1,5 +1,3 @@
-using SimsModDesktop.Infrastructure.Dialogs;
-
 namespace SimsModDesktop.Application.Recovery;
 
 public sealed class OperationRecoveryCoordinator : IOperationRecoveryCoordinator

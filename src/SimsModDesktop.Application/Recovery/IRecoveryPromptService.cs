@@ -1,6 +1,4 @@
-using SimsModDesktop.Application.Recovery;
-
-namespace SimsModDesktop.Infrastructure.Dialogs;
+namespace SimsModDesktop.Application.Recovery;
 
 public interface IRecoveryPromptService
 {
