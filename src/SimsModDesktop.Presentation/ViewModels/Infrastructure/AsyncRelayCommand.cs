@@ -31,12 +31,13 @@ public sealed class AsyncRelayCommand : ICommand
         }
 
         _isRunning = true;
-        if (_disableWhileRunning)
-        {
-            NotifyCanExecuteChanged();
-        }
         try
         {
+            if (_disableWhileRunning)
+            {
+                NotifyCanExecuteChanged();
+            }
+
             await _execute();
         }
         finally
@@ -49,7 +50,25 @@ public sealed class AsyncRelayCommand : ICommand
         }
     }
 
-    public void NotifyCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
+    public void NotifyCanExecuteChanged()
+    {
+        var handlers = CanExecuteChanged;
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (EventHandler handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler(this, EventArgs.Empty);
+            }
+            catch
+            {
+            }
+        }
+    }
 }
 
 public sealed class AsyncRelayCommand<T> : ICommand
@@ -81,12 +100,13 @@ public sealed class AsyncRelayCommand<T> : ICommand
         }
 
         _isRunning = true;
-        if (_disableWhileRunning)
-        {
-            NotifyCanExecuteChanged();
-        }
         try
         {
+            if (_disableWhileRunning)
+            {
+                NotifyCanExecuteChanged();
+            }
+
             await _execute((T?)parameter);
         }
         finally
@@ -99,5 +119,23 @@ public sealed class AsyncRelayCommand<T> : ICommand
         }
     }
 
-    public void NotifyCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
+    public void NotifyCanExecuteChanged()
+    {
+        var handlers = CanExecuteChanged;
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (EventHandler handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler(this, EventArgs.Empty);
+            }
+            catch
+            {
+            }
+        }
+    }
 }

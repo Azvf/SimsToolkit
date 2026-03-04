@@ -1,6 +1,5 @@
 {
   "status.ready": "Ready.",
-  "status.scriptNotFound": "Script not found: {0}",
   "status.validationFailed": "Validation failed.",
   "validation.notStarted": "Validation has not started yet.",
   "validation.failed": "Validation failed: {0}",

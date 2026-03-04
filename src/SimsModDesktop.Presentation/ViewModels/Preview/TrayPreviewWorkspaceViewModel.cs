@@ -14,6 +14,8 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
     private readonly TrayDependenciesPanelViewModel _trayDependencies;
     private bool _isActive;
     private bool _hasPendingRefresh = true;
+    private int _isExportRunning;
+    private string _lastPersistedLogText = string.Empty;
     private string _logText = "Tray preview ready.";
 
     public TrayPreviewWorkspaceViewModel(
@@ -31,7 +33,10 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         _trayDependencies = trayDependencies;
 
         OpenSelectedCommand = new RelayCommand(OpenSelected, () => Surface.HasSelection);
-        ExportSelectedCommand = new AsyncRelayCommand(ExportSelectedAsync, () => Surface.HasSelection);
+        ExportSelectedCommand = new AsyncRelayCommand(
+            ExportSelectedAsync,
+            () => Surface.HasSelection,
+            disableWhileRunning: false);
 
         Surface.Configure(Filter, () => Filter.TrayRoot, PreviewSurfaceSelectionMode.Multiple, autoLoad: false);
         Surface.SetActionButtons(
@@ -97,6 +102,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
             }
 
             Surface.SetFooter("Tray Preview Log", value);
+            PersistTrayPreviewLog(value);
         }
     }
 
@@ -165,75 +171,125 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
 
     private async Task ExportSelectedAsync()
     {
-        var selectedItems = Surface.GetSelectedItems();
-        if (selectedItems.Count == 0)
+        if (Interlocked.Exchange(ref _isExportRunning, 1) == 1)
         {
+            LogText = "Export is already running. Please wait for completion.";
             return;
         }
 
-        var modsPath = _trayDependencies.ModsPath?.Trim() ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(modsPath) || !Directory.Exists(modsPath))
+        try
         {
-            LogText = "Mods Path is missing. Set a valid Mods Path before exporting referenced mods.";
-            return;
-        }
-
-        var pickedFolders = await _fileDialogService.PickFolderPathsAsync("Select export folder", allowMultiple: false);
-        var exportRoot = pickedFolders.FirstOrDefault();
-        if (string.IsNullOrWhiteSpace(exportRoot))
-        {
-            return;
-        }
-
-        var messages = new List<string>();
-        foreach (var selectedItem in selectedItems)
-        {
-            var trayKey = selectedItem.Item.TrayItemKey?.Trim() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(trayKey) || selectedItem.Item.SourceFilePaths.Count == 0)
+            var selectedItems = Surface.GetSelectedItems();
+            if (selectedItems.Count == 0)
             {
-                messages.Add($"Skipped {selectedItem.Item.DisplayTitle}: invalid tray metadata.");
-                continue;
+                return;
             }
 
-            var trayPath = selectedItem.Item.TrayRootPath?.Trim() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(trayPath) || !Directory.Exists(trayPath))
+            var modsPath = _trayDependencies.ModsPath?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(modsPath) || !Directory.Exists(modsPath))
             {
-                messages.Add($"Skipped {selectedItem.Item.DisplayTitle}: tray path missing.");
-                continue;
+                LogText = "Mods Path is missing. Set a valid Mods Path before exporting referenced mods.";
+                return;
             }
 
-            var itemRoot = Path.Combine(exportRoot, BuildExportDirectoryName(selectedItem.Item));
-            var request = new TrayDependencyExportRequest
+            var pickedFolders = await _fileDialogService.PickFolderPathsAsync("Select export folder", allowMultiple: false);
+            var exportRoot = pickedFolders.FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(exportRoot))
             {
-                ItemTitle = selectedItem.Item.DisplayTitle,
-                TrayItemKey = trayKey,
-                TrayRootPath = trayPath,
-                TraySourceFiles = selectedItem.Item.SourceFilePaths.ToArray(),
-                ModsRootPath = modsPath,
-                TrayExportRoot = Path.Combine(itemRoot, "Tray"),
-                ModsExportRoot = Path.Combine(itemRoot, "Mods")
+                return;
+            }
+
+            var messages = new List<string>
+            {
+                $"Export root: {exportRoot}"
             };
+            var exportedItemCount = 0;
+            var exportedModsTotal = 0;
 
-            try
+            foreach (var selectedItem in selectedItems)
             {
-                var result = await _trayDependencyExportService.ExportAsync(request);
-                if (result.Success)
+                var trayKey = selectedItem.Item.TrayItemKey?.Trim() ?? string.Empty;
+                var sourceFiles = ResolveTraySourceFiles(selectedItem.Item);
+                if (string.IsNullOrWhiteSpace(trayKey) || sourceFiles.Length == 0)
                 {
-                    messages.Add($"{selectedItem.Item.DisplayTitle}: exported {result.CopiedTrayFileCount} tray files, {result.CopiedModFileCount} mods.");
+                    messages.Add($"Skipped {selectedItem.Item.DisplayTitle}: invalid tray metadata.");
+                    continue;
                 }
-                else
+
+                var trayPath = selectedItem.Item.TrayRootPath?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(trayPath) || !Directory.Exists(trayPath))
                 {
-                    var issue = result.Issues.FirstOrDefault()?.Message ?? "Unknown export failure.";
-                    messages.Add($"{selectedItem.Item.DisplayTitle}: export failed - {issue}");
+                    messages.Add($"Skipped {selectedItem.Item.DisplayTitle}: tray path missing.");
+                    continue;
+                }
+
+                var itemRoot = Path.Combine(exportRoot, BuildExportDirectoryName(selectedItem.Item));
+
+                messages.Add(
+                    $"{selectedItem.Item.DisplayTitle}: trayKey={trayKey}, sourceFiles={sourceFiles.Length}, trayPath={trayPath}, modsPath={modsPath}");
+                foreach (var sourceFile in sourceFiles)
+                {
+                    messages.Add($"{selectedItem.Item.DisplayTitle}: source={sourceFile}");
+                }
+
+                var request = new TrayDependencyExportRequest
+                {
+                    ItemTitle = selectedItem.Item.DisplayTitle,
+                    TrayItemKey = trayKey,
+                    TrayRootPath = trayPath,
+                    TraySourceFiles = sourceFiles,
+                    ModsRootPath = modsPath,
+                    TrayExportRoot = Path.Combine(itemRoot, "Tray"),
+                    ModsExportRoot = Path.Combine(itemRoot, "Mods")
+                };
+
+                try
+                {
+                    var result = await _trayDependencyExportService.ExportAsync(request);
+                    if (result.Success)
+                    {
+                        messages.Add($"{selectedItem.Item.DisplayTitle}: exported {result.CopiedTrayFileCount} tray files, {result.CopiedModFileCount} mods.");
+                        if (result.Diagnostics is not null)
+                        {
+                            messages.Add(
+                                $"{selectedItem.Item.DisplayTitle}: diag inputFiles={result.Diagnostics.InputSourceFileCount}, bundleTray={result.Diagnostics.BundleTrayItemFileCount}, bundleAux={result.Diagnostics.BundleAuxiliaryFileCount}, candidateIds={result.Diagnostics.CandidateIdCount}, resourceKeys={result.Diagnostics.CandidateResourceKeyCount}, packages={result.Diagnostics.SnapshotPackageCount}, direct={result.Diagnostics.DirectMatchCount}, expanded={result.Diagnostics.ExpandedMatchCount}");
+                        }
+                        if (result.CopiedModFileCount == 0)
+                        {
+                            messages.Add($"{selectedItem.Item.DisplayTitle}: no matched mod files were exported.");
+                        }
+
+                        exportedItemCount++;
+                        exportedModsTotal += result.CopiedModFileCount;
+                        AppendIssueMessages(messages, selectedItem.Item.DisplayTitle, result.Issues);
+                    }
+                    else
+                    {
+                        var issue = result.Issues.FirstOrDefault()?.Message ?? "Unknown export failure.";
+                        messages.Add($"{selectedItem.Item.DisplayTitle}: export failed - {issue}");
+                        if (result.Diagnostics is not null)
+                        {
+                            messages.Add(
+                                $"{selectedItem.Item.DisplayTitle}: diag inputFiles={result.Diagnostics.InputSourceFileCount}, bundleTray={result.Diagnostics.BundleTrayItemFileCount}, bundleAux={result.Diagnostics.BundleAuxiliaryFileCount}, candidateIds={result.Diagnostics.CandidateIdCount}, resourceKeys={result.Diagnostics.CandidateResourceKeyCount}, packages={result.Diagnostics.SnapshotPackageCount}, direct={result.Diagnostics.DirectMatchCount}, expanded={result.Diagnostics.ExpandedMatchCount}");
+                        }
+                        AppendIssueMessages(messages, selectedItem.Item.DisplayTitle, result.Issues);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    messages.Add($"{selectedItem.Item.DisplayTitle}: export failed - {ex.Message}");
+                    messages.Add($"{selectedItem.Item.DisplayTitle}: exception={ex}");
                 }
             }
-            catch (Exception ex)
-            {
-                messages.Add($"{selectedItem.Item.DisplayTitle}: export failed - {ex.Message}");
-            }
+
+            messages.Add($"Summary: selected={selectedItems.Count}, exportedItems={exportedItemCount}, exportedMods={exportedModsTotal}");
+            LogText = string.Join(Environment.NewLine, messages);
         }
-
-        LogText = string.Join(Environment.NewLine, messages);
+        finally
+        {
+            Interlocked.Exchange(ref _isExportRunning, 0);
+            ExportSelectedCommand.NotifyCanExecuteChanged();
+        }
     }
 
     private static string BuildExportDirectoryName(SimsTrayPreviewItem item)
@@ -256,4 +312,112 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
             UseShellExecute = true
         });
     }
+
+    private static void AppendIssueMessages(
+        ICollection<string> messages,
+        string itemTitle,
+        IReadOnlyList<TrayDependencyIssue> issues)
+    {
+        if (issues.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var issue in issues)
+        {
+            var kind = issue.Kind.ToString();
+            var severity = issue.Severity.ToString();
+            var detail = string.IsNullOrWhiteSpace(issue.Message) ? "<no message>" : issue.Message.Trim();
+            messages.Add($"{itemTitle}: [{severity}/{kind}] {detail}");
+        }
+    }
+
+    private static string[] ResolveTraySourceFiles(SimsTrayPreviewItem item)
+    {
+        var resolved = item.SourceFilePaths
+            .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var trayPath = item.TrayRootPath?.Trim() ?? string.Empty;
+        var trayKey = item.TrayItemKey?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(trayPath) || string.IsNullOrWhiteSpace(trayKey) || !Directory.Exists(trayPath))
+        {
+            return resolved.ToArray();
+        }
+
+        foreach (var extension in SupportedTrayExportExtensions)
+        {
+            var candidate = Path.Combine(trayPath, trayKey + extension);
+            if (File.Exists(candidate))
+            {
+                resolved.Add(candidate);
+            }
+        }
+
+        foreach (var candidate in Directory.EnumerateFiles(trayPath, trayKey + ".*", SearchOption.TopDirectoryOnly))
+        {
+            if (!IsSupportedTrayExportFile(candidate))
+            {
+                continue;
+            }
+
+            resolved.Add(candidate);
+        }
+
+        return resolved
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static bool IsSupportedTrayExportFile(string path)
+    {
+        var extension = Path.GetExtension(path);
+        return SupportedTrayExportExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void PersistTrayPreviewLog(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            _lastPersistedLogText = string.Empty;
+            return;
+        }
+
+        if (_lastPersistedLogText.Length == 0)
+        {
+            PersistentUiLog.Append("TrayPreview", text);
+            _lastPersistedLogText = text;
+            return;
+        }
+
+        if (text.StartsWith(_lastPersistedLogText, StringComparison.Ordinal))
+        {
+            var delta = text[_lastPersistedLogText.Length..];
+            if (!string.IsNullOrWhiteSpace(delta))
+            {
+                PersistentUiLog.Append("TrayPreview", delta);
+            }
+
+            _lastPersistedLogText = text;
+            return;
+        }
+
+        PersistentUiLog.Append("TrayPreview", "[log-reset]");
+        PersistentUiLog.Append("TrayPreview", text);
+        _lastPersistedLogText = text;
+    }
+
+    private static readonly string[] SupportedTrayExportExtensions =
+    [
+        ".trayitem",
+        ".hhi",
+        ".sgi",
+        ".householdbinary",
+        ".blueprint",
+        ".bpi",
+        ".room",
+        ".rmi"
+    ];
 }

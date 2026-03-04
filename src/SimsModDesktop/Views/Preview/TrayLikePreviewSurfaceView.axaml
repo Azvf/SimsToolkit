@@ -16,34 +16,41 @@
             <Grid RowDefinitions="Auto,*,Auto"
                   RowSpacing="8"
                   MinHeight="0">
-                <Grid ColumnDefinitions="*,Auto,*"
-                      ColumnSpacing="8">
-                    <TextBlock Classes="helper-text"
-                               VerticalAlignment="Center"
-                               Text="{Binding SummaryText}" />
-                    <TextBlock Grid.Column="1"
-                               Classes="helper-text"
-                               VerticalAlignment="Center"
-                               Text="{Binding SelectionSummaryText}" />
-                    <StackPanel Grid.Column="2"
-                                Orientation="Horizontal"
-                                HorizontalAlignment="Right"
-                                Spacing="8">
-                        <ItemsControl ItemsSource="{Binding ActionButtons}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <StackPanel Orientation="Horizontal" Spacing="8" />
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate x:DataType="vm:PreviewSurfaceActionButtonViewModel">
-                                    <Button Classes="secondary"
-                                            Content="{Binding Label}"
-                                            Command="{Binding Command}" />
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </StackPanel>
+                <Grid RowDefinitions="Auto,Auto"
+                      RowSpacing="8">
+                    <Grid ColumnDefinitions="Auto,*,Auto"
+                          ColumnSpacing="8">
+                        <TextBlock Classes="helper-text"
+                                   VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis"
+                                   MaxLines="1"
+                                   Text="{Binding SummaryText}" />
+                        <TextBlock Grid.Column="2"
+                                   Classes="helper-text"
+                                   VerticalAlignment="Center"
+                                   HorizontalAlignment="Right"
+                                   TextTrimming="CharacterEllipsis"
+                                   MaxLines="1"
+                                   Text="{Binding SelectionSummaryText}" />
+                    </Grid>
+
+                    <ItemsControl Grid.Row="1"
+                                  HorizontalAlignment="Right"
+                                  ItemsSource="{Binding ActionButtons}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel Orientation="Horizontal" HorizontalAlignment="Right" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:PreviewSurfaceActionButtonViewModel">
+                                <Button Classes="secondary"
+                                        Margin="0,0,8,8"
+                                        Content="{Binding Label}"
+                                        Command="{Binding Command}" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
                 </Grid>
 
                 <Grid Grid.Row="1"
@@ -322,16 +329,16 @@
                             <StackPanel Orientation="Horizontal"
                                         Spacing="8">
                                 <TextBlock Classes="helper-text"
-                                           Text="{Binding SelectedPreviewItem.PresetType}" />
+                                           Text="{Binding SelectedPreviewItemSafe.PresetType}" />
                                 <TextBlock Classes="helper-text"
-                                           IsVisible="{Binding SelectedPreviewItem.HasDisplayPrimaryMeta}"
-                                           Text="{Binding SelectedPreviewItem.DisplayPrimaryMeta}" />
+                                           IsVisible="{Binding SelectedPreviewItemSafe.HasDisplayPrimaryMeta}"
+                                           Text="{Binding SelectedPreviewItemSafe.DisplayPrimaryMeta}" />
                             </StackPanel>
                             <TextBlock Classes="section-title"
-                                       Text="{Binding SelectedPreviewItem.DisplayTitle}" />
+                                       Text="{Binding SelectedPreviewItemSafe.DisplayTitle}" />
                             <TextBlock Classes="helper-text"
-                                       IsVisible="{Binding SelectedPreviewItem.HasDisplaySubtitle}"
-                                       Text="{Binding SelectedPreviewItem.DisplaySubtitle}" />
+                                       IsVisible="{Binding SelectedPreviewItemSafe.HasDisplaySubtitle}"
+                                       Text="{Binding SelectedPreviewItemSafe.DisplaySubtitle}" />
                         </StackPanel>
                         <Button Grid.Column="1"
                                 Classes="secondary"
@@ -341,7 +348,7 @@
 
                     <Grid Grid.Row="1"
                           MinHeight="0">
-                        <preview:TrayItemDetailSurfaceView DataContext="{Binding SelectedPreviewItem}" />
+                        <preview:TrayItemDetailSurfaceView DataContext="{Binding SelectedPreviewItemSafe}" />
                     </Grid>
                 </Grid>
             </Border>

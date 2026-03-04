@@ -217,16 +217,16 @@
                             <StackPanel Orientation="Horizontal"
                                         Spacing="8">
                                 <TextBlock Classes="helper-text"
-                                           Text="{Binding TrayPreviewDetailItem.Item.PresetType}" />
+                                           Text="{Binding TrayPreviewDetailItemSafe.Item.PresetType}" />
                                 <TextBlock Classes="helper-text"
-                                           Text="{Binding TrayPreviewDetailItem.Item.DisplayPrimaryMeta}"
-                                           IsVisible="{Binding TrayPreviewDetailItem.Item.HasDisplayPrimaryMeta}" />
+                                           Text="{Binding TrayPreviewDetailItemSafe.Item.DisplayPrimaryMeta}"
+                                           IsVisible="{Binding TrayPreviewDetailItemSafe.Item.HasDisplayPrimaryMeta}" />
                             </StackPanel>
                             <TextBlock Classes="section-title"
-                                       Text="{Binding TrayPreviewDetailItem.Item.DisplayTitle}" />
+                                       Text="{Binding TrayPreviewDetailItemSafe.Item.DisplayTitle}" />
                             <TextBlock Classes="helper-text"
-                                       IsVisible="{Binding TrayPreviewDetailItem.Item.HasDisplaySubtitle}"
-                                       Text="{Binding TrayPreviewDetailItem.Item.DisplaySubtitle}" />
+                                       IsVisible="{Binding TrayPreviewDetailItemSafe.Item.HasDisplaySubtitle}"
+                                       Text="{Binding TrayPreviewDetailItemSafe.Item.DisplaySubtitle}" />
                         </StackPanel>
                         <Button Grid.Column="2"
                                 Classes="secondary"
@@ -250,12 +250,12 @@
                                         BorderBrush="{DynamicResource Brush.Border}"
                                         Background="{DynamicResource Brush.Surface}">
                                     <Grid>
-                                        <Image IsVisible="{Binding TrayPreviewDetailItem.HasThumbnail}"
+                                        <Image IsVisible="{Binding TrayPreviewDetailItemSafe.HasThumbnail}"
                                                Stretch="Uniform"
-                                               Source="{Binding TrayPreviewDetailItem.Thumbnail}" />
+                                               Source="{Binding TrayPreviewDetailItemSafe.Thumbnail}" />
                                         <Border Width="110"
                                                 Height="8"
-                                                IsVisible="{Binding TrayPreviewDetailItem.IsThumbnailLoading}"
+                                                IsVisible="{Binding TrayPreviewDetailItemSafe.IsThumbnailLoading}"
                                                 Background="{DynamicResource Brush.Panel}"
                                                 BorderBrush="{DynamicResource Brush.Border}"
                                                 BorderThickness="1"
@@ -268,7 +268,7 @@
                                                     CornerRadius="999"
                                                     HorizontalAlignment="Left" />
                                         </Border>
-                                        <TextBlock IsVisible="{Binding TrayPreviewDetailItem.IsThumbnailPlaceholderVisible}"
+                                        <TextBlock IsVisible="{Binding TrayPreviewDetailItemSafe.IsThumbnailPlaceholderVisible}"
                                                    Text="No Preview"
                                                    Classes="helper-text"
                                                    HorizontalAlignment="Center"
@@ -279,19 +279,19 @@
                                 <StackPanel Grid.Column="1"
                                             Spacing="8">
                                     <TextBlock FontWeight="SemiBold"
-                                               IsVisible="{Binding TrayPreviewDetailItem.Item.HasDisplaySecondaryMeta}"
-                                               Text="{Binding TrayPreviewDetailItem.Item.DisplaySecondaryMeta}"
+                                               IsVisible="{Binding TrayPreviewDetailItemSafe.Item.HasDisplaySecondaryMeta}"
+                                               Text="{Binding TrayPreviewDetailItemSafe.Item.DisplaySecondaryMeta}"
                                                TextWrapping="Wrap" />
                                     <TextBlock Classes="helper-text"
-                                               IsVisible="{Binding TrayPreviewDetailItem.Item.HasDisplayTertiaryMeta}"
-                                               Text="{Binding TrayPreviewDetailItem.Item.DisplayTertiaryMeta}" />
+                                               IsVisible="{Binding TrayPreviewDetailItemSafe.Item.HasDisplayTertiaryMeta}"
+                                               Text="{Binding TrayPreviewDetailItemSafe.Item.DisplayTertiaryMeta}" />
                                     <Border Classes="card-muted"
                                             Padding="12">
                                         <StackPanel Spacing="6">
                                             <TextBlock Classes="sub-title"
                                                        Text="Background" />
-                                            <TextBlock IsVisible="{Binding TrayPreviewDetailItem.Item.HasDisplayDescription}"
-                                                       Text="{Binding TrayPreviewDetailItem.Item.DisplayDescription}"
+                                            <TextBlock IsVisible="{Binding TrayPreviewDetailItemSafe.Item.HasDisplayDescription}"
+                                                       Text="{Binding TrayPreviewDetailItemSafe.Item.DisplayDescription}"
                                                        TextWrapping="Wrap" />
                                             <TextBlock Classes="helper-text"
                                                        IsVisible="{Binding IsTrayPreviewDetailDescriptionEmpty}"
@@ -301,7 +301,7 @@
                                 </StackPanel>
                             </Grid>
 
-                            <preview:TrayItemDetailSurfaceView DataContext="{Binding TrayPreviewDetailItem.Item}" />
+                            <preview:TrayItemDetailSurfaceView DataContext="{Binding TrayPreviewDetailItemSafe.Item}" />
 
                             <Border Classes="card-muted"
                                     Padding="12"

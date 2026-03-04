@@ -188,7 +188,6 @@ public sealed class ToolkitActionPlanner : IToolkitActionPlanner
 
         if (!TryBuildGlobalExecutionOptions(
                 state,
-                requireScriptPath: true,
                 includeShared: UsesSharedFileOps(state.SelectedAction),
                 out var options,
                 out error))
@@ -200,7 +199,6 @@ public sealed class ToolkitActionPlanner : IToolkitActionPlanner
         {
             SimsAction.Organize => new OrganizeInput
             {
-                ScriptPath = options.ScriptPath,
                 WhatIf = options.WhatIf,
                 SourceDir = ModuleHelpers.ToNullIfWhiteSpace(_organize.SourceDir),
                 ZipNamePattern = ModuleHelpers.ToNullIfWhiteSpace(_organize.ZipNamePattern),
@@ -211,7 +209,6 @@ public sealed class ToolkitActionPlanner : IToolkitActionPlanner
             },
             SimsAction.Flatten => new FlattenInput
             {
-                ScriptPath = options.ScriptPath,
                 WhatIf = options.WhatIf,
                 FlattenRootPath = ModuleHelpers.ToNullIfWhiteSpace(_flatten.RootPath),
                 FlattenToRoot = _flatten.FlattenToRoot,
@@ -219,13 +216,11 @@ public sealed class ToolkitActionPlanner : IToolkitActionPlanner
             },
             SimsAction.Normalize => new NormalizeInput
             {
-                ScriptPath = options.ScriptPath,
                 WhatIf = options.WhatIf,
                 NormalizeRootPath = ModuleHelpers.ToNullIfWhiteSpace(_normalize.RootPath)
             },
             SimsAction.Merge => new MergeInput
             {
-                ScriptPath = options.ScriptPath,
                 WhatIf = options.WhatIf,
                 MergeSourcePaths = _merge.CollectSourcePaths(),
                 MergeTargetPath = ModuleHelpers.ToNullIfWhiteSpace(_merge.TargetPath),
@@ -233,7 +228,6 @@ public sealed class ToolkitActionPlanner : IToolkitActionPlanner
             },
             SimsAction.FindDuplicates => new FindDupInput
             {
-                ScriptPath = options.ScriptPath,
                 WhatIf = options.WhatIf,
                 FindDupRootPath = ModuleHelpers.ToNullIfWhiteSpace(_findDup.RootPath),
                 FindDupOutputCsv = ModuleHelpers.ToNullIfWhiteSpace(_findDup.OutputCsv),
@@ -428,20 +422,12 @@ public sealed class ToolkitActionPlanner : IToolkitActionPlanner
 
     private static bool TryBuildGlobalExecutionOptions(
         ToolkitPlanningState state,
-        bool requireScriptPath,
         bool includeShared,
         out GlobalExecutionOptions options,
         out string error)
     {
         options = null!;
         error = string.Empty;
-
-        var scriptPath = state.ScriptPath.Trim();
-        if (requireScriptPath && string.IsNullOrWhiteSpace(scriptPath))
-        {
-            error = "Script path is required.";
-            return false;
-        }
 
         SharedFileOpsInput shared;
         if (includeShared)
@@ -458,7 +444,6 @@ public sealed class ToolkitActionPlanner : IToolkitActionPlanner
 
         options = new GlobalExecutionOptions
         {
-            ScriptPath = scriptPath,
             WhatIf = state.WhatIf,
             Shared = shared
         };

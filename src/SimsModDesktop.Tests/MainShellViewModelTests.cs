@@ -166,6 +166,89 @@ public sealed class MainShellViewModelTests
     }
 
     [Fact]
+    public async Task InitializeAsync_WarmsTrayDependencyCache_WhenModsPathExistsAndCacheIsMissing()
+    {
+        using var root = new TempDirectory();
+        var modsPath = Directory.CreateDirectory(Path.Combine(root.Path, "Mods")).FullName;
+        var settings = new AppSettings();
+        settings.GameLaunch.ModsPath = modsPath;
+
+        var warmupService = new FakeTrayDependencyCacheWarmupService();
+        var vm = CreateShellViewModel(initialSettings: settings, trayDependencyCacheWarmupService: warmupService);
+
+        await vm.InitializeAsync();
+        await WaitForAsync(() => warmupService.CallCount == 1);
+
+        Assert.Equal(modsPath, warmupService.LastModsPath);
+    }
+
+    [Fact]
+    public async Task InitializeAsync_ShowsWarmupProgressHint_WhenStartupWarmupRuns()
+    {
+        using var root = new TempDirectory();
+        var modsPath = Directory.CreateDirectory(Path.Combine(root.Path, "Mods")).FullName;
+        var settings = new AppSettings();
+        settings.GameLaunch.ModsPath = modsPath;
+
+        var warmupService = new FakeTrayDependencyCacheWarmupService
+        {
+            ShouldReportProgress = true
+        };
+        var vm = CreateShellViewModel(initialSettings: settings, trayDependencyCacheWarmupService: warmupService);
+
+        await vm.InitializeAsync();
+        await WaitForAsync(() => vm.TrayDependencyCacheWarmupPercent == 100);
+
+        Assert.Equal("100%", vm.TrayDependencyCacheWarmupPercentText);
+        Assert.Contains("Startup", vm.TrayDependencyCacheWarmupDetail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task InitializeAsync_DoesNotWarmup_WhenDebugConfigDisablesStartupWarmup()
+    {
+        using var root = new TempDirectory();
+        var modsPath = Directory.CreateDirectory(Path.Combine(root.Path, "Mods")).FullName;
+        var settings = new AppSettings();
+        settings.GameLaunch.ModsPath = modsPath;
+        var debugConfigEntries = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["startup.tray_cache_warmup.enabled"] = "false"
+        };
+
+        var warmupService = new FakeTrayDependencyCacheWarmupService();
+        var vm = CreateShellViewModel(
+            initialSettings: settings,
+            trayDependencyCacheWarmupService: warmupService,
+            initialDebugConfigEntries: debugConfigEntries);
+
+        await vm.InitializeAsync();
+        await Task.Delay(100);
+
+        Assert.Equal(0, warmupService.CallCount);
+        Assert.False(vm.IsTrayDependencyCacheWarmupVisible);
+    }
+
+    [Fact]
+    public async Task ResetDebugConfigCommand_RestoresToggleDefaults()
+    {
+        var settings = new AppSettings();
+        var debugConfigEntries = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["startup.tray_cache_warmup.verbose_log"] = "false"
+        };
+        var vm = CreateShellViewModel(initialSettings: settings, initialDebugConfigEntries: debugConfigEntries);
+
+        await vm.InitializeAsync();
+        var verboseToggle = vm.DebugConfigItems.First(item =>
+            string.Equals(item.Key, "startup.tray_cache_warmup.verbose_log", StringComparison.OrdinalIgnoreCase));
+        Assert.False(verboseToggle.Value);
+
+        vm.ResetDebugConfigCommand.Execute(null);
+
+        Assert.True(verboseToggle.Value);
+    }
+
+    [Fact]
     public void RequestedTheme_UsesThemeServiceForManualChanges()
     {
         var themeService = new FakeAppThemeService();
@@ -193,9 +276,12 @@ public sealed class MainShellViewModelTests
         FakeTrayPreviewCoordinator? trayPreviewCoordinator = null,
         FakeTrayThumbnailService? trayThumbnailService = null,
         AppSettings? initialSettings = null,
-        FakeAppThemeService? themeService = null)
+        FakeAppThemeService? themeService = null,
+        FakeTrayDependencyCacheWarmupService? trayDependencyCacheWarmupService = null,
+        IReadOnlyDictionary<string, string>? initialDebugConfigEntries = null)
     {
         var settingsStore = new FakeSettingsStore(initialSettings ?? new AppSettings());
+        var debugConfigStore = new FakeDebugConfigStore(initialDebugConfigEntries);
         themeService ??= new FakeAppThemeService();
         trayPreviewCoordinator ??= new FakeTrayPreviewCoordinator();
         trayThumbnailService ??= new FakeTrayThumbnailService();
@@ -213,6 +299,7 @@ public sealed class MainShellViewModelTests
             savesVm,
             fileDialog,
             settingsStore,
+            debugConfigStore,
             themeService,
             new FakePathDiscoveryService());
         var systemOperationsController = new ShellSystemOperationsController(
@@ -224,7 +311,9 @@ public sealed class MainShellViewModelTests
             savesVm,
             navigation,
             settingsController,
-            systemOperationsController);
+            systemOperationsController,
+            null,
+            trayDependencyCacheWarmupService ?? new FakeTrayDependencyCacheWarmupService());
     }
 
     private static MainWindowViewModel CreateWorkspaceViewModel(
@@ -295,7 +384,7 @@ public sealed class MainShellViewModelTests
                 recoveryController,
                 trayPreviewStateController,
                 trayPreviewSelectionController),
-            new MainWindowTrayExportController(trayExportService),
+            new MainWindowTrayExportController(trayExportService, new FakePackageIndexCache()),
             new MainWindowValidationController(toolkitActionPlanner),
             new MainWindowLifecycleController(
                 settingsPersistenceController,
@@ -475,6 +564,55 @@ public sealed class MainShellViewModelTests
         }
     }
 
+    private sealed class FakeDebugConfigStore : IDebugConfigStore
+    {
+        private readonly Dictionary<string, string> _entries;
+
+        public FakeDebugConfigStore(IReadOnlyDictionary<string, string>? initialEntries = null)
+        {
+            _entries = initialEntries is null
+                ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, string>(initialEntries, StringComparer.OrdinalIgnoreCase);
+        }
+
+        public Task<IReadOnlyDictionary<string, string>> LoadAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<IReadOnlyDictionary<string, string>>(
+                new Dictionary<string, string>(_entries, StringComparer.OrdinalIgnoreCase));
+        }
+
+        public Task SaveAsync(IReadOnlyDictionary<string, string> entries, CancellationToken cancellationToken = default)
+        {
+            _entries.Clear();
+            foreach (var entry in entries)
+            {
+                _entries[entry.Key] = entry.Value;
+            }
+
+            return Task.CompletedTask;
+        }
+
+        public Task EnsureTemplateAsync(
+            IReadOnlyList<DebugConfigTemplateEntry> entries,
+            CancellationToken cancellationToken = default)
+        {
+            foreach (var entry in entries)
+            {
+                if (string.IsNullOrWhiteSpace(entry.Key))
+                {
+                    continue;
+                }
+
+                if (!_entries.ContainsKey(entry.Key))
+                {
+                    _entries[entry.Key] = entry.DefaultValue;
+                }
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed class NoOpModItemCatalogService : IModItemCatalogService
     {
         public Task<ModItemCatalogPage> QueryPageAsync(ModItemCatalogQuery query, CancellationToken cancellationToken = default)
@@ -649,6 +787,78 @@ public sealed class MainShellViewModelTests
             CallCount++;
             return Task.FromResult(NextResult);
         }
+    }
+
+    private sealed class FakeTrayDependencyCacheWarmupService : ITrayDependencyCacheWarmupService
+    {
+        public int CallCount { get; private set; }
+        public string LastModsPath { get; private set; } = string.Empty;
+        public bool ShouldReportProgress { get; set; }
+
+        public Task<TrayDependencyCacheWarmupResult> WarmupIfMissingAsync(
+            string modsRootPath,
+            IProgress<TrayDependencyExportProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            LastModsPath = modsRootPath;
+            if (ShouldReportProgress)
+            {
+                progress?.Report(new TrayDependencyExportProgress
+                {
+                    Stage = TrayDependencyExportStage.IndexingPackages,
+                    Percent = 30,
+                    Detail = "Indexing packages... 3/10"
+                });
+                progress?.Report(new TrayDependencyExportProgress
+                {
+                    Stage = TrayDependencyExportStage.Completed,
+                    Percent = 100,
+                    Detail = "Startup package index cache is ready (10/10)."
+                });
+            }
+
+            return Task.FromResult(new TrayDependencyCacheWarmupResult
+            {
+                WarmedUp = true,
+                PackageCount = 10,
+                Message = "Startup warmup completed for 10 package(s)."
+            });
+        }
+    }
+
+    private sealed class FakePackageIndexCache : IPackageIndexCache
+    {
+        public Task<PackageIndexSnapshot> GetSnapshotAsync(
+            string modsRootPath,
+            IProgress<TrayDependencyExportProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            var normalizedRoot = string.IsNullOrWhiteSpace(modsRootPath)
+                ? string.Empty
+                : Path.GetFullPath(modsRootPath.Trim());
+            return Task.FromResult(new PackageIndexSnapshot
+            {
+                ModsRootPath = normalizedRoot,
+                Packages = Array.Empty<IndexedPackageFile>()
+            });
+        }
+    }
+
+    private static async Task WaitForAsync(Func<bool> condition, int timeoutMs = 1000)
+    {
+        var startedAt = DateTime.UtcNow;
+        while (!condition())
+        {
+            if ((DateTime.UtcNow - startedAt).TotalMilliseconds > timeoutMs)
+            {
+                break;
+            }
+
+            await Task.Delay(10);
+        }
+
+        Assert.True(condition());
     }
 
     private sealed class TempDirectory : IDisposable

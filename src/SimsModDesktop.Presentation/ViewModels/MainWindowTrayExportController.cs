@@ -10,11 +10,15 @@ namespace SimsModDesktop.Presentation.ViewModels;
 public sealed class MainWindowTrayExportController
 {
     private readonly ITrayDependencyExportService _trayDependencyExportService;
+    private readonly IPackageIndexCache _packageIndexCache;
     private MainWindowTrayExportHost? _hookedHost;
 
-    public MainWindowTrayExportController(ITrayDependencyExportService trayDependencyExportService)
+    public MainWindowTrayExportController(
+        ITrayDependencyExportService trayDependencyExportService,
+        IPackageIndexCache packageIndexCache)
     {
         _trayDependencyExportService = trayDependencyExportService;
+        _packageIndexCache = packageIndexCache;
     }
 
     internal void OpenSelectedTrayPreviewPaths(MainWindowTrayExportHost host)
@@ -95,6 +99,37 @@ public sealed class MainWindowTrayExportController
                 request.Request,
                 Task: EnqueueTrayExportTask(host, request.Item.Item.DisplayTitle)))
             .ToArray();
+        host.AppendLog(
+            $"[tray-selection] export-start items={queueEntries.Length} target={exportRoot} modsPath={queueEntries[0].Request.ModsRootPath}");
+
+        foreach (var queueEntry in queueEntries)
+        {
+            LogTraySelectionItemContext(host, queueEntry.Request);
+        }
+
+        PackageIndexSnapshot preloadedSnapshot;
+        try
+        {
+            preloadedSnapshot = await _packageIndexCache.GetSnapshotAsync(queueEntries[0].Request.ModsRootPath, null, CancellationToken.None);
+            host.AppendLog(
+                $"[tray-selection] preloaded snapshot modsPath={queueEntries[0].Request.ModsRootPath} packages={preloadedSnapshot.Packages.Count}");
+        }
+        catch (Exception ex)
+        {
+            for (var index = 0; index < queueEntries.Length; index++)
+            {
+                var exportTask = queueEntries[index].Task;
+                exportTask.SetExportRoot(queueEntries[index].ItemExportRoot);
+                exportTask.MarkFailed(index == 0
+                    ? "Mods export failed: " + ex.Message
+                    : "Cancelled after batch failure.");
+            }
+
+            host.SetStatus("Export failed: " + ex.Message);
+            host.AppendLog("[tray-selection][internal] preload snapshot failed: " + ex.Message);
+            return;
+        }
+
         var copiedTrayFileCount = 0;
         var copiedModFileCount = 0;
         var warningCount = 0;
@@ -105,6 +140,7 @@ public sealed class MainWindowTrayExportController
             var exportTask = queueEntry.Task;
             exportTask.SetExportRoot(queueEntry.ItemExportRoot);
             exportTask.MarkTrayRunning();
+            var exportRequest = queueEntry.Request with { PreloadedSnapshot = preloadedSnapshot };
 
             createdItemRoots.Add(queueEntry.ItemExportRoot);
 
@@ -113,7 +149,7 @@ public sealed class MainWindowTrayExportController
             try
             {
                 result = await _trayDependencyExportService.ExportAsync(
-                    queueEntry.Request,
+                    exportRequest,
                     new Progress<TrayDependencyExportProgress>(progress =>
                     {
                         if (!movedToModsStage && progress.Stage != TrayDependencyExportStage.Preparing)
@@ -152,6 +188,18 @@ public sealed class MainWindowTrayExportController
             {
                 exportTask.AppendDetailLine(issue.Message);
                 host.AppendLog($"[tray-selection][internal] {issue.Severity}: {issue.Message}");
+            }
+
+            host.AppendLog(
+                $"[tray-selection][item] trayKey={queueEntry.Request.TrayItemKey} success={result.Success} tray={result.CopiedTrayFileCount} mods={result.CopiedModFileCount} issues={result.Issues.Count}");
+            if (result.Diagnostics is not null)
+            {
+                host.AppendLog(
+                    $"[tray-selection][diag] trayKey={queueEntry.Request.TrayItemKey} inputFiles={result.Diagnostics.InputSourceFileCount} bundleTray={result.Diagnostics.BundleTrayItemFileCount} bundleAux={result.Diagnostics.BundleAuxiliaryFileCount} candidateIds={result.Diagnostics.CandidateIdCount} resourceKeys={result.Diagnostics.CandidateResourceKeyCount} packages={result.Diagnostics.SnapshotPackageCount} direct={result.Diagnostics.DirectMatchCount} expanded={result.Diagnostics.ExpandedMatchCount}");
+            }
+            if (result.CopiedModFileCount == 0)
+            {
+                host.AppendLog($"[tray-selection][item] trayKey={queueEntry.Request.TrayItemKey} no matched mod files exported");
             }
 
             if (!result.Success)
@@ -370,7 +418,8 @@ public sealed class MainWindowTrayExportController
                 return false;
             }
 
-            if (selectedItem.Item.SourceFilePaths.Count == 0)
+            var traySourceFiles = ResolveTraySourceFiles(selectedItem.Item);
+            if (traySourceFiles.Count == 0)
             {
                 error = $"Selected tray item {trayKey} has no source files to export.";
                 requests.Clear();
@@ -387,7 +436,7 @@ public sealed class MainWindowTrayExportController
                 ItemTitle = selectedItem.Item.DisplayTitle,
                 TrayItemKey = trayKey,
                 TrayRootPath = trayPath,
-                TraySourceFiles = selectedItem.Item.SourceFilePaths.ToArray(),
+                TraySourceFiles = traySourceFiles,
                 ModsRootPath = modsPath,
                 TrayExportRoot = trayExportRoot,
                 ModsExportRoot = modsExportRoot
@@ -395,6 +444,65 @@ public sealed class MainWindowTrayExportController
         }
 
         return true;
+    }
+
+    private static IReadOnlyList<string> ResolveTraySourceFiles(SimsTrayPreviewItem item)
+    {
+        var resolved = item.SourceFilePaths
+            .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var trayPath = item.TrayRootPath?.Trim() ?? string.Empty;
+        var trayKey = item.TrayItemKey?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(trayPath) || string.IsNullOrWhiteSpace(trayKey) || !Directory.Exists(trayPath))
+        {
+            return resolved;
+        }
+
+        foreach (var extension in SupportedTrayExportExtensions)
+        {
+            var candidate = Path.Combine(trayPath, trayKey + extension);
+            if (File.Exists(candidate))
+            {
+                resolved.Add(candidate);
+            }
+        }
+
+        foreach (var candidate in Directory.EnumerateFiles(trayPath, trayKey + ".*", SearchOption.TopDirectoryOnly))
+        {
+            if (!IsSupportedTrayExportFile(candidate))
+            {
+                continue;
+            }
+
+            resolved.Add(candidate);
+        }
+
+        return resolved
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static bool IsSupportedTrayExportFile(string path)
+    {
+        var extension = Path.GetExtension(path);
+        return SupportedTrayExportExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static void LogTraySelectionItemContext(MainWindowTrayExportHost host, TrayDependencyExportRequest request)
+    {
+        var sourceFiles = request.TraySourceFiles
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        host.AppendLog(
+            $"[tray-selection][item] trayKey={request.TrayItemKey} trayPath={request.TrayRootPath} sourceFiles={sourceFiles.Length} trayOut={request.TrayExportRoot} modsOut={request.ModsExportRoot}");
+        foreach (var sourceFile in sourceFiles)
+        {
+            host.AppendLog($"[tray-selection][item-source] trayKey={request.TrayItemKey} path={sourceFile}");
+        }
     }
 
     private static void LaunchExplorer(string path, bool selectFile)
@@ -508,4 +616,16 @@ public sealed class MainWindowTrayExportController
             NotifyTrayExportQueueChanged(_hookedHost);
         }
     }
+
+    private static readonly string[] SupportedTrayExportExtensions =
+    [
+        ".trayitem",
+        ".hhi",
+        ".sgi",
+        ".householdbinary",
+        ".blueprint",
+        ".bpi",
+        ".room",
+        ".rmi"
+    ];
 }

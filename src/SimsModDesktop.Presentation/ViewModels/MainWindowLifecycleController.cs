@@ -36,7 +36,6 @@ public sealed class MainWindowLifecycleController
         var resolved = _settingsProjection.Resolve(settings, host.AvailableToolkitActions);
 
         host.SetSelectedLanguageCode(resolved.UiLanguageCode);
-        host.SetScriptPath(resolved.ScriptPath);
         host.SetWhatIf(resolved.WhatIf);
 
         host.SharedFileOps.SkipPruneEmptyDirs = resolved.SharedFileOps.SkipPruneEmptyDirs;
@@ -59,17 +58,8 @@ public sealed class MainWindowLifecycleController
         host.SetSelectedAction(resolved.SelectedAction);
         host.SetWorkspace(resolved.Workspace);
 
-        host.SetScriptPath(host.ResolveFixedScriptPath());
-        if (!File.Exists(host.GetScriptPath()))
-        {
-            host.SetStatus(host.LocalizeFormat("status.scriptNotFound", [host.GetScriptPath()]));
-        }
-
         host.ClearTrayPreview();
-        if (File.Exists(host.GetScriptPath()))
-        {
-            host.SetStatus(host.Localize("status.ready"));
-        }
+        host.SetStatus(host.Localize("status.ready"));
 
         host.SetIsInitialized(true);
         host.RefreshValidation();
@@ -141,7 +131,6 @@ public sealed class MainWindowLifecycleController
         settings.UiLanguageCode = string.IsNullOrWhiteSpace(host.GetSelectedLanguageCode())
             ? "en-US"
             : host.GetSelectedLanguageCode().Trim();
-        settings.ScriptPath = host.GetScriptPath();
         settings.SelectedWorkspace = host.GetWorkspace();
         settings.SelectedAction = host.GetSelectedAction();
         settings.WhatIf = host.GetWhatIf();

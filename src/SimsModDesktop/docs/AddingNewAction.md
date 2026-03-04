@@ -1,28 +1,58 @@
 # Adding a New Action
 
-This project now follows a module-registry workflow for adding actions.
+## 1. Current Extension Model
 
-## Required touch points
-1. Add a new action input model in `Application/Requests`.
-2. Add a validator in `Application/Validation`. The shell composition now pulls validators through `Composition/ServiceCollectionExtensions.cs` via `AddSimsDesktopShell()` and the layered `Application` registration.
-3. Add a CLI mapper in `Application/Cli/*CliArgumentMapper.cs`. The shell composition now resolves mappers through `AddSimsDesktopShell()` and the layered `Application` registration.
-4. Register an execution strategy (`ActionExecutionStrategy<TInput>`) in `Application/ServiceRegistration/ApplicationServiceRegistration.cs`.
-5. Add an action module in `Application/Modules`, expose `SupportedActionPatchKeys`, and register it through `AddSimsDesktopShell()`'s legacy shell view-model/module wiring.
-6. Add or extend a state contract in `Application/Modules/ActionModuleStateContracts.cs`.
-7. Add panel UI + panel ViewModel and implement the corresponding state contract interface.
+After the refactor, a toolkit action is added through:
 
-## Optional touch points
-- Add client-only execution plan (`ModuleExecutionKind.Client`) if the action is not CLI-backed.
-- Add settings fields to `Models/AppSettings.cs` when persistence is needed.
-- Extend module `TryApplyActionPatch` support if action patching behavior is required.
+1. **Request model + validator** in `Application`.
+2. **Planning** in `ToolkitActionPlanner`.
+3. **Execution dispatch** in `ExecutionCoordinator` (or dedicated coordinator/service).
+4. **Presentation state + panel** in `Presentation`.
+5. **DI registration** in layered service registration.
 
-## Required tests
-- Validator test: required fields, path checks, range checks.
-- CLI mapping test: switches/arguments for the new action mapper.
-- Module plan test: `TryBuildPlan` success/failure paths.
-- If output parsing logic is touched, add parser tests.
+Legacy strategy/router artifacts are no longer used.
 
-## Acceptance checklist
-- `dotnet build` passes with 0 warnings and 0 errors.
-- `dotnet test` passes.
-- Manual smoke run logs include `[start]`, `[action]`, `[exit]`.
+---
+
+## 2. Required Touch Points
+
+1. Add enum value in `Application/Models/SimsAction.cs`.
+2. Add input model in `Application/Requests`.
+3. Add validator in `Application/Validation` and register it in `Application/ServiceRegistration/ApplicationServiceRegistration.cs`.
+4. Extend module state contract if needed in `Application/Modules/ActionModuleStateContracts.cs`.
+5. Add/extend panel view model in `Presentation/ViewModels/Panels` and implement the related module state contract.
+6. Register panel view model and state interface mapping in `Presentation/ServiceRegistration/PresentationServiceRegistration.cs`.
+7. Extend `ToolkitActionPlanner`:
+   * include action in supported actions list
+   * build execution plan from module state
+   * include settings load/save mapping if persistence is needed
+8. Extend `ExecutionCoordinator` (or a dedicated coordinator) to execute the new request type.
+9. Wire UI view in `src/SimsModDesktop/Views/Panels` (if the action has new visual surface).
+
+---
+
+## 3. Optional Touch Points
+
+* Add settings fields in `Application/Models/AppSettings.cs`.
+* Add persistence projection updates in settings-related controllers.
+* Add result repository/event logging integration if action emits structured rows.
+* Add feature-specific storage/service in `Infrastructure`.
+
+---
+
+## 4. Test Requirements
+
+1. Validator tests: required fields, ranges, path checks.
+2. Planner tests: build success/failure paths from state to plan.
+3. Coordinator tests: action dispatch and output/exit behavior.
+4. UI view-model tests: state transitions and command enablement.
+5. Architecture tests: ensure no forbidden legacy dependencies are introduced.
+
+---
+
+## 5. Acceptance Checklist
+
+* `dotnet build SimsDesktopTools.sln` passes.
+* `dotnet test SimsDesktopTools.sln` passes.
+* New action appears in UI and runs end-to-end.
+* Settings round-trip works (if action has persisted fields).

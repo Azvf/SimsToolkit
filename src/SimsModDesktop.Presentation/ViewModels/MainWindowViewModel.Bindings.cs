@@ -92,20 +92,6 @@ public sealed partial class MainWindowViewModel
         }
     }
 
-    public string ScriptPath
-    {
-        get => _scriptPath;
-        set
-        {
-            if (!SetProperty(ref _scriptPath, value))
-            {
-                return;
-            }
-
-            QueueValidationRefresh();
-        }
-    }
-
     public bool WhatIf
     {
         get => _whatIf;
@@ -325,10 +311,17 @@ public sealed partial class MainWindowViewModel
     public bool IsTrayPreviewPagerVisible => HasTrayPreviewItems;
     public bool IsTrayPreviewEntryMode => !string.Equals(TrayPreview.LayoutMode, "Grid", StringComparison.OrdinalIgnoreCase);
     public bool IsTrayPreviewGridMode => string.Equals(TrayPreview.LayoutMode, "Grid", StringComparison.OrdinalIgnoreCase);
+    private static readonly TrayPreviewListItemViewModel EmptyTrayPreviewDetailItem = new(
+        new SimsTrayPreviewItem
+        {
+            TrayItemKey = string.Empty,
+            PresetType = string.Empty
+        });
     public TrayPreviewListItemViewModel? TrayPreviewDetailItem
     {
         get => _trayPreviewSelectionController.DetailItem;
     }
+    public TrayPreviewListItemViewModel TrayPreviewDetailItemSafe => TrayPreviewDetailItem ?? EmptyTrayPreviewDetailItem;
     public bool IsTrayPreviewDetailVisible => TrayPreviewDetailItem is not null;
     public bool IsTrayPreviewDetailDescriptionEmpty => TrayPreviewDetailItem is null || !TrayPreviewDetailItem.Item.HasDisplayDescription;
     public bool IsTrayPreviewDetailOverviewEmpty =>

@@ -27,6 +27,7 @@ public sealed record TrayDependencyExportRequest
     public required string ModsRootPath { get; init; }
     public required string TrayExportRoot { get; init; }
     public required string ModsExportRoot { get; init; }
+    public PackageIndexSnapshot? PreloadedSnapshot { get; init; }
 }
 
 public sealed record TrayDependencyAnalysisRequest
@@ -52,6 +53,19 @@ public sealed record TrayDependencyExportResult
     public int CopiedModFileCount { get; init; }
     public bool HasMissingReferenceWarnings { get; init; }
     public IReadOnlyList<TrayDependencyIssue> Issues { get; init; } = Array.Empty<TrayDependencyIssue>();
+    public TrayDependencyExportDiagnostics? Diagnostics { get; init; }
+}
+
+public sealed record TrayDependencyExportDiagnostics
+{
+    public int InputSourceFileCount { get; init; }
+    public int BundleTrayItemFileCount { get; init; }
+    public int BundleAuxiliaryFileCount { get; init; }
+    public int CandidateResourceKeyCount { get; init; }
+    public int CandidateIdCount { get; init; }
+    public int SnapshotPackageCount { get; init; }
+    public int DirectMatchCount { get; init; }
+    public int ExpandedMatchCount { get; init; }
 }
 
 public sealed record TrayDependencyAnalysisResult
@@ -146,12 +160,12 @@ public enum TrayDependencyIssueKind
 
 public sealed record TrayFileBundle
 {
-    public string TrayItemPath { get; init; } = string.Empty;
-    public string? HhiPath { get; init; }
+    public IReadOnlyList<string> TrayItemPaths { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<string> HhiPaths { get; init; } = Array.Empty<string>();
     public IReadOnlyList<string> SgiPaths { get; init; } = Array.Empty<string>();
-    public string? HouseholdBinaryPath { get; init; }
-    public string? BlueprintPath { get; init; }
-    public string? RoomPath { get; init; }
+    public IReadOnlyList<string> HouseholdBinaryPaths { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<string> BlueprintPaths { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<string> RoomPaths { get; init; } = Array.Empty<string>();
 }
 
 public sealed record TraySearchKeys
@@ -176,6 +190,22 @@ public interface IPackageIndexCache
         string modsRootPath,
         IProgress<TrayDependencyExportProgress>? progress = null,
         CancellationToken cancellationToken = default);
+}
+
+public interface ITrayDependencyCacheWarmupService
+{
+    Task<TrayDependencyCacheWarmupResult> WarmupIfMissingAsync(
+        string modsRootPath,
+        IProgress<TrayDependencyExportProgress>? progress = null,
+        CancellationToken cancellationToken = default);
+}
+
+public sealed record TrayDependencyCacheWarmupResult
+{
+    public bool WarmedUp { get; init; }
+    public bool Skipped { get; init; }
+    public int PackageCount { get; init; }
+    public string Message { get; init; } = string.Empty;
 }
 
 public sealed record PackageIndexSnapshot

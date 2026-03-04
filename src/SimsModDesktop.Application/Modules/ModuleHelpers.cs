@@ -4,21 +4,6 @@ namespace SimsModDesktop.Application.Modules;
 
 internal static class ModuleHelpers
 {
-    public static bool TryResolveScriptPath(string rawScriptPath, out string scriptPath, out string error)
-    {
-        scriptPath = string.Empty;
-        error = string.Empty;
-
-        if (string.IsNullOrWhiteSpace(rawScriptPath))
-        {
-            error = "Script path is required.";
-            return false;
-        }
-
-        scriptPath = Path.GetFullPath(rawScriptPath.Trim());
-        return true;
-    }
-
     public static string? ToNullIfWhiteSpace(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();

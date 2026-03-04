@@ -32,6 +32,18 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
         return Task.Run(async () =>
         {
             var issues = new List<TrayDependencyIssue>();
+            var inputSourceFileCount = request.TraySourceFiles
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count();
+            var bundleTrayItemFileCount = 0;
+            var bundleAuxiliaryFileCount = 0;
+            var candidateResourceKeyCount = 0;
+            var candidateIdCount = 0;
+            var snapshotPackageCount = 0;
+            var directMatchCount = 0;
+            var expandedMatchCount = 0;
+
             Report(progress, TrayDependencyExportStage.Preparing, 0, "Copying tray files...");
 
             Directory.CreateDirectory(request.TrayExportRoot);
@@ -39,26 +51,76 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
 
             if (!TryCopyTrayFiles(request.TraySourceFiles, request.TrayExportRoot, issues, out var copiedTrayFileCount))
             {
-                return BuildResult(copiedTrayFileCount, 0, issues);
+                return BuildResult(
+                    copiedTrayFileCount,
+                    0,
+                    issues,
+                    BuildDiagnostics(
+                        inputSourceFileCount,
+                        bundleTrayItemFileCount,
+                        bundleAuxiliaryFileCount,
+                        candidateResourceKeyCount,
+                        candidateIdCount,
+                        snapshotPackageCount,
+                        directMatchCount,
+                        expandedMatchCount));
             }
 
-            var snapshot = await _packageIndexCache.GetSnapshotAsync(request.ModsRootPath, progress, cancellationToken);
+            PackageIndexSnapshot snapshot;
+            if (request.PreloadedSnapshot is not null && MatchesModsRoot(request.PreloadedSnapshot, request.ModsRootPath))
+            {
+                snapshot = request.PreloadedSnapshot;
+                progress?.Report(new TrayDependencyExportProgress
+                {
+                    Stage = TrayDependencyExportStage.IndexingPackages,
+                    Percent = 35,
+                    Detail = $"Indexing packages... {snapshot.Packages.Count}/{snapshot.Packages.Count}"
+                });
+            }
+            else
+            {
+                snapshot = await _packageIndexCache.GetSnapshotAsync(request.ModsRootPath, progress, cancellationToken);
+            }
+
+            snapshotPackageCount = snapshot.Packages.Count;
 
             cancellationToken.ThrowIfCancellationRequested();
             Report(progress, TrayDependencyExportStage.ParsingTray, 35, "Parsing tray files...");
 
             if (!_bundleLoader.TryLoad(request.TraySourceFiles, issues, out var bundle))
             {
-                return BuildResult(copiedTrayFileCount, 0, issues);
+                return BuildResult(
+                    copiedTrayFileCount,
+                    0,
+                    issues,
+                    BuildDiagnostics(
+                        inputSourceFileCount,
+                        bundleTrayItemFileCount,
+                        bundleAuxiliaryFileCount,
+                        candidateResourceKeyCount,
+                        candidateIdCount,
+                        snapshotPackageCount,
+                        directMatchCount,
+                        expandedMatchCount));
             }
 
+            bundleTrayItemFileCount = bundle.TrayItemPaths.Count;
+            bundleAuxiliaryFileCount =
+                bundle.HhiPaths.Count +
+                bundle.SgiPaths.Count +
+                bundle.HouseholdBinaryPaths.Count +
+                bundle.BlueprintPaths.Count +
+                bundle.RoomPaths.Count;
             var searchKeys = _searchExtractor.Extract(bundle, issues);
+            candidateResourceKeyCount = searchKeys.ResourceKeys.Length;
+            candidateIdCount = CountCandidateIds(searchKeys);
 
             cancellationToken.ThrowIfCancellationRequested();
             Report(progress, TrayDependencyExportStage.MatchingDirectReferences, 45, "Matching direct references...");
 
             var directMatch = _directMatchEngine.Match(searchKeys, snapshot);
             issues.AddRange(directMatch.Issues);
+            directMatchCount = directMatch.DirectMatches.Count;
 
             cancellationToken.ThrowIfCancellationRequested();
             Report(progress, TrayDependencyExportStage.ExpandingDependencies, 65, "Expanding second-level references...");
@@ -68,6 +130,7 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
                 snapshot,
                 cancellationToken);
             issues.AddRange(expansion.Issues);
+            expandedMatchCount = expansion.ExpandedMatches.Count;
 
             var filePaths = directMatch.DirectMatches
                 .Concat(expansion.ExpandedMatches)
@@ -83,7 +146,19 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
             _fileExporter.CopyFiles(filePaths, request.ModsExportRoot, issues, out var copiedModFileCount);
 
             Report(progress, TrayDependencyExportStage.Completed, 100, "Completed.");
-            return BuildResult(copiedTrayFileCount, copiedModFileCount, issues);
+            return BuildResult(
+                copiedTrayFileCount,
+                copiedModFileCount,
+                issues,
+                BuildDiagnostics(
+                    inputSourceFileCount,
+                    bundleTrayItemFileCount,
+                    bundleAuxiliaryFileCount,
+                    candidateResourceKeyCount,
+                    candidateIdCount,
+                    snapshotPackageCount,
+                    directMatchCount,
+                    expandedMatchCount));
         }, cancellationToken);
     }
 
@@ -136,7 +211,8 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
     private static TrayDependencyExportResult BuildResult(
         int copiedTrayFileCount,
         int copiedModFileCount,
-        List<TrayDependencyIssue> issues)
+        List<TrayDependencyIssue> issues,
+        TrayDependencyExportDiagnostics? diagnostics)
     {
         var hasErrors = issues.Any(issue => issue.Severity == TrayDependencyIssueSeverity.Error);
         var hasMissingWarnings = issues.Any(issue =>
@@ -149,8 +225,74 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
             CopiedTrayFileCount = copiedTrayFileCount,
             CopiedModFileCount = copiedModFileCount,
             HasMissingReferenceWarnings = hasMissingWarnings,
-            Issues = issues.ToArray()
+            Issues = issues.ToArray(),
+            Diagnostics = diagnostics
         };
+    }
+
+    private static TrayDependencyExportDiagnostics BuildDiagnostics(
+        int inputSourceFileCount,
+        int bundleTrayItemFileCount,
+        int bundleAuxiliaryFileCount,
+        int candidateResourceKeyCount,
+        int candidateIdCount,
+        int snapshotPackageCount,
+        int directMatchCount,
+        int expandedMatchCount)
+    {
+        return new TrayDependencyExportDiagnostics
+        {
+            InputSourceFileCount = inputSourceFileCount,
+            BundleTrayItemFileCount = bundleTrayItemFileCount,
+            BundleAuxiliaryFileCount = bundleAuxiliaryFileCount,
+            CandidateResourceKeyCount = candidateResourceKeyCount,
+            CandidateIdCount = candidateIdCount,
+            SnapshotPackageCount = snapshotPackageCount,
+            DirectMatchCount = directMatchCount,
+            ExpandedMatchCount = expandedMatchCount
+        };
+    }
+
+    private static int CountCandidateIds(TraySearchKeys keys)
+    {
+        var ids = new HashSet<ulong>();
+        Add(keys.CasPartIds);
+        Add(keys.SkinToneIds);
+        Add(keys.SimAspirationIds);
+        Add(keys.SimTraitIds);
+        Add(keys.CasPresetIds);
+        Add(keys.FaceSliderIds);
+        Add(keys.BodySliderIds);
+        Add(keys.ObjectDefinitionIds);
+        Add(keys.LotTraitIds);
+        return ids.Count;
+
+        void Add(IReadOnlyList<ulong> values)
+        {
+            for (var index = 0; index < values.Count; index++)
+            {
+                ids.Add(values[index]);
+            }
+        }
+    }
+
+    private static bool MatchesModsRoot(PackageIndexSnapshot snapshot, string modsRootPath)
+    {
+        if (string.IsNullOrWhiteSpace(snapshot.ModsRootPath) || string.IsNullOrWhiteSpace(modsRootPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            var snapshotRoot = Path.GetFullPath(snapshot.ModsRootPath.Trim());
+            var requestRoot = Path.GetFullPath(modsRootPath.Trim());
+            return string.Equals(snapshotRoot, requestRoot, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static void Report(
@@ -195,6 +337,44 @@ public sealed class PackageIndexCache : IPackageIndexCache
     {
         _packageCatalog = packageCatalog ?? new DbpfPackageCatalog();
         _database = new SqliteCacheDatabase(Path.Combine(cacheRootPath, "cache.db"));
+    }
+
+    public Task<bool> HasPersistedSnapshotAsync(
+        string modsRootPath,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(modsRootPath))
+        {
+            return Task.FromResult(false);
+        }
+
+        string normalizedRoot;
+        try
+        {
+            normalizedRoot = Path.GetFullPath(modsRootPath.Trim());
+        }
+        catch
+        {
+            return Task.FromResult(false);
+        }
+
+        try
+        {
+            using var connection = OpenConnection();
+            var count = connection.ExecuteScalar<int>(
+                """
+                SELECT COUNT(1)
+                FROM PackageIndexCache
+                WHERE ModsRootPath = @ModsRootPath;
+                """,
+                new { ModsRootPath = normalizedRoot });
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(count > 0);
+        }
+        catch
+        {
+            return Task.FromResult(false);
+        }
     }
 
     public async Task<PackageIndexSnapshot> GetSnapshotAsync(
@@ -260,12 +440,29 @@ public sealed class PackageIndexCache : IPackageIndexCache
             Detail = "Indexing packages..."
         });
 
+        var buildOptions = new DbpfCatalogBuildOptions
+        {
+            SupportedInstanceTypes = KnownResourceTypes.Supported,
+            Progress = progress is null
+                ? null
+                : new Progress<DbpfCatalogBuildProgress>(update =>
+                {
+                    var total = Math.Max(update.TotalPackages, 0);
+                    var completed = total == 0
+                        ? 0
+                        : Math.Clamp(update.CompletedPackages, 0, total);
+                    progress.Report(new TrayDependencyExportProgress
+                    {
+                        Stage = TrayDependencyExportStage.IndexingPackages,
+                        Percent = ProgressScale.Scale(5, 35, completed, total),
+                        Detail = $"Indexing packages... {completed}/{total}"
+                    });
+                })
+        };
+
         var catalog = await _packageCatalog.BuildSnapshotAsync(
             normalizedRoot,
-            new DbpfCatalogBuildOptions
-            {
-                SupportedInstanceTypes = KnownResourceTypes.Supported
-            },
+            buildOptions,
             cancellationToken);
 
         var packages = catalog.Packages
@@ -759,38 +956,71 @@ internal sealed class TrayBundleLoader
         List<TrayDependencyIssue> issues,
         out TrayFileBundle bundle)
     {
-        var trayItems = sourceFilePaths
-            .Where(path => string.Equals(Path.GetExtension(path), ".trayitem", StringComparison.OrdinalIgnoreCase))
+        var normalizedSourcePaths = sourceFilePaths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        if (trayItems.Length != 1)
+        if (normalizedSourcePaths.Length == 0)
         {
             issues.Add(new TrayDependencyIssue
             {
                 Severity = TrayDependencyIssueSeverity.Error,
                 Kind = TrayDependencyIssueKind.TrayParseError,
-                Message = ".trayitem file is missing or duplicated."
+                Message = "No tray source files were provided for export parsing."
             });
             bundle = new TrayFileBundle();
             return false;
         }
 
+        var trayItems = FilterByExtension(normalizedSourcePaths, ".trayitem");
+        var hhiPaths = FilterByExtension(normalizedSourcePaths, ".hhi");
+        var sgiPaths = FilterByExtension(normalizedSourcePaths, ".sgi");
+        var householdBinaryPaths = FilterByExtension(normalizedSourcePaths, ".householdbinary");
+        var blueprintPaths = FilterByExtension(normalizedSourcePaths, ".blueprint", ".bpi");
+        var roomPaths = FilterByExtension(normalizedSourcePaths, ".room", ".rmi");
+
+        if (trayItems.Length == 0)
+        {
+            issues.Add(new TrayDependencyIssue
+            {
+                Severity = TrayDependencyIssueSeverity.Warning,
+                Kind = TrayDependencyIssueKind.MissingReference,
+                Message = ".trayitem file is missing; continuing with auxiliary tray files."
+            });
+        }
+
         bundle = new TrayFileBundle
         {
-            TrayItemPath = trayItems[0],
-            HhiPath = sourceFilePaths.FirstOrDefault(path => string.Equals(Path.GetExtension(path), ".hhi", StringComparison.OrdinalIgnoreCase)),
-            SgiPaths = sourceFilePaths
-                .Where(path => string.Equals(Path.GetExtension(path), ".sgi", StringComparison.OrdinalIgnoreCase))
-                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-                .ToArray(),
-            HouseholdBinaryPath = sourceFilePaths.FirstOrDefault(path => string.Equals(Path.GetExtension(path), ".householdbinary", StringComparison.OrdinalIgnoreCase)),
-            BlueprintPath = sourceFilePaths.FirstOrDefault(path =>
-                string.Equals(Path.GetExtension(path), ".blueprint", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(Path.GetExtension(path), ".bpi", StringComparison.OrdinalIgnoreCase)),
-            RoomPath = sourceFilePaths.FirstOrDefault(path =>
-                string.Equals(Path.GetExtension(path), ".room", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(Path.GetExtension(path), ".rmi", StringComparison.OrdinalIgnoreCase))
+            TrayItemPaths = trayItems,
+            HhiPaths = hhiPaths,
+            SgiPaths = sgiPaths,
+            HouseholdBinaryPaths = householdBinaryPaths,
+            BlueprintPaths = blueprintPaths,
+            RoomPaths = roomPaths
         };
         return true;
+    }
+
+    private static string[] FilterByExtension(
+        IReadOnlyList<string> sourceFilePaths,
+        params string[] extensions)
+    {
+        return sourceFilePaths
+            .Where(path =>
+            {
+                var extension = Path.GetExtension(path);
+                for (var index = 0; index < extensions.Length; index++)
+                {
+                    if (string.Equals(extension, extensions[index], StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            })
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 }
 
@@ -802,17 +1032,12 @@ internal sealed class TraySearchExtractor
         var buildIds = new HashSet<ulong>();
         var resourceKeys = new HashSet<TrayResourceKey>();
 
-        ScanFile(bundle.TrayItemPath, issues, householdIds, resourceKeys);
-        ScanFile(bundle.HhiPath, issues, householdIds, resourceKeys);
-
-        foreach (var sgiPath in bundle.SgiPaths)
-        {
-            ScanFile(sgiPath, issues, householdIds, resourceKeys);
-        }
-
-        ScanFile(bundle.HouseholdBinaryPath, issues, householdIds, resourceKeys);
-        ScanFile(bundle.BlueprintPath, issues, buildIds, resourceKeys);
-        ScanFile(bundle.RoomPath, issues, buildIds, resourceKeys);
+        ScanFiles(bundle.TrayItemPaths, issues, householdIds, resourceKeys);
+        ScanFiles(bundle.HhiPaths, issues, householdIds, resourceKeys);
+        ScanFiles(bundle.SgiPaths, issues, householdIds, resourceKeys);
+        ScanFiles(bundle.HouseholdBinaryPaths, issues, householdIds, resourceKeys);
+        ScanFiles(bundle.BlueprintPaths, issues, buildIds, resourceKeys);
+        ScanFiles(bundle.RoomPaths, issues, buildIds, resourceKeys);
 
         var householdArray = householdIds.OrderBy(value => value).ToArray();
         var buildArray = buildIds.OrderBy(value => value).ToArray();
@@ -884,6 +1109,18 @@ internal sealed class TraySearchExtractor
                 FilePath = path,
                 Message = $"Failed to parse tray file: {ex.Message}"
             });
+        }
+    }
+
+    private static void ScanFiles(
+        IReadOnlyList<string> paths,
+        List<TrayDependencyIssue> issues,
+        HashSet<ulong> ids,
+        HashSet<TrayResourceKey> resourceKeys)
+    {
+        foreach (var path in paths)
+        {
+            ScanFile(path, issues, ids, resourceKeys);
         }
     }
 }

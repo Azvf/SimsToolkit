@@ -13,11 +13,6 @@ public sealed class MergeInputValidator : IActionInputValidator<MergeInput>
 
     public bool TryValidate(MergeInput input, out string error)
     {
-        if (!ValidationHelpers.ValidateScriptPath(input.ScriptPath, out error))
-        {
-            return false;
-        }
-
         if (input.MergeSourcePaths.Count == 0)
         {
             error = "Merge action requires at least one source path.";

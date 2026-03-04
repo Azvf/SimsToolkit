@@ -1,54 +1,45 @@
-# Bottom-Layer Modularization Plan
+# Modularization Status and Next Steps
 
-## Current Baseline
-- Execution pipeline is already modular: `Validator -> CLI Mapper -> Execution Strategy -> Coordinator`.
-- Action behavior is modularized by `IActionModule` + `ActionModuleRegistry`.
-- Main bottleneck was boundary coupling: modules depended on concrete panel ViewModels.
+## 1. Baseline (Current)
 
-## Phase 1 (Completed)
-- Introduced module state contracts in `Application/Modules/ActionModuleStateContracts.cs`.
-- Updated each `*ActionModule` to depend on state interfaces instead of concrete panel classes.
-- Updated panel ViewModels to implement those contracts.
+The current structure is already modularized around layered boundaries:
 
-Result:
-- Application module layer no longer requires concrete UI implementation types.
-- Easier to swap panel implementations and create lightweight test doubles.
+* `Presentation`: panel/view-model state + UI controllers.
+* `Application`: planning, validation, execution contracts, coordinators.
+* `Infrastructure`: adapters, persistence, OS/file/hash implementations.
 
-## Phase 2 (Recommended Next)
-- Split `MainWindowViewModel` by responsibility:
-  - Execution orchestration
-  - Tray preview paging/dashboard state
-  - Validation debounce and command state refresh
-  - Settings capture/apply
-- Keep one facade VM for binding, but move logic to dedicated collaborators.
+Execution is centered on `ToolkitActionPlanner` + `ExecutionCoordinator` + feature services.
 
-### Phase 2 Progress
-- Added `Application/Settings/MainWindowSettingsProjection` and moved settings capture/apply projection logic out of `MainWindowViewModel`.
-- `MainWindowViewModel` now delegates settings projection and module load/save orchestration to this service.
+---
 
-## Phase 3 (Recommended Next)
-- Introduce explicit use-case services in `Application`:
-  - `IToolkitExecutionUseCase`
-  - `ITrayPreviewUseCase`
-  - `ISettingsProjectionService`
-- VM becomes a thin adapter: bind UI state + dispatch commands + display results.
+## 2. Completed Work
 
-### Phase 3 Progress
-- Added `Application/Execution/MainWindowPlanBuilder` to encapsulate:
-  - Shared options parsing
-  - Global execution option assembly
-  - Toolkit CLI plan building
-  - Tray preview input plan building
-- `MainWindowViewModel` now delegates plan construction to this service.
-- Added execution runners:
-  - `IToolkitExecutionRunner` / `ToolkitExecutionRunner`
-  - `ITrayPreviewRunner` / `TrayPreviewRunner`
-- `MainWindowViewModel` now delegates coordinator invocation and exception-to-status translation to runners.
+### 2.1 Boundary Cleanup
+* Removed legacy routing/strategy artifacts from active architecture.
+* Added architecture tests to prevent reintroduction of forbidden legacy types.
 
-## Phase 4 (Optional Hardening)
-- Add contract-level tests for each module state interface.
-- Add architecture guard tests (no `Application/*` dependency on `ViewModels/*` concrete types).
-- Add structured error/result objects to reduce string-based error propagation.
+### 2.2 State Contract Isolation
+* Module state interfaces are used across layer boundaries instead of concrete UI types.
+* Presentation layer maps concrete panel VMs to module state contracts via DI.
 
-### Phase 4 Progress
-- Added architecture boundary guard test in `SimsModDesktop.Tests/ArchitectureBoundaryTests.cs`.
+### 2.3 Execution Consolidation
+* `Flatten/Normalize/Merge/Organize` consolidated under `UnifiedFileTransformationEngine`.
+* `FindDuplicates` executed in-process with shared file/hash services.
+
+---
+
+## 3. Remaining Modularization Targets
+
+1. Reduce `MainWindowViewModel` orchestration weight by moving more flows into focused coordinators/services.
+2. Replace current `NoOp*UseCase` placeholders with real use-case implementations (or remove unused seams).
+3. Standardize action result contracts across toolkit, tray, save, and mod-index flows.
+4. Continue splitting large presentation controllers where responsibilities overlap.
+
+---
+
+## 4. Recommended Sequence
+
+1. Finalize use-case extraction for high-traffic paths (toolkit execution, tray preview, mod index).
+2. Introduce explicit result envelopes per flow and remove stringly-typed status propagation.
+3. Add contract tests for each module state interface and planner plan builder path.
+4. Keep architecture guard tests updated as new layers/services are introduced.

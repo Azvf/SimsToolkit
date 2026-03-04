@@ -52,6 +52,14 @@ public sealed class DbpfCatalogBuildOptions
     public bool EnablePersistentCache { get; init; } = true;
     public string? CacheFilePath { get; init; }
     public IReadOnlyCollection<uint>? SupportedInstanceTypes { get; init; }
+    public IProgress<DbpfCatalogBuildProgress>? Progress { get; init; }
+}
+
+public sealed class DbpfCatalogBuildProgress
+{
+    public int TotalPackages { get; init; }
+    public int CompletedPackages { get; init; }
+    public int CachedPackages { get; init; }
 }
 
 public sealed class DbpfCatalogIssue

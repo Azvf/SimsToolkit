@@ -1,3 +1,5 @@
+using System.Collections.ObjectModel;
+using System.ComponentModel;
 using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.Presentation.ViewModels.Infrastructure;
@@ -7,12 +9,34 @@ namespace SimsModDesktop.Presentation.ViewModels.Shell;
 
 public sealed class ShellSettingsController : ObservableObject
 {
+    private static readonly DebugToggleDefinition[] DebugToggleDefinitions =
+    [
+        new(
+            DebugConfigKeys.StartupTrayCacheWarmupEnabled,
+            "Startup Tray Cache Warmup",
+            "Build tray dependency package index on startup when no local cache exists.",
+            DefaultValue: true),
+        new(
+            DebugConfigKeys.StartupTrayCacheWarmupShowBanner,
+            "Warmup Progress Banner",
+            "Show startup warmup progress panel and status text in Shell.",
+            DefaultValue: true),
+        new(
+            DebugConfigKeys.StartupTrayCacheWarmupVerboseLog,
+            "Warmup Verbose Log",
+            "Write warmup progress checkpoints into the toolkit log.",
+            DefaultValue: true)
+    ];
+
     private readonly MainWindowViewModel _workspaceVm;
     private readonly SaveWorkspaceViewModel _savesVm;
     private readonly IFileDialogService _fileDialogService;
     private readonly ISettingsStore _settingsStore;
+    private readonly IDebugConfigStore _debugConfigStore;
     private readonly IAppThemeService _appThemeService;
     private readonly ITS4PathDiscoveryService _pathDiscovery;
+    private readonly Dictionary<string, DebugConfigToggleItemViewModel> _debugConfigItemsByKey =
+        new(StringComparer.OrdinalIgnoreCase);
 
     private bool _enableLaunchGame = true;
     private string _requestedTheme = "Dark";
@@ -31,6 +55,7 @@ public sealed class ShellSettingsController : ObservableObject
         SaveWorkspaceViewModel savesVm,
         IFileDialogService fileDialogService,
         ISettingsStore settingsStore,
+        IDebugConfigStore debugConfigStore,
         IAppThemeService appThemeService,
         ITS4PathDiscoveryService pathDiscovery)
     {
@@ -38,9 +63,15 @@ public sealed class ShellSettingsController : ObservableObject
         _savesVm = savesVm;
         _fileDialogService = fileDialogService;
         _settingsStore = settingsStore;
+        _debugConfigStore = debugConfigStore;
         _appThemeService = appThemeService;
         _pathDiscovery = pathDiscovery;
+
+        DebugConfigItems = new ObservableCollection<DebugConfigToggleItemViewModel>();
+        InitializeDebugConfigItems();
     }
+
+    public ObservableCollection<DebugConfigToggleItemViewModel> DebugConfigItems { get; }
 
     public bool EnableLaunchGame
     {
@@ -188,6 +219,9 @@ public sealed class ShellSettingsController : ObservableObject
     public bool IsDerivedPathsReadOnly => !string.IsNullOrWhiteSpace(Ts4RootPath);
     public bool IsDarkThemeSelected => string.Equals(RequestedTheme, "Dark", StringComparison.OrdinalIgnoreCase);
     public bool IsLightThemeSelected => string.Equals(RequestedTheme, "Light", StringComparison.OrdinalIgnoreCase);
+    public bool EnableStartupTrayCacheWarmup => GetDebugToggleValue(DebugConfigKeys.StartupTrayCacheWarmupEnabled);
+    public bool ShowStartupTrayCacheWarmupBanner => GetDebugToggleValue(DebugConfigKeys.StartupTrayCacheWarmupShowBanner);
+    public bool EnableStartupTrayCacheWarmupVerboseLog => GetDebugToggleValue(DebugConfigKeys.StartupTrayCacheWarmupVerboseLog);
 
     public async Task InitializeAsync()
     {
@@ -254,6 +288,7 @@ public sealed class ShellSettingsController : ObservableObject
         settings.Saves = _savesVm.ToSettings();
 
         await _settingsStore.SaveAsync(settings);
+        await _debugConfigStore.SaveAsync(BuildDebugConfigEntries());
     }
 
     public async Task BrowseTs4RootAsync()
@@ -279,6 +314,17 @@ public sealed class ShellSettingsController : ObservableObject
         TrayPath = settings.GameLaunch.TrayPath;
         SavesPath = settings.GameLaunch.SavesPath;
         Ts4RootPath = settings.GameLaunch.Ts4RootPath;
+        var debugConfig = await _debugConfigStore.LoadAsync();
+        ApplyDebugConfig(debugConfig);
+        await _debugConfigStore.EnsureTemplateAsync(BuildDebugConfigTemplateEntries());
+    }
+
+    public void ResetDebugConfigToDefaults()
+    {
+        foreach (var item in DebugConfigItems)
+        {
+            item.ResetToDefault();
+        }
     }
 
     private void ApplyDerivedPathsFromRoot()
@@ -385,4 +431,108 @@ public sealed class ShellSettingsController : ObservableObject
             NormalizePath(right),
             StringComparison.OrdinalIgnoreCase);
     }
+
+    private void InitializeDebugConfigItems()
+    {
+        DebugConfigItems.Clear();
+        _debugConfigItemsByKey.Clear();
+
+        foreach (var definition in DebugToggleDefinitions)
+        {
+            var item = new DebugConfigToggleItemViewModel(
+                definition.Key,
+                definition.DisplayName,
+                definition.Description,
+                definition.DefaultValue);
+            item.PropertyChanged += OnDebugConfigItemPropertyChanged;
+            DebugConfigItems.Add(item);
+            _debugConfigItemsByKey[definition.Key] = item;
+        }
+    }
+
+    private void ApplyDebugConfig(IReadOnlyDictionary<string, string>? valueMap)
+    {
+        valueMap ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var definition in DebugToggleDefinitions)
+        {
+            if (!_debugConfigItemsByKey.TryGetValue(definition.Key, out var item))
+            {
+                continue;
+            }
+
+            if (valueMap.TryGetValue(definition.Key, out var rawValue) &&
+                bool.TryParse(rawValue, out var parsed))
+            {
+                item.Value = parsed;
+                continue;
+            }
+
+            item.Value = definition.DefaultValue;
+        }
+    }
+
+    private IReadOnlyDictionary<string, string> BuildDebugConfigEntries()
+    {
+        return DebugConfigItems
+            .OrderBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                item => item.Key,
+                item => item.Value ? bool.TrueString : bool.FalseString,
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    private IReadOnlyList<DebugConfigTemplateEntry> BuildDebugConfigTemplateEntries()
+    {
+        return DebugToggleDefinitions
+            .OrderBy(definition => definition.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(definition => new DebugConfigTemplateEntry(
+                definition.Key,
+                definition.DefaultValue ? bool.TrueString : bool.FalseString,
+                definition.Description))
+            .ToList();
+    }
+
+    private bool GetDebugToggleValue(string key)
+    {
+        if (_debugConfigItemsByKey.TryGetValue(key, out var item))
+        {
+            return item.Value;
+        }
+
+        for (var index = 0; index < DebugToggleDefinitions.Length; index++)
+        {
+            if (string.Equals(DebugToggleDefinitions[index].Key, key, StringComparison.OrdinalIgnoreCase))
+            {
+                return DebugToggleDefinitions[index].DefaultValue;
+            }
+        }
+
+        return false;
+    }
+
+    private void OnDebugConfigItemPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (!string.Equals(e.PropertyName, nameof(DebugConfigToggleItemViewModel.Value), StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        OnPropertyChanged(nameof(EnableStartupTrayCacheWarmup));
+        OnPropertyChanged(nameof(ShowStartupTrayCacheWarmupBanner));
+        OnPropertyChanged(nameof(EnableStartupTrayCacheWarmupVerboseLog));
+    }
+
+    private static class DebugConfigKeys
+    {
+        public const string StartupTrayCacheWarmupEnabled = "startup.tray_cache_warmup.enabled";
+        public const string StartupTrayCacheWarmupShowBanner = "startup.tray_cache_warmup.show_banner";
+        public const string StartupTrayCacheWarmupVerboseLog = "startup.tray_cache_warmup.verbose_log";
+    }
+
+    private sealed record DebugToggleDefinition(
+        string Key,
+        string DisplayName,
+        string Description,
+        bool DefaultValue);
 }

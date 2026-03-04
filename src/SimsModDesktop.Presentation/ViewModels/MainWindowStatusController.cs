@@ -12,6 +12,11 @@ public sealed class MainWindowStatusController : ObservableObject
     private string _progressMessage = string.Empty;
     private string _logText = string.Empty;
 
+    public MainWindowStatusController()
+    {
+        PersistentUiLog.ResetIfExists();
+    }
+
     public string StatusMessage
     {
         get => _statusMessage;
@@ -53,11 +58,13 @@ public sealed class MainWindowStatusController : ObservableObject
     {
         _logWriter.GetStringBuilder().Clear();
         LogText = string.Empty;
+        PersistentUiLog.Append("MainWindow", "[log-cleared]");
     }
 
     public void AppendLog(string message)
     {
         _logWriter.WriteLine(message);
         LogText = _logWriter.ToString();
+        PersistentUiLog.Append("MainWindow", message);
     }
 }

@@ -22,7 +22,6 @@ public sealed class MainWindowSettingsProjection : IMainWindowSettingsProjection
         return new MainWindowResolvedSettings
         {
             UiLanguageCode = string.IsNullOrWhiteSpace(settings.UiLanguageCode) ? "en-US" : settings.UiLanguageCode.Trim(),
-            ScriptPath = settings.ScriptPath,
             WhatIf = settings.WhatIf,
             ModPreview = CloneModPreview(settings.ModPreview),
             SharedFileOps = CloneShared(settings.SharedFileOps),

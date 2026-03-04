@@ -15,7 +15,6 @@ public sealed class JsonSettingsStoreTests
             var store = new JsonSettingsStore(path);
             var settings = new AppSettings
             {
-                ScriptPath = "C:\\tools\\sims-mod-cli.ps1",
                 SelectedWorkspace = AppWorkspace.TrayPreview,
                 SelectedAction = SimsAction.FindDuplicates,
                 WhatIf = true
@@ -24,7 +23,6 @@ public sealed class JsonSettingsStoreTests
             await store.SaveAsync(settings);
             var loaded = await store.LoadAsync();
 
-            Assert.Equal(settings.ScriptPath, loaded.ScriptPath);
             Assert.Equal(settings.SelectedWorkspace, loaded.SelectedWorkspace);
             Assert.Equal(settings.SelectedAction, loaded.SelectedAction);
             Assert.True(loaded.WhatIf);
@@ -45,8 +43,8 @@ public sealed class JsonSettingsStoreTests
         {
             var store = new JsonSettingsStore(path);
 
-            await store.SaveAsync(new AppSettings { ScriptPath = "C:\\tools\\a.ps1" });
-            await store.SaveAsync(new AppSettings { ScriptPath = "C:\\tools\\b.ps1" });
+            await store.SaveAsync(new AppSettings { UiLanguageCode = "en-US" });
+            await store.SaveAsync(new AppSettings { UiLanguageCode = "zh-CN" });
 
             var leftovers = Directory
                 .GetFiles(tempDir.FullName, "settings.json.*.tmp", SearchOption.TopDirectoryOnly);

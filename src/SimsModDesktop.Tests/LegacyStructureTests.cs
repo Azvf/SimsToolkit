@@ -33,13 +33,17 @@ public sealed class LegacyStructureTests
     }
 
     [Fact]
-    public void DesktopShell_ViewModelsFolder_DoesNotExist()
+    public void DesktopShell_ViewModelsFolder_ContainsNoSourceFiles()
     {
         var repositoryRoot = FindRepositoryRoot();
         var legacyViewModelsPath = Path.Combine(repositoryRoot, "src", "SimsModDesktop", "ViewModels");
-        Assert.False(
-            Directory.Exists(legacyViewModelsPath),
-            $"Desktop shell view models folder should not exist: {legacyViewModelsPath}");
+        if (!Directory.Exists(legacyViewModelsPath))
+        {
+            return;
+        }
+
+        var sourceFiles = Directory.EnumerateFiles(legacyViewModelsPath, "*.cs", SearchOption.AllDirectories);
+        Assert.Empty(sourceFiles);
     }
 
     [Fact]

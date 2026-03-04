@@ -14,8 +14,6 @@ internal sealed class MainWindowLifecycleHost
     public required Action<bool> SetIsInitialized { get; init; }
     public required Func<string> GetSelectedLanguageCode { get; init; }
     public required Action<string> SetSelectedLanguageCode { get; init; }
-    public required Func<string> GetScriptPath { get; init; }
-    public required Action<string> SetScriptPath { get; init; }
     public required Func<bool> GetWhatIf { get; init; }
     public required Action<bool> SetWhatIf { get; init; }
     public required Func<SimsAction> GetSelectedAction { get; init; }
@@ -29,7 +27,6 @@ internal sealed class MainWindowLifecycleHost
     public required Func<bool> GetIsToolkitAdvancedOpen { get; init; }
     public required Action<bool> SetIsToolkitAdvancedOpen { get; init; }
     public required IReadOnlyList<SimsAction> AvailableToolkitActions { get; init; }
-    public required Func<string> ResolveFixedScriptPath { get; init; }
     public required Action ClearTrayPreview { get; init; }
     public required Action CancelTrayPreviewThumbnailLoading { get; init; }
     public required Action RefreshValidation { get; init; }

@@ -13,11 +13,6 @@ public sealed class FindDupInputValidator : IActionInputValidator<FindDupInput>
 
     public bool TryValidate(FindDupInput input, out string error)
     {
-        if (!ValidationHelpers.ValidateScriptPath(input.ScriptPath, out error))
-        {
-            return false;
-        }
-
         var rootPath = ValidationHelpers.ToNullIfWhiteSpace(input.FindDupRootPath);
         if (string.IsNullOrWhiteSpace(rootPath))
         {

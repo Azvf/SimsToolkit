@@ -117,6 +117,7 @@ public sealed partial class MainWindowViewModel
                 return;
             case nameof(MainWindowTrayPreviewSelectionController.DetailItem):
                 OnPropertyChanged(nameof(TrayPreviewDetailItem));
+                OnPropertyChanged(nameof(TrayPreviewDetailItemSafe));
                 OnPropertyChanged(nameof(IsTrayPreviewDetailVisible));
                 OnPropertyChanged(nameof(IsTrayPreviewDetailDescriptionEmpty));
                 OnPropertyChanged(nameof(IsTrayPreviewDetailOverviewEmpty));

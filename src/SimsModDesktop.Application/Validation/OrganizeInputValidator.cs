@@ -6,6 +6,7 @@ public sealed class OrganizeInputValidator : IActionInputValidator<OrganizeInput
 {
     public bool TryValidate(OrganizeInput input, out string error)
     {
-        return ValidationHelpers.ValidateScriptPath(input.ScriptPath, out error);
+        error = string.Empty;
+        return true;
     }
 }

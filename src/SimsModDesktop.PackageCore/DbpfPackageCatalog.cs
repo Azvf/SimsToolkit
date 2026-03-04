@@ -38,6 +38,12 @@ public sealed class DbpfPackageCatalog : IDbpfPackageCatalog
         var indexes = new DbpfPackageIndex[metadata.Length];
         var issues = new ConcurrentBag<DbpfCatalogIssue>();
         var pending = new List<(int Index, PackageFileMetadata Metadata)>();
+        var totalPackages = metadata.Length;
+        var reportStep = Math.Max(1, totalPackages / 100);
+        var cachedPackageCount = 0;
+        var completedPackageCount = 0;
+
+        Report(0);
 
         for (var i = 0; i < metadata.Length; i++)
         {
@@ -47,6 +53,8 @@ public sealed class DbpfPackageCatalog : IDbpfPackageCatalog
                 cachedPackages.TryGetValue(item.CacheKey, out var cached))
             {
                 indexes[i] = cached;
+                cachedPackageCount++;
+                Report(Interlocked.Increment(ref completedPackageCount));
                 continue;
             }
 
@@ -82,9 +90,15 @@ public sealed class DbpfPackageCatalog : IDbpfPackageCatalog
                         TypeBuckets = new Dictionary<uint, DbpfTypeBucket>().ToFrozenDictionary()
                     };
                 }
+                finally
+                {
+                    Report(Interlocked.Increment(ref completedPackageCount));
+                }
 
                 return ValueTask.CompletedTask;
             });
+
+        Report(totalPackages);
 
         if (options.EnablePersistentCache)
         {
@@ -130,6 +144,32 @@ public sealed class DbpfPackageCatalog : IDbpfPackageCatalog
             SupportedInstanceIndex = Freeze(supported),
             Issues = issues.OrderBy(issue => issue.FilePath, StringComparer.OrdinalIgnoreCase).ToArray()
         };
+
+        void Report(int currentCompleted)
+        {
+            if (options.Progress is null)
+            {
+                return;
+            }
+
+            if (totalPackages > 0 &&
+                currentCompleted != totalPackages &&
+                currentCompleted != 0 &&
+                currentCompleted % reportStep != 0)
+            {
+                return;
+            }
+
+            var completed = totalPackages <= 0
+                ? 0
+                : Math.Clamp(currentCompleted, 0, totalPackages);
+            options.Progress.Report(new DbpfCatalogBuildProgress
+            {
+                TotalPackages = totalPackages,
+                CompletedPackages = completed,
+                CachedPackages = cachedPackageCount
+            });
+        }
     }
 
     private static string GetDefaultCacheFilePath()

@@ -47,7 +47,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private AppWorkspace _workspace = AppWorkspace.Toolkit;
     private SimsAction _selectedAction = SimsAction.Organize;
     private string _selectedLanguageCode = DefaultLanguageCode;
-    private string _scriptPath = string.Empty;
     private bool _whatIf;
     private string _validationSummaryText = string.Empty;
     private bool _hasValidationErrors;
@@ -431,44 +430,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             AppendLog("[ui] failed to show error dialog: " + ex.Message);
         }
-    }
-
-    private static string ResolveFixedScriptPath()
-    {
-        var root = FindToolkitRootDirectory();
-        if (string.IsNullOrWhiteSpace(root))
-        {
-            return string.Empty;
-        }
-
-        return Path.GetFullPath(Path.Combine(root, "sims-mod-cli.ps1"));
-    }
-
-    private static string? FindToolkitRootDirectory()
-    {
-        var startDirectories = new[]
-        {
-            new DirectoryInfo(Directory.GetCurrentDirectory()),
-            new DirectoryInfo(AppContext.BaseDirectory)
-        };
-
-        foreach (var start in startDirectories)
-        {
-            var directory = start;
-            for (var depth = 0; depth < 12 && directory is not null; depth++)
-            {
-                // Preferred markers at repo root.
-                if (File.Exists(Path.Combine(directory.FullName, "sims-mod-cli.ps1")) ||
-                    File.Exists(Path.Combine(directory.FullName, "SimsDesktopTools.sln")))
-                {
-                    return directory.FullName;
-                }
-
-                directory = directory.Parent;
-            }
-        }
-
-        return null;
     }
 
     private string L(string key) => _localization[key];

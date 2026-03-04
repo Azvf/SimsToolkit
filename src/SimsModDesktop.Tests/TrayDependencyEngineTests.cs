@@ -88,6 +88,22 @@ public sealed class TrayDependencyEngineTests
     }
 
     [Fact]
+    public async Task PackageIndexCache_HasPersistedSnapshotAsync_ReturnsTrueAfterSnapshotIsPersisted()
+    {
+        using var modsRoot = new TempDirectory("mods-persisted-check");
+        using var cacheRoot = new TempDirectory("pkg-cache-check");
+        var packagePath = Path.Combine(modsRoot.Path, "sample.package");
+        WritePackage(packagePath, KnownInstance, KnownResourceType, group: 0, resourceData: [1, 2, 3, 4]);
+
+        var cache = new PackageIndexCache(cacheRoot.Path);
+        Assert.False(await cache.HasPersistedSnapshotAsync(modsRoot.Path));
+
+        _ = await cache.GetSnapshotAsync(modsRoot.Path);
+
+        Assert.True(await cache.HasPersistedSnapshotAsync(modsRoot.Path));
+    }
+
+    [Fact]
     public async Task TrayDependencyExportService_ExportsTrayAndMatchedMods_WithoutS4ti()
     {
         using var trayRoot = new TempDirectory("tray-export");
@@ -127,6 +143,45 @@ public sealed class TrayDependencyEngineTests
     }
 
     [Fact]
+    public async Task TrayDependencyExportService_ScansAllBlueprintFiles_NotOnlyFirstFile()
+    {
+        using var trayRoot = new TempDirectory("tray-export-multi-blueprint");
+        using var modsRoot = new TempDirectory("mods-export-multi-blueprint");
+        using var exportRoot = new TempDirectory("out-export-multi-blueprint");
+
+        var trayItemPath = Path.Combine(trayRoot.Path, "0x1.trayitem");
+        WriteTrayItem(trayItemPath, 0x0102030405060708);
+
+        var blueprintAPath = Path.Combine(trayRoot.Path, "0x1_a.blueprint");
+        File.WriteAllBytes(blueprintAPath, [0x00, 0x01, 0x02, 0x03]);
+
+        var blueprintBPath = Path.Combine(trayRoot.Path, "0x1_b.blueprint");
+        WriteTrayItem(blueprintBPath, KnownInstance);
+
+        var packagePath = Path.Combine(modsRoot.Path, "resolved.package");
+        WritePackage(packagePath, KnownInstance, KnownResourceType, group: 0, resourceData: [9, 9, 9, 9]);
+
+        var service = new TrayDependencyExportService(new PackageIndexCache());
+        var request = new TrayDependencyExportRequest
+        {
+            ItemTitle = "Sample",
+            TrayItemKey = "0x1",
+            TrayRootPath = trayRoot.Path,
+            TraySourceFiles = [trayItemPath, blueprintAPath, blueprintBPath],
+            ModsRootPath = modsRoot.Path,
+            TrayExportRoot = Path.Combine(exportRoot.Path, "Sample_0x1", "Tray"),
+            ModsExportRoot = Path.Combine(exportRoot.Path, "Sample_0x1", "Mods")
+        };
+
+        var result = await service.ExportAsync(request);
+
+        Assert.True(result.Success);
+        Assert.Equal(3, result.CopiedTrayFileCount);
+        Assert.Equal(1, result.CopiedModFileCount);
+        Assert.True(File.Exists(Path.Combine(request.ModsExportRoot, "resolved.package")));
+    }
+
+    [Fact]
     public async Task TrayDependencyExportService_RunsExportPipelineOffCallerThread()
     {
         using var trayRoot = new TempDirectory("tray-export-async");
@@ -162,6 +217,48 @@ public sealed class TrayDependencyEngineTests
 
         Assert.True(result.Success);
         Assert.Equal(1, result.CopiedTrayFileCount);
+    }
+
+    [Fact]
+    public async Task TrayDependencyExportService_UsesPreloadedSnapshot_WhenProvided()
+    {
+        using var trayRoot = new TempDirectory("tray-export-preloaded");
+        using var modsRoot = new TempDirectory("mods-export-preloaded");
+        using var exportRoot = new TempDirectory("out-export-preloaded");
+
+        var trayItemPath = Path.Combine(trayRoot.Path, "0xpreload.trayitem");
+        WriteTrayItem(trayItemPath, KnownInstance);
+
+        WritePackage(
+            Path.Combine(modsRoot.Path, "resolved.package"),
+            KnownInstance,
+            KnownResourceType,
+            group: 0,
+            resourceData: [4, 3, 2, 1]);
+
+        var preloadedSnapshot = await new PackageIndexCache().GetSnapshotAsync(modsRoot.Path);
+        var service = new TrayDependencyExportService(new ThrowingPackageIndexCache());
+        var request = new TrayDependencyExportRequest
+        {
+            ItemTitle = "Sample",
+            TrayItemKey = "0xpreload",
+            TrayRootPath = trayRoot.Path,
+            TraySourceFiles = [trayItemPath],
+            ModsRootPath = modsRoot.Path,
+            TrayExportRoot = Path.Combine(exportRoot.Path, "Sample_0xpreload", "Tray"),
+            ModsExportRoot = Path.Combine(exportRoot.Path, "Sample_0xpreload", "Mods"),
+            PreloadedSnapshot = preloadedSnapshot
+        };
+
+        var progressEvents = new List<TrayDependencyExportProgress>();
+        var result = await service.ExportAsync(
+            request,
+            new Progress<TrayDependencyExportProgress>(progress => progressEvents.Add(progress)));
+
+        Assert.True(result.Success);
+        Assert.Equal(1, result.CopiedModFileCount);
+        Assert.Contains(progressEvents, progress => progress.Stage == TrayDependencyExportStage.IndexingPackages);
+        Assert.True(File.Exists(Path.Combine(request.ModsExportRoot, "resolved.package")));
     }
 
     [Fact]
@@ -466,6 +563,17 @@ public sealed class TrayDependencyEngineTests
             CancellationToken cancellationToken = default)
         {
             return _snapshotTask;
+        }
+    }
+
+    private sealed class ThrowingPackageIndexCache : IPackageIndexCache
+    {
+        public Task<PackageIndexSnapshot> GetSnapshotAsync(
+            string modsRootPath,
+            IProgress<TrayDependencyExportProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            throw new InvalidOperationException("GetSnapshotAsync should not be called when a preloaded snapshot is supplied.");
         }
     }
 

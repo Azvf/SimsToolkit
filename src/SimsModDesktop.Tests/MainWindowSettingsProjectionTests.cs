@@ -11,7 +11,6 @@ public sealed class MainWindowSettingsProjectionTests
         var settings = new AppSettings
         {
             UiLanguageCode = "zh-CN",
-            ScriptPath = @"C:\tools\sims-mod-cli.ps1",
             SelectedWorkspace = AppWorkspace.Toolkit,
             SelectedAction = SimsAction.TrayPreview,
             WhatIf = true,

@@ -34,7 +34,6 @@ public sealed class ExecutionCoordinatorTests
         var result = await coordinator.ExecuteAsync(
             new NormalizeInput
             {
-                ScriptPath = Path.Combine(tempDir.Path, "script.ps1"),
                 NormalizeRootPath = source
             },
             _ => { });
@@ -53,8 +52,6 @@ public sealed class ExecutionCoordinatorTests
         await File.WriteAllTextAsync(Path.Combine(root, "b.package"), "same");
         await File.WriteAllTextAsync(Path.Combine(root, "c.package"), "different");
         var csvPath = Path.Combine(tempDir.Path, "dups", "duplicates.csv");
-        var scriptPath = Path.Combine(tempDir.Path, "legacy.ps1");
-        await File.WriteAllTextAsync(scriptPath, "# legacy");
 
         var coordinator = new ExecutionCoordinator(
             new FakeTransformationEngine(),
@@ -67,7 +64,6 @@ public sealed class ExecutionCoordinatorTests
         var result = await coordinator.ExecuteAsync(
             new FindDupInput
             {
-                ScriptPath = scriptPath,
                 FindDupRootPath = root,
                 FindDupOutputCsv = csvPath,
                 FindDupRecurse = true,
@@ -98,8 +94,6 @@ public sealed class ExecutionCoordinatorTests
         var duplicate = Path.Combine(root, "b.package");
         await File.WriteAllTextAsync(keep, "same");
         await File.WriteAllTextAsync(duplicate, "same");
-        var scriptPath = Path.Combine(tempDir.Path, "legacy.ps1");
-        await File.WriteAllTextAsync(scriptPath, "# legacy");
 
         var fileOperations = new FakeFileOperationService();
         var coordinator = new ExecutionCoordinator(
@@ -112,7 +106,6 @@ public sealed class ExecutionCoordinatorTests
         var result = await coordinator.ExecuteAsync(
             new FindDupInput
             {
-                ScriptPath = scriptPath,
                 FindDupRootPath = root,
                 FindDupRecurse = true,
                 FindDupCleanup = true,

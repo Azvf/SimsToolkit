@@ -272,8 +272,37 @@
                 </ScrollViewer>
             </Border>
 
-            <Grid Grid.Column="1" MinHeight="0">
-                <Grid MinHeight="0">
+            <Grid Grid.Column="1"
+                  MinHeight="0"
+                  RowDefinitions="Auto,*"
+                  RowSpacing="10">
+                <Border Grid.Row="0"
+                        Classes="card-muted"
+                        Padding="12"
+                        IsVisible="{Binding IsTrayDependencyCacheWarmupVisible}">
+                    <StackPanel Spacing="6">
+                        <TextBlock Classes="settings-section-title" Text="{Binding TrayDependencyCacheWarmupTitle}" />
+                        <TextBlock Classes="helper-text"
+                                   Text="{Binding TrayDependencyCacheWarmupHint}"
+                                   TextWrapping="Wrap" />
+                        <ProgressBar Minimum="0"
+                                     Maximum="100"
+                                     Height="10"
+                                     IsIndeterminate="{Binding IsTrayDependencyCacheWarmupIndeterminate}"
+                                     Value="{Binding TrayDependencyCacheWarmupPercent}" />
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                            <TextBlock Classes="helper-text"
+                                       Text="{Binding TrayDependencyCacheWarmupDetail}"
+                                       TextWrapping="Wrap" />
+                            <TextBlock Grid.Column="1"
+                                       Classes="helper-text"
+                                       HorizontalAlignment="Right"
+                                       Text="{Binding TrayDependencyCacheWarmupPercentText}" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Grid Grid.Row="1" MinHeight="0">
                     <Border Classes="card" Padding="24" IsVisible="{Binding IsSavesVisible}">
                         <saves:SavesView DataContext="{Binding SavesVm}" />
                     </Border>
@@ -367,6 +396,55 @@
                                     <TextBlock VerticalAlignment="Center"
                                                Classes="helper-text"
                                                Text="{Binding CacheMaintenanceStatus}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Classes="settings-section" Padding="12">
+                            <StackPanel Spacing="10">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Classes="settings-section-title" Text="Debug Config Table" />
+                                    <TextBlock Classes="settings-section-description"
+                                               Text="Toggle internal behaviors without code changes. These options are saved to debug-config.ini." />
+                                </StackPanel>
+
+                                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
+                                    <TextBlock Classes="helper-text" Text="Option" />
+                                    <TextBlock Grid.Column="1" Classes="helper-text" HorizontalAlignment="Center" Text="Default" />
+                                    <TextBlock Grid.Column="2" Classes="helper-text" HorizontalAlignment="Center" Text="Current" />
+                                </Grid>
+
+                                <ItemsControl ItemsSource="{Binding DebugConfigItems}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="shell:DebugConfigToggleItemViewModel">
+                                            <Border Classes="card-muted" Padding="8">
+                                                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
+                                                    <StackPanel Spacing="2">
+                                                        <TextBlock FontWeight="SemiBold" Text="{Binding DisplayName}" />
+                                                        <TextBlock Classes="helper-text" Text="{Binding Description}" TextWrapping="Wrap" />
+                                                        <TextBlock Classes="helper-text" Text="{Binding Key}" />
+                                                    </StackPanel>
+                                                    <TextBlock Grid.Column="1"
+                                                               VerticalAlignment="Center"
+                                                               HorizontalAlignment="Center"
+                                                               Text="{Binding DefaultValueText}" />
+                                                    <CheckBox Grid.Column="2"
+                                                              VerticalAlignment="Center"
+                                                              HorizontalAlignment="Center"
+                                                              IsChecked="{Binding Value}" />
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <Button Classes="secondary"
+                                            Content="Reset Debug Config"
+                                            Command="{Binding ResetDebugConfigCommand}" />
+                                    <TextBlock VerticalAlignment="Center"
+                                               Classes="helper-text"
+                                               Text="Changes apply immediately where supported and persist on app close." />
                                 </StackPanel>
                             </StackPanel>
                         </Border>

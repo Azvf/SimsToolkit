@@ -35,6 +35,7 @@ public static class InfrastructureServiceRegistration
         services.AddSingleton<IConfigurationProvider, CrossPlatformConfigurationProvider>();
         services.AddSingleton<ILocalizationService, JsonLocalizationService>();
         services.AddSingleton<ISettingsStore, JsonSettingsStore>();
+        services.AddSingleton<IDebugConfigStore, IniDebugConfigStore>();
         services.AddSingleton<IAppThemeService, AppThemeService>();
 
         services.AddSingleton<IFileOperationService, CrossPlatformFileOperationService>();

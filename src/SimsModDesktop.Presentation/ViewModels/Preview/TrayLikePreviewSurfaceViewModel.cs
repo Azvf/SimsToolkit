@@ -18,6 +18,11 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
 {
     private const int InitialPriorityThumbnailCount = 12;
     private const int MaxConcurrentThumbnailLoads = 8;
+    private static readonly SimsTrayPreviewItem EmptyPreviewItem = new()
+    {
+        TrayItemKey = string.Empty,
+        PresetType = string.Empty
+    };
 
     private readonly ITrayPreviewCoordinator _trayPreviewCoordinator;
     private readonly ITrayThumbnailService _trayThumbnailService;
@@ -194,12 +199,14 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
             }
 
             OnPropertyChanged(nameof(SelectedPreviewItem));
+            OnPropertyChanged(nameof(SelectedPreviewItemSafe));
             OnPropertyChanged(nameof(HasSelectedPreviewItem));
             OnPropertyChanged(nameof(IsDetailPlaceholderVisible));
         }
     }
 
     public SimsTrayPreviewItem? SelectedPreviewItem => SelectedItem?.Item;
+    public SimsTrayPreviewItem SelectedPreviewItemSafe => SelectedPreviewItem ?? EmptyPreviewItem;
     public bool HasSelectedPreviewItem => SelectedPreviewItem is not null;
     public bool IsDetailPlaceholderVisible => !HasSelectedPreviewItem;
     public bool HasFooterTitle => !string.IsNullOrWhiteSpace(FooterTitle);

@@ -85,7 +85,6 @@ public sealed partial class MainWindowViewModel
     {
         return new ToolkitPlanningState
         {
-            ScriptPath = ScriptPath,
             WhatIf = WhatIf,
             SelectedAction = SelectedAction,
             SharedFileOps = new SharedFileOpsPlanState
@@ -113,5 +112,15 @@ public sealed partial class MainWindowViewModel
     private void AppendLog(string message)
     {
         ExecuteOnUi(() => _statusController.AppendLog(message));
+    }
+
+    public void AppendSystemLog(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        AppendLog(message);
     }
 }

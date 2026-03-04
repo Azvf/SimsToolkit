@@ -6,6 +6,7 @@ public sealed class NormalizeInputValidator : IActionInputValidator<NormalizeInp
 {
     public bool TryValidate(NormalizeInput input, out string error)
     {
-        return ValidationHelpers.ValidateScriptPath(input.ScriptPath, out error);
+        error = string.Empty;
+        return true;
     }
 }

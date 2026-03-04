@@ -28,8 +28,6 @@ public sealed class MainWindowViewModelInteractionTests
         var vm = CreateViewModel(execution, confirmation);
         await vm.InitializeAsync();
 
-        using var script = new TempFile("ps1");
-        vm.ScriptPath = script.Path;
         vm.SelectedAction = SimsAction.FindDuplicates;
         vm.FindDup.Cleanup = true;
         vm.WhatIf = false;
@@ -48,8 +46,6 @@ public sealed class MainWindowViewModelInteractionTests
         var vm = CreateViewModel(execution, confirmation);
         await vm.InitializeAsync();
 
-        using var script = new TempFile("ps1");
-        vm.ScriptPath = script.Path;
         vm.SelectedAction = SimsAction.FindDuplicates;
         vm.FindDup.Cleanup = true;
         vm.WhatIf = false;
@@ -68,8 +64,6 @@ public sealed class MainWindowViewModelInteractionTests
         var vm = CreateViewModel(execution, confirmation);
         await vm.InitializeAsync();
 
-        using var script = new TempFile("ps1");
-        vm.ScriptPath = script.Path;
         vm.SelectedAction = SimsAction.FindDuplicates;
         vm.FindDup.Cleanup = true;
         vm.WhatIf = true;
@@ -81,20 +75,12 @@ public sealed class MainWindowViewModelInteractionTests
     }
 
     [Fact]
-    public async Task ValidationState_UpdatesWithScriptPath()
+    public async Task ValidationState_DoesNotRequireScriptPath()
     {
         var vm = CreateViewModel(new FakeExecutionCoordinator(), new FakeConfirmationDialogService());
         await vm.InitializeAsync();
 
         vm.Workspace = AppWorkspace.Toolkit;
-        vm.ScriptPath = string.Empty;
-        InvokePrivateVoid(vm, "RefreshValidationNow");
-
-        Assert.True(vm.HasValidationErrors);
-        Assert.Contains("Script path is required", vm.ValidationSummaryText, StringComparison.OrdinalIgnoreCase);
-
-        using var script = new TempFile("ps1");
-        vm.ScriptPath = script.Path;
         InvokePrivateVoid(vm, "RefreshValidationNow");
 
         Assert.False(vm.HasValidationErrors);
@@ -102,7 +88,7 @@ public sealed class MainWindowViewModelInteractionTests
     }
 
     [Fact]
-    public async Task RunToolkitAsync_TrayDependencies_UsesInternalAnalysisWithoutScriptPath()
+    public async Task RunToolkitAsync_TrayDependencies_UsesInternalAnalysis()
     {
         var analysisService = new FakeTrayDependencyAnalysisService();
         var vm = CreateViewModel(
@@ -114,7 +100,6 @@ public sealed class MainWindowViewModelInteractionTests
         using var trayRoot = new TempDirectory();
         using var modsRoot = new TempDirectory();
         vm.SelectedAction = SimsAction.TrayDependencies;
-        vm.ScriptPath = string.Empty;
         vm.TrayDependencies.TrayPath = trayRoot.Path;
         vm.TrayDependencies.ModsPath = modsRoot.Path;
         vm.TrayDependencies.TrayItemKey = "0x123";
@@ -812,7 +797,7 @@ public sealed class MainWindowViewModelInteractionTests
                 recoveryController,
                 trayPreviewStateController,
                 trayPreviewSelectionController),
-            new MainWindowTrayExportController(effectiveTrayExportService),
+            new MainWindowTrayExportController(effectiveTrayExportService, new FakePackageIndexCache()),
             new MainWindowValidationController(toolkitActionPlanner),
             new MainWindowLifecycleController(
                 settingsPersistenceController,
@@ -877,6 +862,24 @@ public sealed class MainWindowViewModelInteractionTests
 
         Dispatcher.UIThread.RunJobs(null);
         Assert.True(condition());
+    }
+
+    private sealed class FakePackageIndexCache : IPackageIndexCache
+    {
+        public Task<PackageIndexSnapshot> GetSnapshotAsync(
+            string modsRootPath,
+            IProgress<TrayDependencyExportProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            var normalizedRoot = string.IsNullOrWhiteSpace(modsRootPath)
+                ? string.Empty
+                : Path.GetFullPath(modsRootPath.Trim());
+            return Task.FromResult(new PackageIndexSnapshot
+            {
+                ModsRootPath = normalizedRoot,
+                Packages = Array.Empty<IndexedPackageFile>()
+            });
+        }
     }
 
     private sealed class FakeExecutionCoordinator : IExecutionCoordinator
@@ -1161,25 +1164,6 @@ public sealed class MainWindowViewModelInteractionTests
 
         public void ResetMemoryCache(string? trayRootPath = null)
         {
-        }
-    }
-
-    private sealed class TempFile : IDisposable
-    {
-        public TempFile(string extension)
-        {
-            Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"{Guid.NewGuid():N}.{extension}");
-            File.WriteAllText(Path, "# temp");
-        }
-
-        public string Path { get; }
-
-        public void Dispose()
-        {
-            if (File.Exists(Path))
-            {
-                File.Delete(Path);
-            }
         }
     }
 

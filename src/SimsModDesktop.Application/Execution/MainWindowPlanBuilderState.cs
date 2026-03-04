@@ -3,7 +3,6 @@ namespace SimsModDesktop.Application.Execution;
 
 public sealed record ToolkitPlanningState
 {
-    public string ScriptPath { get; init; } = string.Empty;
     public bool WhatIf { get; init; }
     public SimsAction SelectedAction { get; init; } = SimsAction.Organize;
     public SharedFileOpsPlanState SharedFileOps { get; init; } = new();
