@@ -1,4 +1,6 @@
 using Dapper;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Application.Mods;
 using SimsModDesktop.Infrastructure.Persistence;
 
@@ -6,22 +8,31 @@ namespace SimsModDesktop.Infrastructure.Mods;
 
 internal sealed class SqliteModPackageInventoryService : IModPackageInventoryService
 {
-    private const int SchemaVersion = 1;
+    private const int SchemaVersion = 2;
     private readonly AppCacheDatabase _database;
+    private readonly ILogger<SqliteModPackageInventoryService> _logger;
 
     public SqliteModPackageInventoryService()
-        : this(new AppCacheDatabase())
+        : this(new AppCacheDatabase(), NullLogger<SqliteModPackageInventoryService>.Instance)
     {
     }
 
     public SqliteModPackageInventoryService(string cacheRootPath)
-        : this(new AppCacheDatabase(cacheRootPath))
+        : this(new AppCacheDatabase(cacheRootPath), NullLogger<SqliteModPackageInventoryService>.Instance)
     {
     }
 
-    private SqliteModPackageInventoryService(AppCacheDatabase database)
+    public SqliteModPackageInventoryService(ILogger<SqliteModPackageInventoryService> logger)
+        : this(new AppCacheDatabase(), logger)
+    {
+    }
+
+    private SqliteModPackageInventoryService(
+        AppCacheDatabase database,
+        ILogger<SqliteModPackageInventoryService> logger)
     {
         _database = database;
+        _logger = logger;
     }
 
     public Task<ModPackageInventoryRefreshResult> RefreshAsync(
@@ -31,6 +42,7 @@ internal sealed class SqliteModPackageInventoryService : IModPackageInventorySer
     {
         cancellationToken.ThrowIfCancellationRequested();
         ArgumentException.ThrowIfNullOrWhiteSpace(modsRoot);
+        var startedAt = DateTime.UtcNow;
 
         var normalizedRoot = Path.GetFullPath(modsRoot.Trim());
         var currentEntries = ScanEntries(normalizedRoot, progress, cancellationToken);
@@ -59,8 +71,7 @@ internal sealed class SqliteModPackageInventoryService : IModPackageInventorySer
                 continue;
             }
 
-            if (previous.FileLength == entry.FileLength &&
-                previous.LastWriteUtcTicks == entry.LastWriteUtcTicks &&
+            if (string.Equals(previous.PackageFingerprintKey, BuildPackageFingerprintKey(entry), StringComparison.Ordinal) &&
                 string.Equals(previous.PackageType, entry.PackageType, StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(previous.ScopeHint, entry.ScopeHint, StringComparison.OrdinalIgnoreCase))
             {
@@ -77,15 +88,51 @@ internal sealed class SqliteModPackageInventoryService : IModPackageInventorySer
             .ToArray();
 
         var inventoryVersion = DateTime.UtcNow.Ticks;
-        connection.Execute(
-            """
-            DELETE FROM ModPackageInventoryEntries
-            WHERE ModsRootPath = @ModsRootPath;
-            """,
-            new { ModsRootPath = normalizedRoot },
-            transaction);
+        foreach (var path in removed)
+        {
+            connection.Execute(
+                """
+                DELETE FROM ModPackageInventoryEntries
+                WHERE ModsRootPath = @ModsRootPath
+                  AND PackagePath = @PackagePath;
+                """,
+                new
+                {
+                    ModsRootPath = normalizedRoot,
+                    PackagePath = path
+                },
+                transaction);
+        }
 
-        foreach (var entry in currentEntries)
+        foreach (var entry in changed)
+        {
+            connection.Execute(
+                """
+                UPDATE ModPackageInventoryEntries
+                SET FileLength = @FileLength,
+                    LastWriteUtcTicks = @LastWriteUtcTicks,
+                    PackageType = @PackageType,
+                    ScopeHint = @ScopeHint,
+                    InventoryVersion = @InventoryVersion,
+                    PackageFingerprintKey = @PackageFingerprintKey
+                WHERE ModsRootPath = @ModsRootPath
+                  AND PackagePath = @StoredPackagePath;
+                """,
+                new
+                {
+                    ModsRootPath = normalizedRoot,
+                    StoredPackagePath = existingEntries[entry.PackagePath].PackagePath,
+                    entry.FileLength,
+                    entry.LastWriteUtcTicks,
+                    entry.PackageType,
+                    entry.ScopeHint,
+                    InventoryVersion = inventoryVersion,
+                    PackageFingerprintKey = BuildPackageFingerprintKey(entry)
+                },
+                transaction);
+        }
+
+        foreach (var entry in added)
         {
             connection.Execute(
                 """
@@ -96,7 +143,8 @@ internal sealed class SqliteModPackageInventoryService : IModPackageInventorySer
                     LastWriteUtcTicks,
                     PackageType,
                     ScopeHint,
-                    InventoryVersion
+                    InventoryVersion,
+                    PackageFingerprintKey
                 ) VALUES (
                     @ModsRootPath,
                     @PackagePath,
@@ -104,7 +152,8 @@ internal sealed class SqliteModPackageInventoryService : IModPackageInventorySer
                     @LastWriteUtcTicks,
                     @PackageType,
                     @ScopeHint,
-                    @InventoryVersion
+                    @InventoryVersion,
+                    @PackageFingerprintKey
                 );
                 """,
                 new
@@ -115,7 +164,8 @@ internal sealed class SqliteModPackageInventoryService : IModPackageInventorySer
                     entry.LastWriteUtcTicks,
                     entry.PackageType,
                     entry.ScopeHint,
-                    InventoryVersion = inventoryVersion
+                    InventoryVersion = inventoryVersion,
+                    PackageFingerprintKey = BuildPackageFingerprintKey(entry)
                 },
                 transaction);
         }
@@ -152,6 +202,15 @@ internal sealed class SqliteModPackageInventoryService : IModPackageInventorySer
             transaction);
 
         transaction.Commit();
+        _logger.LogInformation(
+            "modcache.inventory.delta ModsRoot={ModsRoot} InventoryVersion={InventoryVersion} PackageCount={PackageCount} AddedCount={AddedCount} ChangedCount={ChangedCount} RemovedCount={RemovedCount} ElapsedMs={ElapsedMs}",
+            normalizedRoot,
+            inventoryVersion,
+            currentEntries.Count,
+            added.Count,
+            changed.Count,
+            removed.Length,
+            (DateTime.UtcNow - startedAt).TotalMilliseconds);
 
         progress?.Report(new ModPackageInventoryRefreshProgress
         {
@@ -283,11 +342,15 @@ internal sealed class SqliteModPackageInventoryService : IModPackageInventorySer
                 PackageType TEXT NOT NULL,
                 ScopeHint TEXT NOT NULL,
                 InventoryVersion INTEGER NOT NULL,
+                PackageFingerprintKey TEXT NOT NULL,
                 PRIMARY KEY (ModsRootPath, PackagePath)
             );
 
             CREATE INDEX IF NOT EXISTS IX_ModPackageInventoryEntries_RootVersion
                 ON ModPackageInventoryEntries (ModsRootPath, InventoryVersion);
+
+            CREATE INDEX IF NOT EXISTS IX_ModPackageInventoryEntries_RootFingerprint
+                ON ModPackageInventoryEntries (ModsRootPath, PackageFingerprintKey);
             """);
 
         if (version != SchemaVersion)
@@ -357,6 +420,11 @@ internal sealed class SqliteModPackageInventoryService : IModPackageInventorySer
         return "All";
     }
 
+    private static string BuildPackageFingerprintKey(ModPackageInventoryEntry entry)
+    {
+        return $"{entry.FileLength}:{entry.LastWriteUtcTicks}";
+    }
+
     private static int ScaleProgress(int start, int end, int current, int total)
     {
         if (total <= 0)
@@ -375,5 +443,6 @@ internal sealed class SqliteModPackageInventoryService : IModPackageInventorySer
         public long LastWriteUtcTicks { get; set; }
         public string PackageType { get; set; } = string.Empty;
         public string ScopeHint { get; set; } = string.Empty;
+        public string PackageFingerprintKey { get; set; } = string.Empty;
     }
 }

@@ -105,6 +105,11 @@ Dependency injection is layered through:
 * Pull request review checklist for structural changes: `src/SimsModDesktop/docs/PullRequestChecklist.md`
 * Current page-level cache warmup sequence and timing diagrams: `src/SimsModDesktop/docs/CacheWarmupSequence.md`
 
+### 4.x Performance Planning Docs
+
+* [PerformanceOptimizationPlan.md](src/SimsModDesktop/docs/PerformanceOptimizationPlan.md)
+* [PerformanceOptimizationChecklist.md](src/SimsModDesktop/docs/PerformanceOptimizationChecklist.md)
+
 ---
 
 ## 6. Build and Test
