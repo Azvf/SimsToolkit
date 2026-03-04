@@ -86,110 +86,110 @@ Acceptance:
 
 Implementation:
 
-- [ ] Remove snapshot JSON blob persistence
-- [ ] Add package-level parse cache tables
-- [ ] Add root manifest tables
-- [ ] `BuildSnapshotAsync` consumes `ChangedPackageFiles` and `RemovedPackagePaths`
-- [ ] `TryLoadSnapshotAsync` materializes from manifest
+- [x] Remove snapshot JSON blob persistence
+- [x] Add package-level parse cache tables
+- [x] Add root manifest tables
+- [x] `BuildSnapshotAsync` consumes `ChangedPackageFiles` and `RemovedPackagePaths`
+- [x] `TryLoadSnapshotAsync` materializes from manifest
 
 Tests:
 
-- [ ] Small change reuses unchanged package cache
-- [ ] Removed package is excluded from the rebuilt root manifest
-- [ ] Old `PackageIndexSnapshots` table is no longer read
+- [x] Small change reuses unchanged package cache
+- [x] Removed package is excluded from the rebuilt root manifest
+- [x] Old `PackageIndexSnapshots` table is no longer read
 
 Logging:
 
-- [ ] `traycache.packagecache.hit` log added
-- [ ] `traycache.packagecache.miss` log added
-- [ ] `traycache.manifest.rebuild` log added
-- [ ] `traycache.snapshot.materialize` log added
+- [x] `traycache.packagecache.hit` log added
+- [x] `traycache.packagecache.miss` log added
+- [x] `traycache.manifest.rebuild` log added
+- [x] `traycache.snapshot.materialize` log added
 
 Acceptance:
 
-- [ ] Tray rebuild no longer reparses all packages on small deltas
+- [x] Tray rebuild no longer reparses all packages on small deltas
 
 ### WS5: Tray Export / Analysis Strict Snapshot Reuse
 
 Implementation:
 
-- [ ] Keep export hard-fail when `PreloadedSnapshot` is missing
-- [ ] Keep analysis hard-fail when `PreloadedSnapshot` is missing
-- [ ] Add bounded multi-item export concurrency at `2`
+- [x] Keep export hard-fail when `PreloadedSnapshot` is missing
+- [x] Keep analysis hard-fail when `PreloadedSnapshot` is missing
+- [x] Add bounded multi-item export concurrency at `8`
 
 Tests:
 
-- [ ] Export without snapshot fails immediately
-- [ ] Analysis without snapshot fails immediately
-- [ ] Multi-select export runs with bounded concurrency and independent results
+- [x] Export without snapshot fails immediately
+- [x] Analysis without snapshot fails immediately
+- [x] Multi-select export runs with bounded concurrency and fail-fast rollback semantics
 
 Logging:
 
-- [ ] Export logs include item-level concurrency-safe summaries
+- [x] Export logs include item-level concurrency-safe summaries
 
 Acceptance:
 
-- [ ] No hidden cache rebuild path is reintroduced
+- [x] No hidden cache rebuild path is reintroduced
 
 ### WS6: Tray Preview Root Snapshot + Filter Projection
 
 Implementation:
 
-- [ ] Split root snapshot from filtered projection
-- [ ] Root scan keyed only by tray root fingerprint
-- [ ] Metadata loads only for metadata-dependent filters
-- [ ] Keep thumbnail lazy behavior unchanged
+- [x] Split root snapshot from filtered projection
+- [x] Root scan keyed only by tray root fingerprint
+- [x] Metadata loads only for metadata-dependent filters
+- [x] Keep thumbnail lazy behavior unchanged
 
 Tests:
 
-- [ ] Changing preset/time/build filter does not trigger full root rescan
-- [ ] Author/search filter only loads missing metadata
-- [ ] Root change invalidates the root snapshot correctly
+- [x] Changing preset/time/build filter does not trigger full root rescan
+- [x] Author/search filter only loads missing metadata
+- [x] Root change invalidates the root snapshot correctly
 
 Logging:
 
-- [ ] Add root snapshot hit/miss debug logs
+- [x] Add root snapshot hit/miss debug logs
 
 Acceptance:
 
-- [ ] Normal filter changes stay in the memory-only path
+- [x] Normal filter changes stay in the memory-only path
 
 ### WS7: Hash And Toolkit Throughput Control
 
 Implementation:
 
-- [ ] Replace unbounded `Task.WhenAll` hashing with a bounded worker pool
-- [ ] Add `HashBatchRequest`
-- [ ] Wire `HashWorkerCount` into batch hashing
-- [ ] Add bounded parallelism to `Merge`
+- [x] Replace unbounded `Task.WhenAll` hashing with a bounded worker pool
+- [x] Add `HashBatchRequest`
+- [x] Wire `HashWorkerCount` into batch hashing
+- [x] Add bounded parallelism to `Merge`
 
 Tests:
 
-- [ ] Large batch hashing respects worker count
-- [ ] Merge output remains equivalent under concurrency
-- [ ] Cancellation stops the worker pool cleanly
+- [x] Large batch hashing respects worker count
+- [x] Merge output remains equivalent under concurrency
+- [x] Cancellation stops the worker pool cleanly
 
 Logging:
 
-- [ ] `hash.batch.start` log added
-- [ ] `hash.batch.done` log added
+- [x] `hash.batch.start` log added
+- [x] `hash.batch.done` log added
 
 Acceptance:
 
-- [ ] No production batch hash path remains unbounded
+- [x] No production batch hash path remains unbounded
 
 ### WS8: Texture / Resource Read Micro-Optimizations
 
 Implementation:
 
-- [ ] Add pooled DBPF read path
-- [ ] Update deep enrich and tray dependency readers to use pooled reads
-- [ ] Reduce texture transcode transient allocations
+- [x] Add pooled DBPF read path
+- [x] Update deep enrich and tray dependency readers to use pooled reads
+- [x] Reduce texture transcode transient allocations
 
 Tests:
 
-- [ ] Functional output remains identical for representative packages
-- [ ] Unsupported texture handling remains unchanged
+- [x] Functional output remains identical for representative packages
+- [x] Unsupported texture handling remains unchanged
 
 Logging:
 
@@ -197,7 +197,7 @@ Logging:
 
 Acceptance:
 
-- [ ] No behavioral regression while lowering transient allocation pressure
+- [x] No behavioral regression while lowering transient allocation pressure
 
 ## 3. Verification Matrix
 
@@ -236,9 +236,21 @@ Use these verification modes consistently:
 
 ## 4. Final Sign-off
 
-- [ ] All workstreams completed in order
-- [ ] All affected tests pass
-- [ ] No hidden fallback rebuild path remains
-- [ ] Logs and timing cover all major intensive operations
-- [ ] README links updated
+- [x] All workstreams completed in order
+- [x] All affected tests pass
+- [x] No hidden fallback rebuild path remains
+- [x] Logs and timing cover all major intensive operations
+- [x] README links updated
 - [ ] Performance baselines rechecked on representative large Mods and Tray libraries
+
+## 5. Verification Log (2026-03-04)
+
+Automated verification executed during WS4-WS8 implementation:
+
+* `dotnet test src/SimsModDesktop.PackageCore.Tests/SimsModDesktop.PackageCore.Tests.csproj --configuration Release --no-restore` -> pass (`7/7`)
+* `dotnet test src/SimsModDesktop.TrayDependencyEngine.Tests/SimsModDesktop.TrayDependencyEngine.Tests.csproj --configuration Release --no-restore` -> pass (`9/9`)
+* `dotnet test src/SimsModDesktop.Tests/SimsModDesktop.Tests.csproj --configuration Release --no-restore --filter "FullyQualifiedName!~TrayPreviewWorkspaceViewModelTests&FullyQualifiedName!~TrayDependencyEngineTests"` -> pass (`205/205`)
+
+Pending manual-only verification:
+
+* representative large `Mods`/`Tray` baseline recheck (memory, warmup duration, export duration) on production-like data

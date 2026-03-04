@@ -109,6 +109,8 @@ Dependency injection is layered through:
 
 * [PerformanceOptimizationPlan.md](src/SimsModDesktop/docs/PerformanceOptimizationPlan.md)
 * [PerformanceOptimizationChecklist.md](src/SimsModDesktop/docs/PerformanceOptimizationChecklist.md)
+* [CacheWarmupSequence.md](src/SimsModDesktop/docs/CacheWarmupSequence.md)
+* [EngineeringConventions.md](src/SimsModDesktop/docs/EngineeringConventions.md)
 
 ---
 

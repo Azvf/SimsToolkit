@@ -301,7 +301,7 @@ View 代码隐藏仅承担：
 使用原则：
 
 * `ILogger<T>` 用于结构化日志
-* `MainWindowStatusController` / `PersistentUiLog` 用于 UI 文本日志
+* `MainWindowStatusController` / `IUiLogSink` 用于 UI 文本日志
 * 两者可以并存，但职责不同
 
 建议：
