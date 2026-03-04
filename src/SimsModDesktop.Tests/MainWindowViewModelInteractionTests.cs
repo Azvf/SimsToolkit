@@ -1,5 +1,6 @@
 using System.Reflection;
 using Avalonia.Threading;
+using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Mods;
 using SimsModDesktop.Application.Modules;
@@ -115,6 +116,8 @@ public sealed class MainWindowViewModelInteractionTests
         Assert.Equal(modsRoot.Path, analysisService.LastRequest.ModsRootPath);
         Assert.Equal("0x123", analysisService.LastRequest.TrayItemKey);
         Assert.Contains("[action] traydependencies", vm.LogText, StringComparison.Ordinal);
+        Assert.Contains("[timing][start] operation=traydependencies.analyze", vm.LogText, StringComparison.Ordinal);
+        Assert.Contains("[timing][done] operation=traydependencies.analyze", vm.LogText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -142,6 +145,11 @@ public sealed class MainWindowViewModelInteractionTests
         Assert.Equal("DDS ", System.Text.Encoding.ASCII.GetString(bytes, 0, 4));
         Assert.Contains("Texture compression completed", vm.StatusMessage, StringComparison.Ordinal);
         Assert.Equal(outputPath, vm.TextureCompress.LastOutputPath);
+        Assert.Contains("[timing][done] operation=texture.compress", vm.LogText, StringComparison.Ordinal);
+        Assert.Contains("[timing][done] operation=texture.compress.read-source", vm.LogText, StringComparison.Ordinal);
+        Assert.Contains("[timing][done] operation=texture.compress.probe-dimensions", vm.LogText, StringComparison.Ordinal);
+        Assert.Contains("[timing][done] operation=texture.compress.compress", vm.LogText, StringComparison.Ordinal);
+        Assert.Contains("[timing][done] operation=texture.compress.write-output", vm.LogText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -278,6 +286,35 @@ public sealed class MainWindowViewModelInteractionTests
         Assert.True(vm.IsTrayPreviewEmptyStatusWarning);
         Assert.False(vm.HasTrayPreviewItems);
         Assert.False(vm.IsTrayPreviewPagerVisible);
+        Assert.Contains("[timing][done] operation=traypreview.load", vm.LogText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task LoadNextTrayPreviewPageAsync_EmitsTimingLogWithCacheState()
+    {
+        var trayPreviewCoordinator = new FakeTrayPreviewCoordinator
+        {
+            NextPageFromCache = true
+        };
+        var vm = CreateViewModel(
+            new FakeExecutionCoordinator(),
+            new FakeConfirmationDialogService(),
+            trayPreviewCoordinator: trayPreviewCoordinator);
+        await vm.InitializeAsync();
+
+        using var trayRoot = new TempDirectory();
+        await InvokePrivateAsync(
+            vm,
+            "RunTrayPreviewAsync",
+            new TrayPreviewInput
+            {
+                TrayPath = trayRoot.Path
+            });
+
+        await InvokePrivateAsync(vm, "LoadNextTrayPreviewPageAsync");
+
+        Assert.Contains("[timing][done] operation=traypreview.page.load", vm.LogText, StringComparison.Ordinal);
+        Assert.Contains("fromCache=true", vm.LogText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -730,7 +767,8 @@ public sealed class MainWindowViewModelInteractionTests
         ITrayDependencyExportService? trayDependencyExportService = null,
         ITrayDependencyAnalysisService? trayDependencyAnalysisService = null,
         ITrayThumbnailService? trayThumbnailService = null,
-        FakeFileDialogService? fileDialogService = null)
+        FakeFileDialogService? fileDialogService = null,
+        FakeTrayPreviewCoordinator? trayPreviewCoordinator = null)
     {
         var organize = new OrganizePanelViewModel();
         var textureCompress = new TextureCompressPanelViewModel();
@@ -743,7 +781,7 @@ public sealed class MainWindowViewModelInteractionTests
         var trayPreview = new TrayPreviewPanelViewModel();
         var sharedFileOps = new SharedFileOpsPanelViewModel();
 
-        var trayPreviewCoordinator = new FakeTrayPreviewCoordinator();
+        trayPreviewCoordinator ??= new FakeTrayPreviewCoordinator();
         var trayPreviewWorkspace = new TrayPreviewWorkspaceViewModel(
             trayPreview,
             trayPreviewCoordinator,
@@ -787,7 +825,8 @@ public sealed class MainWindowViewModelInteractionTests
                 toolkitActionPlanner,
                 recoveryController,
                 CreateTextureCompressionService(),
-                new TextureDimensionProbe()),
+                new TextureDimensionProbe(),
+                NullLogger<MainWindowExecutionController>.Instance),
             new MainWindowStatusController(),
             recoveryController,
             new MainWindowTrayPreviewController(
@@ -796,14 +835,16 @@ public sealed class MainWindowViewModelInteractionTests
                 toolkitActionPlanner,
                 recoveryController,
                 trayPreviewStateController,
-                trayPreviewSelectionController),
+                trayPreviewSelectionController,
+                NullLogger<MainWindowTrayPreviewController>.Instance),
             new MainWindowTrayExportController(effectiveTrayExportService, new FakePackageIndexCache()),
             new MainWindowValidationController(toolkitActionPlanner),
             new MainWindowLifecycleController(
                 settingsPersistenceController,
                 settingsProjection,
                 recoveryController,
-                toolkitActionPlanner),
+                toolkitActionPlanner,
+                NullLogger<MainWindowLifecycleController>.Instance),
             trayPreviewStateController,
             trayPreviewSelectionController,
             modPreviewWorkspace,
@@ -956,6 +997,8 @@ public sealed class MainWindowViewModelInteractionTests
 
     private sealed class FakeTrayPreviewCoordinator : ITrayPreviewCoordinator
     {
+        public bool NextPageFromCache { get; set; }
+
         public bool TryGetCached(TrayPreviewInput input, out TrayPreviewLoadResult result)
         {
             result = null!;
@@ -992,7 +1035,7 @@ public sealed class MainWindowViewModelInteractionTests
                     Items = Array.Empty<SimsTrayPreviewItem>()
                 },
                 LoadedPageCount = 1,
-                FromCache = false
+                FromCache = NextPageFromCache
             });
         }
 

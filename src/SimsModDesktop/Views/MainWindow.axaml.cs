@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Platform;
+using SimsModDesktop.Diagnostics;
 using SimsModDesktop.Infrastructure.Windowing;
 using SimsModDesktop.Presentation.ViewModels.Shell;
 
@@ -38,6 +39,7 @@ public partial class MainWindow : Window
 
     private async void OnOpened(object? sender, EventArgs e)
     {
+        AppStartupTelemetry.RecordMilestone("main_window.opened");
         ApplyResponsiveWindowConstraints(resizeToFit: true);
         _windowHostService.CurrentTopLevel = this;
         await _viewModel.InitializeAsync();

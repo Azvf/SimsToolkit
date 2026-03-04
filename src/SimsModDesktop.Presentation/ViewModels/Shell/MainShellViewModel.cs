@@ -1,8 +1,10 @@
 using System.ComponentModel;
 using Avalonia.Threading;
+using Microsoft.Extensions.Logging;
 using SimsModDesktop.Application.Recovery;
 using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Presentation.Dialogs;
+using SimsModDesktop.Presentation.Diagnostics;
 using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 using SimsModDesktop.Presentation.ViewModels.Saves;
 using SimsModDesktop.TrayDependencyEngine;
@@ -18,6 +20,7 @@ public sealed class MainShellViewModel : ObservableObject
     private readonly ShellSystemOperationsController _systemOperationsController;
     private readonly IOperationRecoveryCoordinator? _operationRecoveryCoordinator;
     private readonly ITrayDependencyCacheWarmupService? _trayDependencyCacheWarmupService;
+    private readonly ILogger<MainShellViewModel> _logger;
 
     private AppSection _selectedSection = AppSection.Toolkit;
     private bool _isInitialized;
@@ -38,6 +41,7 @@ public sealed class MainShellViewModel : ObservableObject
         INavigationService navigation,
         ShellSettingsController settingsController,
         ShellSystemOperationsController systemOperationsController,
+        ILogger<MainShellViewModel> logger,
         IOperationRecoveryCoordinator? operationRecoveryCoordinator = null,
         ITrayDependencyCacheWarmupService? trayDependencyCacheWarmupService = null)
     {
@@ -46,6 +50,7 @@ public sealed class MainShellViewModel : ObservableObject
         _navigation = navigation;
         _settingsController = settingsController;
         _systemOperationsController = systemOperationsController;
+        _logger = logger;
         _operationRecoveryCoordinator = operationRecoveryCoordinator;
         _trayDependencyCacheWarmupService = trayDependencyCacheWarmupService;
 
@@ -277,20 +282,27 @@ public sealed class MainShellViewModel : ObservableObject
             return;
         }
 
+        var timing = PerformanceLogScope.Begin(_logger, "shell.initialize", _workspaceVm.AppendSystemLog);
+
         await _workspaceVm.InitializeAsync();
+        timing.Mark("workspace.initialized");
         await _settingsController.InitializeAsync();
+        timing.Mark("settings.initialized");
 
         _navigation.SelectSection(AppSection.Toolkit);
         SelectedSection = _navigation.SelectedSection;
         ApplyNavigationToWorkspace();
+        timing.Mark("navigation.bound");
         QueueTrayDependencyCacheWarmup();
 
         if (_operationRecoveryCoordinator is not null)
         {
             await _operationRecoveryCoordinator.InitializeAndPromptAsync(_workspaceVm.ResumeRecoverableOperationAsync);
+            timing.Mark("recovery.initialized");
         }
 
         _isInitialized = true;
+        timing.Success();
     }
 
     public async Task PersistSettingsAsync()
@@ -355,15 +367,19 @@ public sealed class MainShellViewModel : ObservableObject
             return;
         }
 
+        var timing = PerformanceLogScope.Begin(_logger, "startup.traycache.warmup", _workspaceVm.AppendSystemLog);
+
         if (!_settingsController.EnableStartupTrayCacheWarmup)
         {
             _workspaceVm.AppendSystemLog("[startup][tray-cache] warmup-disabled-by-config");
+            timing.Skip("disabled-by-config");
             return;
         }
 
         var modsPath = ModsPath?.Trim() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(modsPath) || !Directory.Exists(modsPath))
         {
+            timing.Skip("missing-mods-path");
             return;
         }
 
@@ -397,6 +413,7 @@ public sealed class MainShellViewModel : ObservableObject
                             ? "Startup package index cache is ready."
                             : result.Message);
                     _workspaceVm.AppendSystemLog($"[startup][tray-cache] warmup-completed packages={result.PackageCount}");
+                    timing.Success(null, ("modsPath", modsPath), ("packageCount", result.PackageCount));
                     await Task.Delay(2500).ConfigureAwait(false);
                     SetTrayDependencyCacheVisibility(false);
                     return;
@@ -407,11 +424,13 @@ public sealed class MainShellViewModel : ObservableObject
                     (string.IsNullOrWhiteSpace(result.Message)
                         ? "warmup-skipped"
                         : result.Message));
+                timing.Skip(result.Message, ("modsPath", modsPath));
                 SetTrayDependencyCacheVisibility(false);
             }
             catch (Exception ex)
             {
                 _workspaceVm.AppendSystemLog("[startup][tray-cache] warmup-failed: " + ex.Message);
+                timing.Fail(ex, null, ("modsPath", modsPath));
                 SetTrayDependencyCacheWarmupState(
                     visible: _settingsController.ShowStartupTrayCacheWarmupBanner,
                     running: false,

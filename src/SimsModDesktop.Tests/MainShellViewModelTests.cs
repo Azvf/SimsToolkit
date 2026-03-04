@@ -5,6 +5,8 @@ using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Saves;
 using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Application.TrayPreview;
+using Avalonia.Threading;
+using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Infrastructure.Localization;
 using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Infrastructure.TextureCompression;
@@ -148,6 +150,8 @@ public sealed class MainShellViewModelTests
 
         Assert.Equal(AppSection.Toolkit, vm.SelectedSection);
         Assert.True(vm.IsToolkitSectionVisible);
+        Assert.Contains("[timing][start] operation=shell.initialize", vm.WorkspaceVm.LogText, StringComparison.Ordinal);
+        Assert.Contains("[timing][done] operation=shell.initialize", vm.WorkspaceVm.LogText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -178,8 +182,12 @@ public sealed class MainShellViewModelTests
 
         await vm.InitializeAsync();
         await WaitForAsync(() => warmupService.CallCount == 1);
+        await WaitForAsync(() =>
+            vm.WorkspaceVm.LogText.Contains("[timing][done] operation=startup.traycache.warmup", StringComparison.Ordinal));
 
         Assert.Equal(modsPath, warmupService.LastModsPath);
+        Assert.Contains("[timing][start] operation=startup.traycache.warmup", vm.WorkspaceVm.LogText, StringComparison.Ordinal);
+        Assert.Contains("[timing][done] operation=startup.traycache.warmup", vm.WorkspaceVm.LogText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -197,9 +205,9 @@ public sealed class MainShellViewModelTests
         var vm = CreateShellViewModel(initialSettings: settings, trayDependencyCacheWarmupService: warmupService);
 
         await vm.InitializeAsync();
-        await WaitForAsync(() => vm.TrayDependencyCacheWarmupPercent == 100);
+        await WaitForAsync(() =>
+            vm.WorkspaceVm.LogText.Contains("[timing][done] operation=startup.traycache.warmup", StringComparison.Ordinal));
 
-        Assert.Equal("100%", vm.TrayDependencyCacheWarmupPercentText);
         Assert.Contains("Startup", vm.TrayDependencyCacheWarmupDetail, StringComparison.Ordinal);
     }
 
@@ -226,6 +234,7 @@ public sealed class MainShellViewModelTests
 
         Assert.Equal(0, warmupService.CallCount);
         Assert.False(vm.IsTrayDependencyCacheWarmupVisible);
+        Assert.Contains("[timing][skip] operation=startup.traycache.warmup", vm.WorkspaceVm.LogText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -312,6 +321,7 @@ public sealed class MainShellViewModelTests
             navigation,
             settingsController,
             systemOperationsController,
+            NullLogger<MainShellViewModel>.Instance,
             null,
             trayDependencyCacheWarmupService ?? new FakeTrayDependencyCacheWarmupService());
     }
@@ -374,7 +384,8 @@ public sealed class MainShellViewModelTests
                 toolkitActionPlanner,
                 recoveryController,
                 CreateTextureCompressionService(),
-                new TextureDimensionProbe()),
+                new TextureDimensionProbe(),
+                NullLogger<MainWindowExecutionController>.Instance),
             new MainWindowStatusController(),
             recoveryController,
             new MainWindowTrayPreviewController(
@@ -383,14 +394,16 @@ public sealed class MainShellViewModelTests
                 toolkitActionPlanner,
                 recoveryController,
                 trayPreviewStateController,
-                trayPreviewSelectionController),
+                trayPreviewSelectionController,
+                NullLogger<MainWindowTrayPreviewController>.Instance),
             new MainWindowTrayExportController(trayExportService, new FakePackageIndexCache()),
             new MainWindowValidationController(toolkitActionPlanner),
             new MainWindowLifecycleController(
                 settingsPersistenceController,
                 settingsProjection,
                 recoveryController,
-                toolkitActionPlanner),
+                toolkitActionPlanner,
+                NullLogger<MainWindowLifecycleController>.Instance),
             trayPreviewStateController,
             trayPreviewSelectionController,
             modPreviewWorkspace,
@@ -850,6 +863,7 @@ public sealed class MainShellViewModelTests
         var startedAt = DateTime.UtcNow;
         while (!condition())
         {
+            Dispatcher.UIThread.RunJobs(null);
             if ((DateTime.UtcNow - startedAt).TotalMilliseconds > timeoutMs)
             {
                 break;

@@ -5,7 +5,7 @@ using SimsModDesktop.Application.Mods;
 using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.Presentation.ViewModels.Infrastructure;
-using SimsModDesktop.Presentation.ViewModels.Preview.Models;
+using SimsModDesktop.Presentation.Preview.Models;
 
 namespace SimsModDesktop.Presentation.ViewModels.Preview;
 

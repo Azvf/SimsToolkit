@@ -1,5 +1,5 @@
-using System.Diagnostics;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Recovery;
@@ -7,6 +7,7 @@ using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Results;
 using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Application.TextureProcessing;
+using SimsModDesktop.Presentation.Diagnostics;
 using SimsModDesktop.TrayDependencyEngine;
 
 namespace SimsModDesktop.Presentation.ViewModels;
@@ -19,6 +20,7 @@ public sealed class MainWindowExecutionController
     private readonly MainWindowRecoveryController _recoveryController;
     private readonly ITextureCompressionService _textureCompressionService;
     private readonly ITextureDimensionProbe _textureDimensionProbe;
+    private readonly ILogger<MainWindowExecutionController> _logger;
 
     public MainWindowExecutionController(
         IExecutionCoordinator executionCoordinator,
@@ -26,7 +28,8 @@ public sealed class MainWindowExecutionController
         IToolkitActionPlanner toolkitActionPlanner,
         MainWindowRecoveryController recoveryController,
         ITextureCompressionService textureCompressionService,
-        ITextureDimensionProbe textureDimensionProbe)
+        ITextureDimensionProbe textureDimensionProbe,
+        ILogger<MainWindowExecutionController> logger)
     {
         _executionCoordinator = executionCoordinator;
         _trayDependencyAnalysisService = trayDependencyAnalysisService;
@@ -34,6 +37,7 @@ public sealed class MainWindowExecutionController
         _recoveryController = recoveryController;
         _textureCompressionService = textureCompressionService;
         _textureDimensionProbe = textureDimensionProbe;
+        _logger = logger;
     }
 
     internal async Task RunToolkitAsync(MainWindowExecutionHost host)
@@ -85,10 +89,14 @@ public sealed class MainWindowExecutionController
         host.SetExecutionCts(executionCts);
 
         var startedAt = DateTimeOffset.Now;
-        var stopwatch = Stopwatch.StartNew();
         var recoveryCompleted = false;
 
         host.ClearLog();
+        var timing = PerformanceLogScope.Begin(
+            _logger,
+            "toolkit.execute",
+            host.AppendLog,
+            ("action", input.Action.ToString()));
         host.SetBusy(true);
         host.SetProgress(true, 0, host.Localize("progress.preparing"));
         host.AppendLog("[start] " + startedAt.ToString("yyyy-MM-dd HH:mm:ss"));
@@ -110,11 +118,10 @@ public sealed class MainWindowExecutionController
                 progress => HandleProgress(host, progress),
                 executionCts.Token);
 
-            stopwatch.Stop();
             host.AppendLog($"[exit] code={result.ExitCode}");
             host.SetStatus(result.ExitCode == 0
-                ? host.LocalizeFormat("status.executionCompleted", [stopwatch.Elapsed.ToString("mm\\:ss")])
-                : host.LocalizeFormat("status.executionFailedExit", [result.ExitCode, stopwatch.Elapsed.ToString("mm\\:ss")]));
+                ? host.LocalizeFormat("status.executionCompleted", [timing.Elapsed.ToString("mm\\:ss")])
+                : host.LocalizeFormat("status.executionFailedExit", [result.ExitCode, timing.Elapsed.ToString("mm\\:ss")]));
             host.SetProgress(
                 false,
                 result.ExitCode == 0 ? 100 : 0,
@@ -131,11 +138,12 @@ public sealed class MainWindowExecutionController
                         ResultSummaryJson = JsonSerializer.Serialize(new
                         {
                             result.ExitCode,
-                            Elapsed = stopwatch.Elapsed.ToString("mm\\:ss")
+                            Elapsed = timing.Elapsed.ToString("mm\\:ss")
                         })
                     });
                 await _recoveryController.SaveResultHistoryAsync(input.Action, "Toolkit", $"Exit code {result.ExitCode}", operationId);
                 recoveryCompleted = true;
+                timing.Fail(new InvalidOperationException($"Process exited with code {result.ExitCode}"), "non-zero-exit", ("exitCode", result.ExitCode));
                 await host.ShowErrorPopupAsync(host.Localize("status.executionFailed"));
             }
             else
@@ -148,15 +156,17 @@ public sealed class MainWindowExecutionController
                         ResultSummaryJson = JsonSerializer.Serialize(new
                         {
                             result.ExitCode,
-                            Elapsed = stopwatch.Elapsed.ToString("mm\\:ss")
+                            Elapsed = timing.Elapsed.ToString("mm\\:ss")
                         })
                     });
                 await _recoveryController.SaveResultHistoryAsync(input.Action, "Toolkit", "Completed", operationId);
                 recoveryCompleted = true;
+                timing.Success(null, ("exitCode", result.ExitCode));
             }
         }
         catch (Exception ex)
         {
+            timing.Fail(ex);
             if (!recoveryCompleted)
             {
                 await _recoveryController.MarkRecoveryCompletedAsync(
@@ -206,6 +216,7 @@ public sealed class MainWindowExecutionController
 
         using var executionCts = new CancellationTokenSource();
         host.SetExecutionCts(executionCts);
+        var timing = PerformanceLogScope.Begin(_logger, "texture.compress", host.AppendLog);
         host.SetBusy(true);
         host.SetProgress(true, 0, "Compressing texture...");
         host.SetStatus(host.Localize("status.running"));
@@ -225,17 +236,22 @@ public sealed class MainWindowExecutionController
                 return;
             }
 
+            using var readTiming = PerformanceLogScope.Begin(_logger, "texture.compress.read-source", host.AppendLog);
             var sourceBytes = await File.ReadAllBytesAsync(request.SourcePath, executionCts.Token);
+            readTiming.Success(null, ("bytes", sourceBytes.Length));
             if (!TryResolveTextureContainerKind(request.SourcePath, out var containerKind, out var containerError))
             {
                 throw new InvalidOperationException(containerError);
             }
 
+            using var probeTiming = PerformanceLogScope.Begin(_logger, "texture.compress.probe-dimensions", host.AppendLog);
             if (!_textureDimensionProbe.TryGetDimensions(containerKind, sourceBytes, out var sourceWidth, out var sourceHeight, out var probeError))
             {
                 throw new InvalidOperationException(probeError);
             }
+            probeTiming.Success(null, ("width", sourceWidth), ("height", sourceHeight));
 
+            using var compressTiming = PerformanceLogScope.Begin(_logger, "texture.compress.compress", host.AppendLog);
             var result = _textureCompressionService.Compress(new TextureCompressionRequest
             {
                 Source = new TextureSourceDescriptor
@@ -260,13 +276,17 @@ public sealed class MainWindowExecutionController
                 throw new InvalidOperationException(result.Error ?? result.TranscodeResult?.Error ?? "Texture compression failed.");
             }
 
+            compressTiming.Success(null, ("format", result.SelectedFormat.ToString()));
+
             var outputDirectory = Path.GetDirectoryName(request.OutputPath);
             if (!string.IsNullOrWhiteSpace(outputDirectory))
             {
                 Directory.CreateDirectory(outputDirectory);
             }
 
+            using var writeTiming = PerformanceLogScope.Begin(_logger, "texture.compress.write-output", host.AppendLog);
             await File.WriteAllBytesAsync(request.OutputPath, result.TranscodeResult.EncodedBytes, executionCts.Token);
+            writeTiming.Success(null, ("bytes", result.TranscodeResult.EncodedBytes.Length));
 
             host.TextureCompress.LastOutputPath = request.OutputPath;
             host.TextureCompress.LastRunSummary =
@@ -275,18 +295,21 @@ public sealed class MainWindowExecutionController
             host.AppendLog("[output] " + request.OutputPath);
             host.SetProgress(false, 100, "Texture compression completed.");
             host.SetStatus("Texture compression completed.");
+            timing.Success(null, ("outputPath", request.OutputPath));
         }
         catch (OperationCanceledException)
         {
             host.AppendLog("[cancelled]");
             host.SetStatus(host.Localize("status.executionCancelled"));
             host.SetProgress(false, 0, host.Localize("progress.cancelled"));
+            timing.Cancel();
         }
         catch (Exception ex)
         {
             host.AppendLog("[error] " + ex.Message);
             host.SetStatus("Texture compression failed.");
             host.SetProgress(false, 0, "Texture compression failed.");
+            timing.Fail(ex);
             await host.ShowErrorPopupAsync("Texture compression failed.");
         }
         finally
@@ -326,12 +349,11 @@ public sealed class MainWindowExecutionController
         var operationId = existingOperationId ?? await _recoveryController.RegisterRecoveryAsync(_recoveryController.BuildTrayDependenciesRecoveryPayload(plan));
         using var executionCts = new CancellationTokenSource();
         host.SetExecutionCts(executionCts);
-
         var startedAt = DateTimeOffset.Now;
-        var stopwatch = Stopwatch.StartNew();
         var recoveryCompleted = false;
 
         host.ClearLog();
+        var timing = PerformanceLogScope.Begin(_logger, "traydependencies.analyze", host.AppendLog);
         host.SetBusy(true);
         host.SetProgress(true, 0, "Preparing tray dependency analysis...");
         host.AppendLog("[start] " + startedAt.ToString("yyyy-MM-dd HH:mm:ss"));
@@ -345,8 +367,6 @@ public sealed class MainWindowExecutionController
                 plan.Request,
                 new Progress<TrayDependencyAnalysisProgress>(progress => HandleTrayDependencyAnalysisProgress(host, progress)),
                 executionCts.Token);
-            stopwatch.Stop();
-
             host.AppendLog($"[traydependencies] matched={result.MatchedPackageCount}");
             host.AppendLog($"[traydependencies] unused={result.UnusedPackageCount}");
 
@@ -386,8 +406,8 @@ public sealed class MainWindowExecutionController
             {
                 var hasWarnings = result.Issues.Any(issue => issue.Severity == TrayDependencyIssueSeverity.Warning);
                 host.SetStatus(hasWarnings
-                    ? $"Tray dependencies completed with warnings ({stopwatch.Elapsed:mm\\:ss})"
-                    : $"Tray dependencies completed ({stopwatch.Elapsed:mm\\:ss})");
+                    ? $"Tray dependencies completed with warnings ({timing.Elapsed:mm\\:ss})"
+                    : $"Tray dependencies completed ({timing.Elapsed:mm\\:ss})");
                 host.SetProgress(false, 100, hasWarnings
                     ? "Tray dependency analysis completed with warnings."
                     : "Tray dependency analysis completed.");
@@ -405,6 +425,7 @@ public sealed class MainWindowExecutionController
                     });
                 await _recoveryController.SaveResultHistoryAsync(SimsAction.TrayDependencies, "TrayDependencies", "Completed", operationId);
                 recoveryCompleted = true;
+                timing.Success(null, ("matched", result.MatchedPackageCount), ("unused", result.UnusedPackageCount), ("hasWarnings", hasWarnings));
                 return;
             }
 
@@ -419,11 +440,11 @@ public sealed class MainWindowExecutionController
                 });
             await _recoveryController.SaveResultHistoryAsync(SimsAction.TrayDependencies, "TrayDependencies", "Failed", operationId);
             recoveryCompleted = true;
+            timing.Fail(new InvalidOperationException("Tray dependency analysis failed."));
             await host.ShowErrorPopupAsync("Tray dependency analysis failed.");
         }
         catch (OperationCanceledException)
         {
-            stopwatch.Stop();
             host.AppendLog("[cancelled]");
             host.SetStatus(host.Localize("status.executionCancelled"));
             host.SetProgress(false, 0, host.Localize("progress.cancelled"));
@@ -435,13 +456,14 @@ public sealed class MainWindowExecutionController
                 });
             await _recoveryController.SaveResultHistoryAsync(SimsAction.TrayDependencies, "TrayDependencies", "Cancelled", operationId);
             recoveryCompleted = true;
+            timing.Cancel();
         }
         catch (Exception ex)
         {
-            stopwatch.Stop();
             host.AppendLog("[error] " + ex.Message);
             host.SetStatus("Tray dependency analysis failed.");
             host.SetProgress(false, 0, "Tray dependency analysis failed.");
+            timing.Fail(ex);
             if (!recoveryCompleted)
             {
                 await _recoveryController.MarkRecoveryCompletedAsync(

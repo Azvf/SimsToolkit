@@ -1,6 +1,8 @@
 using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Recovery;
 using SimsModDesktop.Application.Settings;
+using Microsoft.Extensions.Logging;
+using SimsModDesktop.Presentation.Diagnostics;
 
 namespace SimsModDesktop.Presentation.ViewModels;
 
@@ -10,17 +12,20 @@ public sealed class MainWindowLifecycleController
     private readonly IMainWindowSettingsProjection _settingsProjection;
     private readonly MainWindowRecoveryController _recoveryController;
     private readonly IToolkitActionPlanner _toolkitActionPlanner;
+    private readonly ILogger<MainWindowLifecycleController> _logger;
 
     public MainWindowLifecycleController(
         MainWindowSettingsPersistenceController settingsPersistenceController,
         IMainWindowSettingsProjection settingsProjection,
         MainWindowRecoveryController recoveryController,
-        IToolkitActionPlanner toolkitActionPlanner)
+        IToolkitActionPlanner toolkitActionPlanner,
+        ILogger<MainWindowLifecycleController> logger)
     {
         _settingsPersistenceController = settingsPersistenceController;
         _settingsProjection = settingsProjection;
         _recoveryController = recoveryController;
         _toolkitActionPlanner = toolkitActionPlanner;
+        _logger = logger;
     }
 
     internal async Task InitializeAsync(MainWindowLifecycleHost host)
@@ -30,10 +35,15 @@ public sealed class MainWindowLifecycleController
             return;
         }
 
+        var timing = PerformanceLogScope.Begin(_logger, "workspace.initialize", host.AppendLog);
+
         await _recoveryController.InitializeAsync();
+        timing.Mark("recovery.initialized");
 
         var settings = await _settingsPersistenceController.LoadAsync();
+        timing.Mark("settings.loaded");
         var resolved = _settingsProjection.Resolve(settings, host.AvailableToolkitActions);
+        timing.Mark("settings.projected");
 
         host.SetSelectedLanguageCode(resolved.UiLanguageCode);
         host.SetWhatIf(resolved.WhatIf);
@@ -63,6 +73,8 @@ public sealed class MainWindowLifecycleController
 
         host.SetIsInitialized(true);
         host.RefreshValidation();
+        timing.Mark("workspace.bound");
+        timing.Success();
     }
 
     internal async Task PersistSettingsAsync(MainWindowLifecycleHost host)

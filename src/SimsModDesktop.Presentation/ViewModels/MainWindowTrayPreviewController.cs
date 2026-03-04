@@ -1,10 +1,11 @@
-using System.Diagnostics;
 using System.Text.Json;
 using Avalonia.Media.Imaging;
+using Microsoft.Extensions.Logging;
 using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Recovery;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Results;
+using SimsModDesktop.Presentation.Diagnostics;
 using SimsModDesktop.Presentation.ViewModels.Panels;
 using SimsModDesktop.Presentation.ViewModels.Preview;
 
@@ -18,6 +19,7 @@ public sealed class MainWindowTrayPreviewController
     private readonly MainWindowRecoveryController _recoveryController;
     private readonly MainWindowTrayPreviewStateController _trayPreviewStateController;
     private readonly MainWindowTrayPreviewSelectionController _trayPreviewSelectionController;
+    private readonly ILogger<MainWindowTrayPreviewController> _logger;
     private CancellationTokenSource? _trayPreviewThumbnailCts;
     private int _trayPreviewThumbnailBatchId;
 
@@ -27,7 +29,8 @@ public sealed class MainWindowTrayPreviewController
         IToolkitActionPlanner toolkitActionPlanner,
         MainWindowRecoveryController recoveryController,
         MainWindowTrayPreviewStateController trayPreviewStateController,
-        MainWindowTrayPreviewSelectionController trayPreviewSelectionController)
+        MainWindowTrayPreviewSelectionController trayPreviewSelectionController,
+        ILogger<MainWindowTrayPreviewController> logger)
     {
         _trayPreviewCoordinator = trayPreviewCoordinator;
         _trayThumbnailService = trayThumbnailService;
@@ -35,6 +38,7 @@ public sealed class MainWindowTrayPreviewController
         _recoveryController = recoveryController;
         _trayPreviewStateController = trayPreviewStateController;
         _trayPreviewSelectionController = trayPreviewSelectionController;
+        _logger = logger;
     }
 
     internal Task RunTrayPreviewAsync(MainWindowTrayPreviewHost host, TrayPreviewInput? explicitInput = null)
@@ -279,9 +283,9 @@ public sealed class MainWindowTrayPreviewController
         using var executionCts = new CancellationTokenSource();
         host.SetExecutionCts(executionCts);
         var startedAt = DateTimeOffset.Now;
-        var stopwatch = Stopwatch.StartNew();
         _trayPreviewCoordinator.Reset();
         host.ClearLog();
+        var timing = PerformanceLogScope.Begin(_logger, "traypreview.load", host.AppendLog);
         ClearTrayPreview(host);
         host.SetBusy(true);
         host.SetTrayPreviewPageLoading(true);
@@ -294,7 +298,6 @@ public sealed class MainWindowTrayPreviewController
         {
             await _recoveryController.MarkRecoveryStartedAsync(operationId);
             var result = await _trayPreviewCoordinator.LoadAsync(input, executionCts.Token);
-            stopwatch.Stop();
             SetTrayPreviewSummary(host, result.Summary);
             SetTrayPreviewPage(host, result.Page, result.LoadedPageCount);
 
@@ -316,7 +319,7 @@ public sealed class MainWindowTrayPreviewController
 
             host.SetStatus(host.LocalizeFormat(
                 "status.trayPreviewLoaded",
-                [result.Summary.TotalItems, result.Page.TotalPages, stopwatch.Elapsed.ToString("mm\\:ss")]));
+                [result.Summary.TotalItems, result.Page.TotalPages, timing.Elapsed.ToString("mm\\:ss")]));
             host.SetProgress(false, 100, host.Localize("progress.trayLoaded"));
             await _recoveryController.MarkRecoveryCompletedAsync(
                 operationId,
@@ -334,6 +337,7 @@ public sealed class MainWindowTrayPreviewController
                 "TrayPreview",
                 $"Loaded {result.Summary.TotalItems} items",
                 operationId);
+            timing.Success(null, ("totalItems", result.Summary.TotalItems), ("totalPages", result.Page.TotalPages));
         }
         catch (OperationCanceledException)
         {
@@ -347,6 +351,7 @@ public sealed class MainWindowTrayPreviewController
                     Status = OperationRecoveryStatus.Cancelled
                 });
             await _recoveryController.SaveResultHistoryAsync(SimsAction.TrayPreview, "TrayPreview", "Cancelled", operationId);
+            timing.Cancel();
         }
         catch (Exception ex)
         {
@@ -364,6 +369,7 @@ public sealed class MainWindowTrayPreviewController
                     FailureMessage = errorMessage
                 });
             await _recoveryController.SaveResultHistoryAsync(SimsAction.TrayPreview, "TrayPreview", errorMessage, operationId);
+            timing.Fail(ex);
             await host.ShowErrorPopupAsync(host.Localize("status.trayPreviewFailed"));
         }
         finally
@@ -385,15 +391,18 @@ public sealed class MainWindowTrayPreviewController
 
         CancelTrayPreviewThumbnailLoading();
         host.SetTrayPreviewPageLoading(true);
+        var timing = PerformanceLogScope.Begin(_logger, "traypreview.page.load", host.AppendLog, ("pageIndex", requestedPageIndex));
         try
         {
             var result = await _trayPreviewCoordinator.LoadPageAsync(requestedPageIndex);
             SetTrayPreviewPage(host, result.Page, result.LoadedPageCount);
             host.SetStatus(host.LocalizeFormat("status.trayPageLoaded", [result.Page.PageIndex, result.Page.TotalPages]));
+            timing.Success(null, ("pageIndex", result.Page.PageIndex), ("fromCache", result.FromCache));
         }
         catch (OperationCanceledException)
         {
             host.SetStatus(host.Localize("status.trayPageCancelled"));
+            timing.Cancel();
         }
         catch (Exception ex)
         {
@@ -402,6 +411,7 @@ public sealed class MainWindowTrayPreviewController
                 : ex.Message;
             host.AppendLog("[error] " + errorMessage);
             host.SetStatus(host.Localize("status.trayPageFailed"));
+            timing.Fail(ex);
             await host.ShowErrorPopupAsync(host.Localize("status.trayPageFailed"));
         }
         finally
@@ -472,6 +482,13 @@ public sealed class MainWindowTrayPreviewController
         var generated = 0;
         var failures = 0;
         var maxParallelism = Math.Min(4, Math.Max(2, Environment.ProcessorCount / 2));
+        var timing = PerformanceLogScope.Begin(
+            _logger,
+            "traypreview.thumbnails.batch",
+            host.AppendLog,
+            ("stage", stageLabel),
+            ("pageIndex", pageIndex),
+            ("count", items.Count));
         using var gate = new SemaphoreSlim(maxParallelism, maxParallelism);
 
         try
@@ -482,10 +499,50 @@ public sealed class MainWindowTrayPreviewController
             {
                 host.AppendLog(
                     $"[preview-thumbs] page={pageIndex} stage={stageLabel} count={items.Count} cache={cacheHits} generated={generated} failed={failures}");
+                timing.Success(
+                    null,
+                    ("stage", stageLabel),
+                    ("pageIndex", pageIndex),
+                    ("count", items.Count),
+                    ("cacheHits", cacheHits),
+                    ("generated", generated),
+                    ("failures", failures));
+            }
+            else
+            {
+                timing.Cancel(
+                    null,
+                    ("stage", stageLabel),
+                    ("pageIndex", pageIndex),
+                    ("count", items.Count),
+                    ("cacheHits", cacheHits),
+                    ("generated", generated),
+                    ("failures", failures));
             }
         }
         catch (OperationCanceledException)
         {
+            timing.Cancel(
+                null,
+                ("stage", stageLabel),
+                ("pageIndex", pageIndex),
+                ("count", items.Count),
+                ("cacheHits", cacheHits),
+                ("generated", generated),
+                ("failures", failures));
+        }
+        catch (Exception ex)
+        {
+            timing.Fail(
+                ex,
+                null,
+                ("stage", stageLabel),
+                ("pageIndex", pageIndex),
+                ("count", items.Count),
+                ("cacheHits", cacheHits),
+                ("generated", generated),
+                ("failures", failures));
+            throw;
         }
         finally
         {

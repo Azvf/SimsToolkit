@@ -3,6 +3,7 @@ using Avalonia.Data.Converters;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Threading;
+using SimsModDesktop.Diagnostics;
 using SimsModDesktop.Presentation.ViewModels.Shell;
 
 namespace SimsModDesktop.Views.Shell;
@@ -10,11 +11,13 @@ namespace SimsModDesktop.Views.Shell;
 public partial class MainShellView : UserControl
 {
     private MainShellViewModel? _shellVm;
+    private bool _hasQueuedFirstContentVisible;
 
     public MainShellView()
     {
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
+        AttachedToVisualTree += (_, _) => QueueFirstContentVisible();
     }
 
     private void OnDataContextChanged(object? sender, EventArgs e)
@@ -80,6 +83,19 @@ public partial class MainShellView : UserControl
                 Ts4RootPathTextBox.Focus();
                 Ts4RootPathTextBox.SelectAll();
             },
+            DispatcherPriority.Background);
+    }
+
+    private void QueueFirstContentVisible()
+    {
+        if (_hasQueuedFirstContentVisible)
+        {
+            return;
+        }
+
+        _hasQueuedFirstContentVisible = true;
+        Dispatcher.UIThread.Post(
+            () => AppStartupTelemetry.MarkFirstContentVisible(),
             DispatcherPriority.Background);
     }
 }
