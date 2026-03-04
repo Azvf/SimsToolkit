@@ -15,6 +15,7 @@ using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.SaveData.Models;
 using SimsModDesktop.TrayDependencyEngine;
 using SimsModDesktop.Presentation.ViewModels;
+using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 using SimsModDesktop.Presentation.ViewModels.Panels;
 using SimsModDesktop.Presentation.ViewModels.Preview;
 using SimsModDesktop.Presentation.ViewModels.Shell;
@@ -285,11 +286,13 @@ public sealed class MainShellViewModelTests
             new NoOpModItemIndexScheduler(),
             new FakePackageIndexCache(),
             NullLogger<MainWindowCacheWarmupController>.Instance);
+        var uiLogSink = new UiLogSink();
 
         var trayPreviewWorkspace = new TrayPreviewWorkspaceViewModel(
             trayPreview,
             trayPreviewCoordinator,
             trayThumbnailService,
+            uiLogSink,
             new FakeFileDialogService(),
             new FakeTrayDependencyExportService(),
             cacheWarmupController,
@@ -332,7 +335,7 @@ public sealed class MainShellViewModelTests
                 CreateTextureCompressionService(),
                 new TextureDimensionProbe(),
                 NullLogger<MainWindowExecutionController>.Instance),
-            new MainWindowStatusController(),
+            new MainWindowStatusController(uiLogSink),
             recoveryController,
             new MainWindowTrayPreviewController(
                 trayPreviewCoordinator,

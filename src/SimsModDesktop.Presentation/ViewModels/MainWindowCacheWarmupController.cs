@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 using SimsModDesktop.Application.Caching;
 using SimsModDesktop.Application.Mods;
 using SimsModDesktop.Presentation.Diagnostics;
@@ -19,6 +20,7 @@ public sealed class MainWindowCacheWarmupController
     private string? _modsReadyRoot;
     private long _modsReadyInventoryVersion;
     private PackageIndexSnapshot? _trayReadySnapshot;
+    private readonly Dictionary<string, Task<PackageIndexSnapshot>> _trayWarmupTasks = new(StringComparer.OrdinalIgnoreCase);
 
     public MainWindowCacheWarmupController(
         IModPackageInventoryService inventoryService,
@@ -139,11 +141,14 @@ public sealed class MainWindowCacheWarmupController
         ArgumentNullException.ThrowIfNull(host);
 
         var normalizedRoot = Path.GetFullPath(modsRootPath.Trim());
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        ModPackageInventoryRefreshResult inventory;
+        Task<PackageIndexSnapshot> trayWarmupTask;
+        var trayWarmupKey = string.Empty;
 
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var inventory = await EnsureInventoryCoreAsync(normalizedRoot, host, cancellationToken).ConfigureAwait(false);
+            inventory = await EnsureInventoryCoreAsync(normalizedRoot, host, cancellationToken).ConfigureAwait(false);
             if (_trayReadySnapshot is not null &&
                 string.Equals(_trayReadySnapshot.ModsRootPath, normalizedRoot, StringComparison.OrdinalIgnoreCase) &&
                 _trayReadySnapshot.InventoryVersion == inventory.Snapshot.InventoryVersion)
@@ -161,95 +166,256 @@ public sealed class MainWindowCacheWarmupController
                 return _trayReadySnapshot;
             }
 
-            PackageIndexSnapshot? snapshot;
-            using var timing = PerformanceLogScope.Begin(
-                _logger,
-                "traycache.snapshot",
-                host.AppendLog,
-                ("modsRoot", normalizedRoot),
-                ("inventoryVersion", inventory.Snapshot.InventoryVersion),
-                ("packageCount", inventory.Snapshot.Entries.Count));
-
-            snapshot = await _packageIndexCache.TryLoadSnapshotAsync(
-                normalizedRoot,
-                inventory.Snapshot.InventoryVersion,
-                cancellationToken).ConfigureAwait(false);
-            if (snapshot is not null)
+            trayWarmupKey = BuildTrayWarmupKey(normalizedRoot, inventory.Snapshot.InventoryVersion);
+            if (!_trayWarmupTasks.TryGetValue(trayWarmupKey, out trayWarmupTask!))
             {
-                host.AppendLog(
-                    $"[traycache.snapshot.load-hit] modsRoot={normalizedRoot} inventoryVersion={inventory.Snapshot.InventoryVersion} packages={snapshot.Packages.Count}");
+                // Run warmup construction on a worker thread so tray activation never blocks the UI thread.
+                trayWarmupTask = Task.Run(
+                    () => LoadOrBuildTraySnapshotAsync(normalizedRoot, inventory, host, CancellationToken.None),
+                    CancellationToken.None);
+                _trayWarmupTasks[trayWarmupKey] = trayWarmupTask;
             }
             else
             {
                 host.AppendLog(
-                    $"[traycache.snapshot.build.start] modsRoot={normalizedRoot} inventoryVersion={inventory.Snapshot.InventoryVersion} packages={inventory.Snapshot.Entries.Count}");
-                snapshot = await _packageIndexCache.BuildSnapshotAsync(
-                    new PackageIndexBuildRequest
-                    {
-                        ModsRootPath = normalizedRoot,
-                        InventoryVersion = inventory.Snapshot.InventoryVersion,
-                        PackageFiles = inventory.Snapshot.Entries
-                            .Select(entry => new PackageIndexBuildFile
-                            {
-                                FilePath = entry.PackagePath,
-                                Length = entry.FileLength,
-                                LastWriteUtcTicks = entry.LastWriteUtcTicks
-                            })
-                            .ToArray(),
-                        ChangedPackageFiles = inventory.AddedEntries
-                            .Concat(inventory.ChangedEntries)
-                            .Select(entry => new PackageIndexBuildFile
-                            {
-                                FilePath = entry.PackagePath,
-                                Length = entry.FileLength,
-                                LastWriteUtcTicks = entry.LastWriteUtcTicks
-                            })
-                            .ToArray(),
-                        RemovedPackagePaths = inventory.RemovedPackagePaths
-                    },
-                    new Progress<TrayDependencyExportProgress>(progress =>
-                    {
-                        host.ReportProgress(new CacheWarmupProgress
-                        {
-                            Domain = CacheWarmupDomain.TrayDependency,
-                            Stage = progress.Stage.ToString(),
-                            Percent = progress.Percent,
-                            Current = 0,
-                            Total = inventory.Snapshot.Entries.Count,
-                            Detail = string.IsNullOrWhiteSpace(progress.Detail)
-                                ? "Preparing tray dependency cache..."
-                                : progress.Detail,
-                            IsBlocking = true
-                        });
-                    }),
-                    cancellationToken).ConfigureAwait(false);
-                host.AppendLog(
-                    $"[traycache.snapshot.build.done] modsRoot={normalizedRoot} inventoryVersion={inventory.Snapshot.InventoryVersion} packages={snapshot.Packages.Count}");
+                    $"[traycache.snapshot.inflight.wait] modsRoot={normalizedRoot} inventoryVersion={inventory.Snapshot.InventoryVersion}");
+            }
+        }
+        finally
+        {
+            _gate.Release();
+        }
+
+        PackageIndexSnapshot snapshot;
+        try
+        {
+            snapshot = await trayWarmupTask.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (_trayWarmupTasks.TryGetValue(trayWarmupKey, out var existingTask) &&
+                    ReferenceEquals(existingTask, trayWarmupTask))
+                {
+                    _trayWarmupTasks.Remove(trayWarmupKey);
+                }
+            }
+            finally
+            {
+                _gate.Release();
+            }
+
+            throw;
+        }
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_trayWarmupTasks.TryGetValue(trayWarmupKey, out var existingTask) &&
+                ReferenceEquals(existingTask, trayWarmupTask))
+            {
+                _trayWarmupTasks.Remove(trayWarmupKey);
             }
 
             _trayReadySnapshot = snapshot;
-            host.ReportProgress(new CacheWarmupProgress
-            {
-                Domain = CacheWarmupDomain.TrayDependency,
-                Stage = "ready",
-                Percent = 100,
-                Current = snapshot.Packages.Count,
-                Total = snapshot.Packages.Count,
-                Detail = "Tray dependency cache is ready.",
-                IsBlocking = true
-            });
+        }
+        finally
+        {
+            _gate.Release();
+        }
+
+        host.ReportProgress(new CacheWarmupProgress
+        {
+            Domain = CacheWarmupDomain.TrayDependency,
+            Stage = "ready",
+            Percent = 100,
+            Current = snapshot.Packages.Count,
+            Total = snapshot.Packages.Count,
+            Detail = "Tray dependency cache is ready.",
+            IsBlocking = true
+        });
+        host.AppendLog(
+            $"[traycache.ready] modsRoot={normalizedRoot} inventoryVersion={inventory.Snapshot.InventoryVersion} packages={snapshot.Packages.Count}");
+        return snapshot;
+    }
+
+    private async Task<PackageIndexSnapshot> LoadOrBuildTraySnapshotAsync(
+        string normalizedRoot,
+        ModPackageInventoryRefreshResult inventory,
+        MainWindowCacheWarmupHost host,
+        CancellationToken cancellationToken)
+    {
+        PackageIndexSnapshot? snapshot;
+        using var timing = PerformanceLogScope.Begin(
+            _logger,
+            "traycache.snapshot",
+            host.AppendLog,
+            ("modsRoot", normalizedRoot),
+            ("inventoryVersion", inventory.Snapshot.InventoryVersion),
+            ("packageCount", inventory.Snapshot.Entries.Count));
+
+        using var loadTiming = PerformanceLogScope.Begin(
+            _logger,
+            "traycache.snapshot.load",
+            host.AppendLog,
+            ("modsRoot", normalizedRoot),
+            ("inventoryVersion", inventory.Snapshot.InventoryVersion));
+        try
+        {
+            snapshot = await _packageIndexCache.TryLoadSnapshotAsync(
+                normalizedRoot,
+                inventory.Snapshot.InventoryVersion,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            loadTiming.Cancel("load-cancelled");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            loadTiming.Fail(ex, "load-failed");
+            throw;
+        }
+
+        if (snapshot is not null)
+        {
             host.AppendLog(
-                $"[traycache.ready] modsRoot={normalizedRoot} inventoryVersion={inventory.Snapshot.InventoryVersion} packages={snapshot.Packages.Count}");
+                $"[traycache.snapshot.load-hit] modsRoot={normalizedRoot} inventoryVersion={inventory.Snapshot.InventoryVersion} packages={snapshot.Packages.Count}");
+            loadTiming.Success(
+                "load-hit",
+                ("packageCount", snapshot.Packages.Count));
+            timing.Mark(
+                "snapshot.load-hit",
+                ("packageCount", snapshot.Packages.Count));
             timing.Success(
                 "ready",
                 ("inventoryVersion", inventory.Snapshot.InventoryVersion),
                 ("packageCount", snapshot.Packages.Count));
             return snapshot;
         }
-        finally
+
+        loadTiming.Skip("load-miss");
+        host.AppendLog(
+            $"[traycache.snapshot.build.start] modsRoot={normalizedRoot} inventoryVersion={inventory.Snapshot.InventoryVersion} packages={inventory.Snapshot.Entries.Count}");
+        using var buildTiming = PerformanceLogScope.Begin(
+            _logger,
+            "traycache.snapshot.build",
+            host.AppendLog,
+            ("modsRoot", normalizedRoot),
+            ("inventoryVersion", inventory.Snapshot.InventoryVersion),
+            ("packageCount", inventory.Snapshot.Entries.Count));
+        var stageStopwatch = new Stopwatch();
+        var currentStageLabel = string.Empty;
+        var currentStagePercent = 0;
+        try
         {
-            _gate.Release();
+            snapshot = await _packageIndexCache.BuildSnapshotAsync(
+                new PackageIndexBuildRequest
+                {
+                    ModsRootPath = normalizedRoot,
+                    InventoryVersion = inventory.Snapshot.InventoryVersion,
+                    PackageFiles = inventory.Snapshot.Entries
+                        .Select(entry => new PackageIndexBuildFile
+                        {
+                            FilePath = entry.PackagePath,
+                            Length = entry.FileLength,
+                            LastWriteUtcTicks = entry.LastWriteUtcTicks
+                        })
+                        .ToArray(),
+                    ChangedPackageFiles = inventory.AddedEntries
+                        .Concat(inventory.ChangedEntries)
+                        .Select(entry => new PackageIndexBuildFile
+                        {
+                            FilePath = entry.PackagePath,
+                            Length = entry.FileLength,
+                            LastWriteUtcTicks = entry.LastWriteUtcTicks
+                        })
+                        .ToArray(),
+                    RemovedPackagePaths = inventory.RemovedPackagePaths
+                },
+                new Progress<TrayDependencyExportProgress>(progress =>
+                {
+                    var stageLabel = BuildTrayCacheStageLabel(progress);
+                    if (!string.Equals(currentStageLabel, stageLabel, StringComparison.Ordinal))
+                    {
+                        if (stageStopwatch.IsRunning && !string.IsNullOrWhiteSpace(currentStageLabel))
+                        {
+                            host.AppendLog(
+                                $"[traycache.stage.done] stage={currentStageLabel} percent={currentStagePercent} elapsedMs={stageStopwatch.ElapsedMilliseconds}");
+                        }
+
+                        currentStageLabel = stageLabel;
+                        stageStopwatch.Restart();
+                        host.AppendLog(
+                            $"[traycache.stage.start] stage={currentStageLabel} percent={progress.Percent}");
+                    }
+
+                    currentStagePercent = progress.Percent;
+                    host.ReportProgress(new CacheWarmupProgress
+                    {
+                        Domain = CacheWarmupDomain.TrayDependency,
+                        Stage = progress.Stage.ToString(),
+                        Percent = progress.Percent,
+                        Current = 0,
+                        Total = inventory.Snapshot.Entries.Count,
+                        Detail = string.IsNullOrWhiteSpace(progress.Detail)
+                            ? "Preparing tray dependency cache..."
+                            : progress.Detail,
+                        IsBlocking = true
+                    });
+                }),
+                cancellationToken).ConfigureAwait(false);
+
+            if (stageStopwatch.IsRunning && !string.IsNullOrWhiteSpace(currentStageLabel))
+            {
+                host.AppendLog(
+                    $"[traycache.stage.done] stage={currentStageLabel} percent={currentStagePercent} elapsedMs={stageStopwatch.ElapsedMilliseconds}");
+            }
+
+            buildTiming.Success(
+                "build-done",
+                ("packageCount", snapshot.Packages.Count));
         }
+        catch (OperationCanceledException)
+        {
+            if (stageStopwatch.IsRunning && !string.IsNullOrWhiteSpace(currentStageLabel))
+            {
+                host.AppendLog(
+                    $"[traycache.stage.cancel] stage={currentStageLabel} percent={currentStagePercent} elapsedMs={stageStopwatch.ElapsedMilliseconds}");
+            }
+
+            buildTiming.Cancel("build-cancelled");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            if (stageStopwatch.IsRunning && !string.IsNullOrWhiteSpace(currentStageLabel))
+            {
+                host.AppendLog(
+                    $"[traycache.stage.fail] stage={currentStageLabel} percent={currentStagePercent} elapsedMs={stageStopwatch.ElapsedMilliseconds}");
+            }
+
+            buildTiming.Fail(ex, "build-failed");
+            throw;
+        }
+
+        host.AppendLog(
+            $"[traycache.snapshot.build.done] modsRoot={normalizedRoot} inventoryVersion={inventory.Snapshot.InventoryVersion} packages={snapshot.Packages.Count}");
+        timing.Mark(
+            "snapshot.build-done",
+            ("packageCount", snapshot.Packages.Count));
+        timing.Success(
+            "ready",
+            ("inventoryVersion", inventory.Snapshot.InventoryVersion),
+            ("packageCount", snapshot.Packages.Count));
+        return snapshot;
     }
 
     internal void QueueModsPriorityDeepEnrichment(
@@ -324,6 +490,7 @@ public sealed class MainWindowCacheWarmupController
         _modsReadyRoot = null;
         _modsReadyInventoryVersion = 0;
         _trayReadySnapshot = null;
+        _trayWarmupTasks.Clear();
     }
 
     private async Task<ModPackageInventoryRefreshResult> EnsureInventoryCoreAsync(
@@ -342,6 +509,7 @@ public sealed class MainWindowCacheWarmupController
             _modsReadyRoot = null;
             _modsReadyInventoryVersion = 0;
             _trayReadySnapshot = null;
+            _trayWarmupTasks.Clear();
         }
 
         using var timing = PerformanceLogScope.Begin(
@@ -353,23 +521,27 @@ public sealed class MainWindowCacheWarmupController
 
         try
         {
-            var result = await _inventoryService.RefreshAsync(
-                normalizedRoot,
-                new Progress<ModPackageInventoryRefreshProgress>(progress =>
-                {
-                    host.ReportProgress(new CacheWarmupProgress
+            // SqliteModPackageInventoryService.RefreshAsync is mostly synchronous work wrapped in Task.
+            // Offload it explicitly to keep UI thread responsive during tray/mod warmup.
+            var result = await Task.Run(
+                () => _inventoryService.RefreshAsync(
+                    normalizedRoot,
+                    new Progress<ModPackageInventoryRefreshProgress>(progress =>
                     {
-                        Domain = CacheWarmupDomain.ModsCatalog,
-                        Stage = progress.Stage,
-                        Percent = progress.Percent,
-                        Current = progress.Current,
-                        Total = progress.Total,
-                        Detail = string.IsNullOrWhiteSpace(progress.Detail)
-                            ? "Validating package inventory..."
-                            : progress.Detail,
-                        IsBlocking = true
-                    });
-                }),
+                        host.ReportProgress(new CacheWarmupProgress
+                        {
+                            Domain = CacheWarmupDomain.ModsCatalog,
+                            Stage = progress.Stage,
+                            Percent = progress.Percent,
+                            Current = progress.Current,
+                            Total = progress.Total,
+                            Detail = string.IsNullOrWhiteSpace(progress.Detail)
+                                ? "Validating package inventory..."
+                                : progress.Detail,
+                            IsBlocking = true
+                        });
+                    }),
+                    cancellationToken),
                 cancellationToken).ConfigureAwait(false);
 
             _currentRoot = normalizedRoot;
@@ -390,5 +562,27 @@ public sealed class MainWindowCacheWarmupController
             timing.Fail(ex, "inventory failed", ("modsRoot", normalizedRoot));
             throw;
         }
+    }
+
+    private static string BuildTrayCacheStageLabel(TrayDependencyExportProgress progress)
+    {
+        var detail = progress.Detail?.Trim() ?? string.Empty;
+        if (detail.Length == 0)
+        {
+            return progress.Stage.ToString();
+        }
+
+        var markerIndex = detail.IndexOf("...", StringComparison.Ordinal);
+        if (markerIndex >= 0)
+        {
+            return detail[..(markerIndex + 3)];
+        }
+
+        return detail;
+    }
+
+    private static string BuildTrayWarmupKey(string normalizedRoot, long inventoryVersion)
+    {
+        return normalizedRoot + "|" + inventoryVersion.ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
 }

@@ -1,20 +1,21 @@
-using System.IO;
 using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 
 namespace SimsModDesktop.Presentation.ViewModels;
 
 public sealed class MainWindowStatusController : ObservableObject
 {
-    private readonly StringWriter _logWriter = new();
+    private const string MainWindowLogSource = "MainWindow";
+    private readonly IUiLogSink _uiLogSink;
     private string _statusMessage = string.Empty;
     private bool _isProgressIndeterminate;
     private int _progressValue;
     private string _progressMessage = string.Empty;
     private string _logText = string.Empty;
 
-    public MainWindowStatusController()
+    public MainWindowStatusController(IUiLogSink uiLogSink)
     {
-        PersistentUiLog.ResetIfExists();
+        _uiLogSink = uiLogSink;
+        _uiLogSink.ResetAll();
     }
 
     public string StatusMessage
@@ -56,15 +57,13 @@ public sealed class MainWindowStatusController : ObservableObject
 
     public void ClearLog()
     {
-        _logWriter.GetStringBuilder().Clear();
-        LogText = string.Empty;
-        PersistentUiLog.Append("MainWindow", "[log-cleared]");
+        _uiLogSink.ClearSource(MainWindowLogSource, appendClearedMarker: true);
+        LogText = _uiLogSink.GetSourceText(MainWindowLogSource);
     }
 
     public void AppendLog(string message)
     {
-        _logWriter.WriteLine(message);
-        LogText = _logWriter.ToString();
-        PersistentUiLog.Append("MainWindow", message);
+        _uiLogSink.Append(MainWindowLogSource, message);
+        LogText = _uiLogSink.GetSourceText(MainWindowLogSource);
     }
 }

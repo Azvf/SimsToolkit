@@ -11,6 +11,8 @@ namespace SimsModDesktop.Presentation.ViewModels;
 
 public sealed class MainWindowTrayExportController
 {
+    private const int MaxConcurrentItemExports = 8;
+
     private readonly ITrayDependencyExportService _trayDependencyExportService;
     private readonly MainWindowCacheWarmupController _cacheWarmupController;
     private readonly ILogger<MainWindowTrayExportController> _logger;
@@ -98,20 +100,24 @@ public sealed class MainWindowTrayExportController
         }
 
         var queueEntries = dependencyRequests
-            .Select(request => (
-                request.Item,
+            .Select((request, index) => new QueueEntry(
+                index,
                 request.ItemExportRoot,
                 request.Request,
-                Task: EnqueueTrayExportTask(host, request.Item.Item.DisplayTitle)))
+                EnqueueTrayExportTask(host, request.Item.Item.DisplayTitle)))
             .ToArray();
         using var batchTiming = PerformanceLogScope.Begin(
             _logger,
             "trayexport.batch",
             host.AppendLog,
             ("items", queueEntries.Length),
+            ("concurrency", MaxConcurrentItemExports),
             ("target", exportRoot),
             ("modsPath", queueEntries[0].Request.ModsRootPath));
+        var batchStopwatch = Stopwatch.StartNew();
         host.SetStatus($"Preparing tray export for {queueEntries.Length} selected item(s)...");
+        host.AppendLog(
+            $"[trayexport.batch.start] items={queueEntries.Length} concurrency={MaxConcurrentItemExports} target={exportRoot} modsPath={queueEntries[0].Request.ModsRootPath}");
         host.AppendLog(
             $"[tray-selection] export-start items={queueEntries.Length} target={exportRoot} modsPath={queueEntries[0].Request.ModsRootPath}");
         foreach (var queueEntry in queueEntries)
@@ -119,9 +125,9 @@ public sealed class MainWindowTrayExportController
             queueEntry.Task.UpdatePendingProgress(1, "Preparing tray export...");
         }
 
-        foreach (var queueEntry in queueEntries)
+        foreach (var dependencyRequest in dependencyRequests)
         {
-            LogTraySelectionItemContext(host, queueEntry.Request);
+            LogTraySelectionItemContext(host, dependencyRequest.Request);
         }
 
         if (!_cacheWarmupController.TryGetReadyTraySnapshot(queueEntries[0].Request.ModsRootPath, out var preloadedSnapshot))
@@ -143,150 +149,192 @@ public sealed class MainWindowTrayExportController
         host.AppendLog(
             $"[tray-selection] using-ready-snapshot modsPath={queueEntries[0].Request.ModsRootPath} packages={preloadedSnapshot.Packages.Count}");
 
-        var copiedTrayFileCount = 0;
-        var copiedModFileCount = 0;
-        var warningCount = 0;
-        var createdItemRoots = new List<string>(dependencyRequests.Count);
+        using var batchCts = new CancellationTokenSource();
+        using var runGate = new SemaphoreSlim(MaxConcurrentItemExports, MaxConcurrentItemExports);
+        var itemResults = new ItemRunResult?[queueEntries.Length];
+        var startedEntries = new bool[queueEntries.Length];
+        var runningTasks = new List<Task>(queueEntries.Length);
+        var failureSignaled = 0;
+        var firstFailureReason = string.Empty;
 
-        foreach (var queueEntry in queueEntries)
+        void SignalFailure(string reason)
         {
-            var exportTask = queueEntry.Task;
-            exportTask.SetExportRoot(queueEntry.ItemExportRoot);
-            var exportRequest = queueEntry.Request with { PreloadedSnapshot = preloadedSnapshot };
-            var lastStage = (TrayDependencyExportStage?)null;
-            using var itemTiming = PerformanceLogScope.Begin(
-                _logger,
-                "trayexport.item",
-                host.AppendLog,
-                ("trayKey", queueEntry.Request.TrayItemKey),
-                ("title", queueEntry.Request.ItemTitle));
+            if (Interlocked.CompareExchange(ref failureSignaled, 1, 0) != 0)
+            {
+                return;
+            }
 
-            createdItemRoots.Add(queueEntry.ItemExportRoot);
+            firstFailureReason = string.IsNullOrWhiteSpace(reason) ? "Unknown export failure." : reason.Trim();
+            batchCts.Cancel();
+        }
 
-            host.AppendLog(
-                $"[tray-selection][item] trayKey={queueEntry.Request.TrayItemKey} export-begin title={queueEntry.Request.ItemTitle}");
-            TrayDependencyExportResult result;
+        async Task RunQueueEntryAsync(QueueEntry queueEntry)
+        {
             try
             {
-                result = await _trayDependencyExportService.ExportAsync(
-                    exportRequest,
-                    new Progress<TrayDependencyExportProgress>(progress =>
-                    {
-                        var detail = string.IsNullOrWhiteSpace(progress.Detail)
-                            ? progress.Stage.ToString()
-                            : progress.Detail.Trim();
-                        if (lastStage != progress.Stage)
-                        {
-                            lastStage = progress.Stage;
-                            host.AppendLog(
-                                $"[tray-selection][stage] trayKey={queueEntry.Request.TrayItemKey} stage={progress.Stage} percent={progress.Percent} detail={detail}");
-                            itemTiming.Mark(
-                                "stage",
-                                ("trayKey", queueEntry.Request.TrayItemKey),
-                                ("stage", progress.Stage.ToString()),
-                                ("percent", progress.Percent));
-                        }
-
-                        if (progress.Stage == TrayDependencyExportStage.Preparing)
-                        {
-                            exportTask.MarkTrayRunning(detail);
-                            host.SetStatus(detail);
-                            return;
-                        }
-
-                        if (progress.Stage == TrayDependencyExportStage.Completed)
-                        {
-                            exportTask.UpdateModsProgress(99, detail);
-                            host.SetStatus(detail);
-                            return;
-                        }
-
-                        exportTask.UpdateModsProgress(progress.Percent, detail);
-                        host.SetStatus(detail);
-                    }),
-                    CancellationToken.None);
+                itemResults[queueEntry.ItemIndex] = await RunSingleItemExportAsync(
+                    host,
+                    queueEntry,
+                    preloadedSnapshot,
+                    batchCts.Token,
+                    SignalFailure).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                exportTask.MarkFailed("Mods export failed: " + ex.Message);
-                exportTask.AppendDetailLine(ex.ToString());
-                MarkTrayExportBatchFailed(queueEntries.Select(entry => entry.Task).ToArray(), exportTask, "Rolled back after batch failure.");
-                host.AppendLog($"[tray-selection][rollback] start roots={createdItemRoots.Count}");
-                await Task.Run(() => RollbackTraySelectionExports(createdItemRoots));
-                host.AppendLog($"[tray-selection][rollback] done roots={createdItemRoots.Count}");
-                host.SetStatus("Export failed: " + ex.Message);
-                host.AppendLog($"[tray-selection][internal] export failed for trayKey={queueEntry.Request.TrayItemKey}: {ex.Message}");
-                itemTiming.Fail(ex, "export crashed");
-                batchTiming.Fail(ex, "batch aborted after item failure");
-                return;
-            }
-
-            foreach (var issue in result.Issues)
-            {
-                exportTask.AppendDetailLine(issue.Message);
-                host.AppendLog($"[tray-selection][internal] {issue.Severity}: {issue.Message}");
-            }
-
-            host.AppendLog(
-                $"[tray-selection][item] trayKey={queueEntry.Request.TrayItemKey} success={result.Success} tray={result.CopiedTrayFileCount} mods={result.CopiedModFileCount} issues={result.Issues.Count}");
-            if (result.Diagnostics is not null)
-            {
+                var failureStatus = "Mods export failed: " + ex.Message;
+                await host.RunOnUiAsync(() =>
+                {
+                    queueEntry.Task.MarkFailed(failureStatus);
+                    queueEntry.Task.AppendDetailLine(ex.ToString());
+                }).ConfigureAwait(false);
                 host.AppendLog(
-                    $"[tray-selection][diag] trayKey={queueEntry.Request.TrayItemKey} inputFiles={result.Diagnostics.InputSourceFileCount} bundleTray={result.Diagnostics.BundleTrayItemFileCount} bundleAux={result.Diagnostics.BundleAuxiliaryFileCount} candidateIds={result.Diagnostics.CandidateIdCount} resourceKeys={result.Diagnostics.CandidateResourceKeyCount} packages={result.Diagnostics.SnapshotPackageCount} direct={result.Diagnostics.DirectMatchCount} expanded={result.Diagnostics.ExpandedMatchCount}");
+                    $"[trayexport.item.fail] itemIndex={queueEntry.ItemIndex} trayKey={queueEntry.Request.TrayItemKey} title={queueEntry.Request.ItemTitle} reason={ex.Message}");
+                itemResults[queueEntry.ItemIndex] = new ItemRunResult(
+                    ItemRunResultKind.Failed,
+                    0,
+                    0,
+                    false,
+                    failureStatus);
+                SignalFailure(ex.Message);
             }
-            if (result.CopiedModFileCount == 0)
+            finally
             {
-                host.AppendLog($"[tray-selection][item] trayKey={queueEntry.Request.TrayItemKey} no matched mod files exported");
+                runGate.Release();
             }
-
-            if (!result.Success)
-            {
-                var failure = result.Issues.FirstOrDefault(issue => issue.Severity == TrayDependencyIssueSeverity.Error)?.Message
-                              ?? "Unknown error.";
-                exportTask.MarkFailed("Mods export failed: " + failure);
-                MarkTrayExportBatchFailed(queueEntries.Select(entry => entry.Task).ToArray(), exportTask, "Rolled back after batch failure.");
-                host.AppendLog($"[tray-selection][rollback] start roots={createdItemRoots.Count}");
-                await Task.Run(() => RollbackTraySelectionExports(createdItemRoots));
-                host.AppendLog($"[tray-selection][rollback] done roots={createdItemRoots.Count}");
-                host.SetStatus("Export failed: " + failure);
-                host.AppendLog($"[tray-selection][internal] export failed for trayKey={queueEntry.Request.TrayItemKey}: {failure}");
-                itemTiming.Fail(new InvalidOperationException(failure), "export completed with errors");
-                batchTiming.Fail(new InvalidOperationException(failure), "batch aborted after item error");
-                return;
-            }
-
-            copiedTrayFileCount += result.CopiedTrayFileCount;
-            copiedModFileCount += result.CopiedModFileCount;
-            if (result.HasMissingReferenceWarnings)
-            {
-                warningCount++;
-                exportTask.MarkCompleted("Completed (missing references ignored).", failed: false);
-                itemTiming.Success(
-                    "completed with warnings",
-                    ("trayFiles", result.CopiedTrayFileCount),
-                    ("modFiles", result.CopiedModFileCount),
-                    ("issues", result.Issues.Count));
-                continue;
-            }
-
-            exportTask.MarkCompleted("Completed.", failed: false);
-            itemTiming.Success(
-                "completed",
-                ("trayFiles", result.CopiedTrayFileCount),
-                ("modFiles", result.CopiedModFileCount),
-                ("issues", result.Issues.Count));
         }
 
-        host.SetStatus(warningCount == 0
-            ? $"Exported {copiedTrayFileCount} tray files and {copiedModFileCount} referenced mod files."
-            : $"Exported {copiedTrayFileCount} tray files and {copiedModFileCount} referenced mod files ({warningCount} warning item(s) ignored).");
+        foreach (var queueEntry in queueEntries)
+        {
+            if (batchCts.IsCancellationRequested)
+            {
+                break;
+            }
 
-        host.AppendLog($"[tray-selection] export tray={copiedTrayFileCount} mods={copiedModFileCount} items={dependencyRequests.Count} warnings={warningCount} target={exportRoot}");
+            try
+            {
+                await runGate.WaitAsync(batchCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (batchCts.IsCancellationRequested)
+            {
+                break;
+            }
+
+            startedEntries[queueEntry.ItemIndex] = true;
+            runningTasks.Add(RunQueueEntryAsync(queueEntry));
+        }
+
+        if (runningTasks.Count > 0)
+        {
+            await Task.WhenAll(runningTasks).ConfigureAwait(false);
+        }
+
+        for (var index = 0; index < itemResults.Length; index++)
+        {
+            itemResults[index] ??= new ItemRunResult(
+                ItemRunResultKind.Cancelled,
+                0,
+                0,
+                false,
+                "Cancelled after batch failure.");
+        }
+
+        var completedResults = itemResults.Select(result => result!).ToArray();
+        var copiedTrayFileCount = completedResults
+            .Where(result => result.Kind is ItemRunResultKind.Success or ItemRunResultKind.SuccessWithWarnings)
+            .Sum(result => result.CopiedTrayFileCount);
+        var copiedModFileCount = completedResults
+            .Where(result => result.Kind is ItemRunResultKind.Success or ItemRunResultKind.SuccessWithWarnings)
+            .Sum(result => result.CopiedModFileCount);
+        var warningCount = completedResults.Count(result => result.Kind == ItemRunResultKind.SuccessWithWarnings);
+        var successCount = completedResults.Count(result => result.Kind is ItemRunResultKind.Success or ItemRunResultKind.SuccessWithWarnings);
+        var failedCount = completedResults.Count(result => result.Kind == ItemRunResultKind.Failed);
+        var cancelledCount = completedResults.Count(result => result.Kind == ItemRunResultKind.Cancelled);
+
+        if (failureSignaled == 1)
+        {
+            var reason = string.IsNullOrWhiteSpace(firstFailureReason)
+                ? "Unknown export failure."
+                : firstFailureReason;
+            var rollbackRoots = queueEntries
+                .Where(entry => startedEntries[entry.ItemIndex])
+                .Select(entry => entry.ItemExportRoot)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var rollbackStopwatch = Stopwatch.StartNew();
+            host.AppendLog(
+                $"[trayexport.batch.rollback.start] createdRoots={rollbackRoots.Length} reason={reason}");
+            await Task.Run(() => RollbackTraySelectionExports(rollbackRoots)).ConfigureAwait(false);
+            host.AppendLog(
+                $"[trayexport.batch.rollback.done] createdRoots={rollbackRoots.Length} elapsedMs={rollbackStopwatch.ElapsedMilliseconds} reason={reason}");
+
+            var rolledBackCount = 0;
+            await host.RunOnUiAsync(() =>
+            {
+                foreach (var queueEntry in queueEntries)
+                {
+                    var result = completedResults[queueEntry.ItemIndex];
+                    switch (result.Kind)
+                    {
+                        case ItemRunResultKind.Success:
+                        case ItemRunResultKind.SuccessWithWarnings:
+                            rolledBackCount++;
+                            queueEntry.Task.MarkFailed("Rolled back after batch failure.");
+                            break;
+                        case ItemRunResultKind.Cancelled:
+                            if (queueEntry.Task.IsRunning)
+                            {
+                                queueEntry.Task.MarkFailed("Cancelled after batch failure.");
+                            }
+
+                            break;
+                        case ItemRunResultKind.Failed:
+                            if (queueEntry.Task.IsRunning)
+                            {
+                                queueEntry.Task.MarkFailed(result.FailureStatus ?? "Mods export failed.");
+                            }
+
+                            break;
+                    }
+                }
+
+                host.SetStatus("Export failed: " + reason);
+            }).ConfigureAwait(false);
+
+            host.AppendLog(
+                $"[trayexport.batch.done] successCount=0 failedCount={queueEntries.Length} rolledBackCount={rolledBackCount} elapsedMs={batchStopwatch.ElapsedMilliseconds}");
+            batchTiming.Fail(
+                new InvalidOperationException(reason),
+                "batch aborted after item failure",
+                ("successCount", successCount),
+                ("failedCount", failedCount),
+                ("cancelledCount", cancelledCount),
+                ("rolledBackCount", rolledBackCount),
+                ("concurrency", MaxConcurrentItemExports),
+                ("elapsedMs", batchStopwatch.ElapsedMilliseconds));
+            return;
+        }
+
+        await host.RunOnUiAsync(() =>
+        {
+            host.SetStatus(warningCount == 0
+                ? $"Exported {copiedTrayFileCount} tray files and {copiedModFileCount} referenced mod files."
+                : $"Exported {copiedTrayFileCount} tray files and {copiedModFileCount} referenced mod files ({warningCount} warning item(s) ignored).");
+        }).ConfigureAwait(false);
+
+        host.AppendLog(
+            $"[tray-selection] export tray={copiedTrayFileCount} mods={copiedModFileCount} items={dependencyRequests.Count} warnings={warningCount} target={exportRoot}");
+        host.AppendLog(
+            $"[trayexport.batch.done] successCount={successCount} failedCount={failedCount} rolledBackCount=0 elapsedMs={batchStopwatch.ElapsedMilliseconds}");
         batchTiming.Success(
             "batch completed",
             ("trayFiles", copiedTrayFileCount),
             ("modFiles", copiedModFileCount),
-            ("warnings", warningCount));
+            ("warnings", warningCount),
+            ("successCount", successCount),
+            ("failedCount", failedCount),
+            ("cancelledCount", cancelledCount),
+            ("concurrency", MaxConcurrentItemExports),
+            ("elapsedMs", batchStopwatch.ElapsedMilliseconds));
     }
 
     internal void SelectAllTrayPreviewPage(MainWindowTrayExportHost host)
@@ -393,29 +441,211 @@ public sealed class MainWindowTrayExportController
         return task;
     }
 
-    private static void MarkTrayExportBatchFailed(
-        IReadOnlyList<TrayExportTaskItemViewModel> queueEntries,
-        TrayExportTaskItemViewModel failedTask,
-        string rollbackStatus)
+    private async Task<ItemRunResult> RunSingleItemExportAsync(
+        MainWindowTrayExportHost host,
+        QueueEntry queueEntry,
+        PackageIndexSnapshot preloadedSnapshot,
+        CancellationToken cancellationToken,
+        Action<string> signalFailure)
     {
-        foreach (var queueTask in queueEntries)
+        await host.RunOnUiAsync(() =>
         {
-            if (ReferenceEquals(queueTask, failedTask))
-            {
-                continue;
-            }
+            queueEntry.Task.SetExportRoot(queueEntry.ItemExportRoot);
+        }).ConfigureAwait(false);
 
-            if (queueTask.IsCompleted && !queueTask.IsFailed)
-            {
-                queueTask.MarkFailed(rollbackStatus);
-                continue;
-            }
+        var exportRequest = queueEntry.Request with { PreloadedSnapshot = preloadedSnapshot };
+        var lastStage = (TrayDependencyExportStage?)null;
+        using var itemTiming = PerformanceLogScope.Begin(
+            _logger,
+            "trayexport.item",
+            host.AppendLog,
+            ("itemIndex", queueEntry.ItemIndex),
+            ("trayKey", queueEntry.Request.TrayItemKey),
+            ("title", queueEntry.Request.ItemTitle));
 
-            if (queueTask.IsRunning)
+        host.AppendLog(
+            $"[trayexport.item.start] itemIndex={queueEntry.ItemIndex} trayKey={queueEntry.Request.TrayItemKey} title={queueEntry.Request.ItemTitle}");
+        host.AppendLog(
+            $"[tray-selection][item] trayKey={queueEntry.Request.TrayItemKey} export-begin title={queueEntry.Request.ItemTitle}");
+
+        TrayDependencyExportResult result;
+        try
+        {
+            result = await _trayDependencyExportService.ExportAsync(
+                exportRequest,
+                new Progress<TrayDependencyExportProgress>(progress =>
+                {
+                    var detail = string.IsNullOrWhiteSpace(progress.Detail)
+                        ? progress.Stage.ToString()
+                        : progress.Detail.Trim();
+                    if (lastStage != progress.Stage)
+                    {
+                        lastStage = progress.Stage;
+                        host.AppendLog(
+                            $"[tray-selection][stage] itemIndex={queueEntry.ItemIndex} trayKey={queueEntry.Request.TrayItemKey} stage={progress.Stage} percent={progress.Percent} detail={detail}");
+                        itemTiming.Mark(
+                            "stage",
+                            ("itemIndex", queueEntry.ItemIndex),
+                            ("trayKey", queueEntry.Request.TrayItemKey),
+                            ("stage", progress.Stage.ToString()),
+                            ("percent", progress.Percent));
+                    }
+
+                    _ = host.RunOnUiAsync(() =>
+                    {
+                        // Progress callbacks can be delivered after completion on background threads.
+                        // Ignore late updates so final status text is not overwritten.
+                        if (!queueEntry.Task.IsRunning)
+                        {
+                            return;
+                        }
+
+                        if (progress.Stage == TrayDependencyExportStage.Preparing)
+                        {
+                            queueEntry.Task.MarkTrayRunning(detail);
+                            return;
+                        }
+
+                        if (progress.Stage == TrayDependencyExportStage.Completed)
+                        {
+                            queueEntry.Task.UpdateModsProgress(99, detail);
+                            return;
+                        }
+
+                        queueEntry.Task.UpdateModsProgress(progress.Percent, detail);
+                    });
+                }),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            const string cancelledStatus = "Cancelled after batch failure.";
+            await host.RunOnUiAsync(() =>
             {
-                queueTask.MarkFailed("Cancelled after batch failure.");
+                if (queueEntry.Task.IsRunning)
+                {
+                    queueEntry.Task.MarkFailed(cancelledStatus);
+                }
+            }).ConfigureAwait(false);
+            host.AppendLog(
+                $"[trayexport.item.fail] itemIndex={queueEntry.ItemIndex} trayKey={queueEntry.Request.TrayItemKey} title={queueEntry.Request.ItemTitle} reason=cancelled");
+            itemTiming.Cancel("export-cancelled");
+            return new ItemRunResult(
+                ItemRunResultKind.Cancelled,
+                0,
+                0,
+                false,
+                cancelledStatus);
+        }
+        catch (Exception ex)
+        {
+            var failureStatus = "Mods export failed: " + ex.Message;
+            await host.RunOnUiAsync(() =>
+            {
+                queueEntry.Task.MarkFailed(failureStatus);
+                queueEntry.Task.AppendDetailLine(ex.ToString());
+            }).ConfigureAwait(false);
+            host.AppendLog($"[tray-selection][internal] export failed for trayKey={queueEntry.Request.TrayItemKey}: {ex.Message}");
+            host.AppendLog(
+                $"[trayexport.item.fail] itemIndex={queueEntry.ItemIndex} trayKey={queueEntry.Request.TrayItemKey} title={queueEntry.Request.ItemTitle} reason={ex.Message}");
+            signalFailure(ex.Message);
+            itemTiming.Fail(ex, "export crashed");
+            return new ItemRunResult(
+                ItemRunResultKind.Failed,
+                0,
+                0,
+                false,
+                failureStatus);
+        }
+
+        if (result.Issues.Count > 0)
+        {
+            await host.RunOnUiAsync(() =>
+            {
+                foreach (var issue in result.Issues)
+                {
+                    queueEntry.Task.AppendDetailLine(issue.Message);
+                }
+            }).ConfigureAwait(false);
+            foreach (var issue in result.Issues)
+            {
+                host.AppendLog($"[tray-selection][internal] {issue.Severity}: {issue.Message}");
             }
         }
+
+        host.AppendLog(
+            $"[tray-selection][item] trayKey={queueEntry.Request.TrayItemKey} success={result.Success} tray={result.CopiedTrayFileCount} mods={result.CopiedModFileCount} issues={result.Issues.Count}");
+        if (result.Diagnostics is not null)
+        {
+            host.AppendLog(
+                $"[tray-selection][diag] itemIndex={queueEntry.ItemIndex} trayKey={queueEntry.Request.TrayItemKey} inputFiles={result.Diagnostics.InputSourceFileCount} bundleTray={result.Diagnostics.BundleTrayItemFileCount} bundleAux={result.Diagnostics.BundleAuxiliaryFileCount} candidateIds={result.Diagnostics.CandidateIdCount} resourceKeys={result.Diagnostics.CandidateResourceKeyCount} packages={result.Diagnostics.SnapshotPackageCount} direct={result.Diagnostics.DirectMatchCount} expanded={result.Diagnostics.ExpandedMatchCount}");
+        }
+        if (result.CopiedModFileCount == 0)
+        {
+            host.AppendLog($"[tray-selection][item] trayKey={queueEntry.Request.TrayItemKey} no matched mod files exported");
+        }
+
+        if (!result.Success)
+        {
+            var failure = result.Issues.FirstOrDefault(issue => issue.Severity == TrayDependencyIssueSeverity.Error)?.Message
+                          ?? "Unknown error.";
+            var failureStatus = "Mods export failed: " + failure;
+            await host.RunOnUiAsync(() =>
+            {
+                queueEntry.Task.MarkFailed(failureStatus);
+            }).ConfigureAwait(false);
+            host.AppendLog(
+                $"[trayexport.item.fail] itemIndex={queueEntry.ItemIndex} trayKey={queueEntry.Request.TrayItemKey} title={queueEntry.Request.ItemTitle} reason={failure}");
+            signalFailure(failure);
+            itemTiming.Fail(new InvalidOperationException(failure), "export completed with errors");
+            return new ItemRunResult(
+                ItemRunResultKind.Failed,
+                result.CopiedTrayFileCount,
+                result.CopiedModFileCount,
+                result.HasMissingReferenceWarnings,
+                failureStatus);
+        }
+
+        if (result.HasMissingReferenceWarnings)
+        {
+            await host.RunOnUiAsync(() =>
+            {
+                queueEntry.Task.MarkCompleted("Completed (missing references ignored).", failed: false);
+            }).ConfigureAwait(false);
+            host.AppendLog(
+                $"[trayexport.item.done] itemIndex={queueEntry.ItemIndex} trayKey={queueEntry.Request.TrayItemKey} title={queueEntry.Request.ItemTitle} success=true warnings=true tray={result.CopiedTrayFileCount} mods={result.CopiedModFileCount}");
+            itemTiming.Success(
+                "completed with warnings",
+                ("itemIndex", queueEntry.ItemIndex),
+                ("trayFiles", result.CopiedTrayFileCount),
+                ("modFiles", result.CopiedModFileCount),
+                ("issues", result.Issues.Count));
+            return new ItemRunResult(
+                ItemRunResultKind.SuccessWithWarnings,
+                result.CopiedTrayFileCount,
+                result.CopiedModFileCount,
+                true,
+                null);
+        }
+
+        await host.RunOnUiAsync(() =>
+        {
+            queueEntry.Task.MarkCompleted("Completed.", failed: false);
+        }).ConfigureAwait(false);
+        host.AppendLog(
+            $"[trayexport.item.done] itemIndex={queueEntry.ItemIndex} trayKey={queueEntry.Request.TrayItemKey} title={queueEntry.Request.ItemTitle} success=true warnings=false tray={result.CopiedTrayFileCount} mods={result.CopiedModFileCount}");
+        itemTiming.Success(
+            "completed",
+            ("itemIndex", queueEntry.ItemIndex),
+            ("trayFiles", result.CopiedTrayFileCount),
+            ("modFiles", result.CopiedModFileCount),
+            ("issues", result.Issues.Count));
+        return new ItemRunResult(
+            ItemRunResultKind.Success,
+            result.CopiedTrayFileCount,
+            result.CopiedModFileCount,
+            false,
+            null);
     }
 
     private static void RollbackTraySelectionExports(IEnumerable<string> exportRoots)
@@ -672,6 +902,27 @@ public sealed class MainWindowTrayExportController
             NotifyTrayExportQueueChanged(_hookedHost);
         }
     }
+
+    private sealed record QueueEntry(
+        int ItemIndex,
+        string ItemExportRoot,
+        TrayDependencyExportRequest Request,
+        TrayExportTaskItemViewModel Task);
+
+    private enum ItemRunResultKind
+    {
+        Success,
+        SuccessWithWarnings,
+        Failed,
+        Cancelled
+    }
+
+    private sealed record ItemRunResult(
+        ItemRunResultKind Kind,
+        int CopiedTrayFileCount,
+        int CopiedModFileCount,
+        bool HasMissingReferenceWarnings,
+        string? FailureStatus);
 
     private static readonly string[] SupportedTrayExportExtensions =
     [

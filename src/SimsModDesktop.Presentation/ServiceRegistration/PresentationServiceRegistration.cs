@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Presentation.Shell;
 using SimsModDesktop.Presentation.Services;
+using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 using SimsModDesktop.Presentation.ViewModels;
 using SimsModDesktop.Presentation.ViewModels.Panels;
 using SimsModDesktop.Presentation.ViewModels.Preview;
@@ -19,6 +20,7 @@ public static class PresentationServiceRegistration
         services.AddSingleton<ShellNavigationState>();
         services.AddSingleton<INavigationService, NavigationService>();
         services.AddSingleton<ITrayDependenciesLauncher, TrayDependenciesLauncher>();
+        services.AddSingleton<IUiLogSink, UiLogSink>();
         services.AddSingleton<MainWindowStatusController>();
         services.AddSingleton<MainWindowSettingsPersistenceController>();
         services.AddSingleton<MainWindowRecoveryController>();

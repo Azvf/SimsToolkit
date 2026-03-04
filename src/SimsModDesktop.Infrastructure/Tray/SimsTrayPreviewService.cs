@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace SimsModDesktop.Infrastructure.Tray;
 
@@ -29,42 +31,47 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
 
     private const int MaxPreviewFileNames = 12;
     private const int MaxSupportedHouseholdMembers = 8;
-    private const int MaxCachedSnapshots = 8;
+    private const int MaxCachedRootSnapshots = 8;
+    private const int MaxCachedProjectedSnapshots = 32;
     private readonly TrayMetadataIndexStore _metadataIndexStore;
     private readonly ITrayThumbnailService _trayThumbnailService;
     private readonly ITrayMetadataService _trayMetadataService;
+    private readonly ILogger<SimsTrayPreviewService> _logger;
     private readonly object _cacheGate = new();
     private readonly object _metadataIndexGate = new();
     private readonly object _thumbnailCleanupGate = new();
-    private readonly Dictionary<string, CachedSnapshot> _snapshotCache = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, RootSnapshot> _rootSnapshotCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, CachedSnapshot> _projectedSnapshotCache = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TrayMetadataIndexState> _metadataIndexCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Task> _thumbnailCleanupTasks = new(StringComparer.OrdinalIgnoreCase);
 
     public SimsTrayPreviewService()
-        : this(null, null, null)
+        : this(null, null, null, null)
     {
     }
 
     public SimsTrayPreviewService(ITrayThumbnailService? trayThumbnailService)
-        : this(trayThumbnailService, null, null)
+        : this(trayThumbnailService, null, null, null)
     {
     }
 
     public SimsTrayPreviewService(
         ITrayThumbnailService? trayThumbnailService,
         ITrayMetadataService? trayMetadataService)
-        : this(trayThumbnailService, trayMetadataService, null)
+        : this(trayThumbnailService, trayMetadataService, null, null)
     {
     }
 
     public SimsTrayPreviewService(
         ITrayThumbnailService? trayThumbnailService,
         ITrayMetadataService? trayMetadataService,
-        TrayMetadataIndexStore? metadataIndexStore)
+        TrayMetadataIndexStore? metadataIndexStore,
+        ILogger<SimsTrayPreviewService>? logger = null)
     {
         _metadataIndexStore = metadataIndexStore ?? new TrayMetadataIndexStore();
         _trayThumbnailService = trayThumbnailService ?? new TrayThumbnailService();
         _trayMetadataService = trayMetadataService ?? new TrayMetadataService();
+        _logger = logger ?? NullLogger<SimsTrayPreviewService>.Instance;
     }
 
     public Task<SimsTrayPreviewSummary> BuildSummaryAsync(
@@ -123,7 +130,8 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         {
             lock (_cacheGate)
             {
-                _snapshotCache.Clear();
+                _rootSnapshotCache.Clear();
+                _projectedSnapshotCache.Clear();
             }
 
             lock (_metadataIndexGate)
@@ -135,18 +143,11 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         }
 
         var normalizedTrayRoot = NormalizeTrayRootPath(trayRootPath);
-        var cacheKeyPrefix = normalizedTrayRoot + "|";
 
         lock (_cacheGate)
         {
-            var staleKeys = _snapshotCache.Keys
-                .Where(key => key.StartsWith(cacheKeyPrefix, StringComparison.Ordinal))
-                .ToArray();
-
-            foreach (var staleKey in staleKeys)
-            {
-                _snapshotCache.Remove(staleKey);
-            }
+            _rootSnapshotCache.Remove(normalizedTrayRoot);
+            RemoveProjectedSnapshotsByRoot_NoLock(normalizedTrayRoot);
         }
 
         lock (_metadataIndexGate)
@@ -159,33 +160,34 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         SimsTrayPreviewRequest request,
         CancellationToken cancellationToken)
     {
-        var cacheKey = BuildCacheKey(request);
+        var rootSnapshot = GetOrBuildRootSnapshot(request, cancellationToken);
+        var cacheKey = BuildProjectedCacheKey(request, rootSnapshot);
 
         lock (_cacheGate)
         {
-            if (_snapshotCache.TryGetValue(cacheKey, out var cached))
+            if (_projectedSnapshotCache.TryGetValue(cacheKey, out var cached))
             {
                 return cached;
             }
         }
 
-        var built = BuildSnapshotCore(request, cacheKey, cancellationToken);
+        var built = BuildProjectedSnapshotCore(request, rootSnapshot, cacheKey, cancellationToken);
 
         lock (_cacheGate)
         {
-            _snapshotCache[cacheKey] = built;
+            _projectedSnapshotCache[cacheKey] = built;
 
-            if (_snapshotCache.Count > MaxCachedSnapshots)
+            if (_projectedSnapshotCache.Count > MaxCachedProjectedSnapshots)
             {
-                var staleKeys = _snapshotCache
+                var staleKeys = _projectedSnapshotCache
                     .OrderBy(pair => pair.Value.CachedAtUtc)
-                    .Take(_snapshotCache.Count - MaxCachedSnapshots)
+                    .Take(_projectedSnapshotCache.Count - MaxCachedProjectedSnapshots)
                     .Select(pair => pair.Key)
                     .ToList();
 
                 foreach (var staleKey in staleKeys)
                 {
-                    _snapshotCache.Remove(staleKey);
+                    _projectedSnapshotCache.Remove(staleKey);
                 }
             }
 
@@ -193,13 +195,105 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         }
     }
 
-    private CachedSnapshot BuildSnapshotCore(
+    private RootSnapshot GetOrBuildRootSnapshot(
         SimsTrayPreviewRequest request,
-        string cacheKey,
         CancellationToken cancellationToken)
     {
         var trayPath = request.TrayPath.Trim();
         var normalizedTrayRoot = NormalizeTrayRootPath(trayPath);
+        var directoryWriteUtcTicks = Directory.GetLastWriteTimeUtc(normalizedTrayRoot).Ticks;
+
+        lock (_cacheGate)
+        {
+            if (_rootSnapshotCache.TryGetValue(normalizedTrayRoot, out var cached) &&
+                cached.DirectoryWriteUtcTicks == directoryWriteUtcTicks)
+            {
+                _logger.LogDebug(
+                    "traypreview.rootsnapshot.hit trayRoot={TrayRoot} fingerprint={Fingerprint} rowCount={RowCount}",
+                    normalizedTrayRoot,
+                    cached.RootFingerprint,
+                    cached.RowDescriptors.Count);
+                return cached;
+            }
+        }
+
+        var startedAt = Environment.TickCount64;
+        var built = BuildRootSnapshotCore(
+            trayPath,
+            normalizedTrayRoot,
+            directoryWriteUtcTicks,
+            cancellationToken);
+
+        lock (_cacheGate)
+        {
+            _rootSnapshotCache[normalizedTrayRoot] = built;
+            RemoveProjectedSnapshotsByRoot_NoLock(normalizedTrayRoot);
+
+            if (_rootSnapshotCache.Count > MaxCachedRootSnapshots)
+            {
+                var staleRoots = _rootSnapshotCache
+                    .OrderBy(pair => pair.Value.CachedAtUtc)
+                    .Take(_rootSnapshotCache.Count - MaxCachedRootSnapshots)
+                    .Select(pair => pair.Key)
+                    .ToList();
+
+                foreach (var staleRoot in staleRoots)
+                {
+                    _rootSnapshotCache.Remove(staleRoot);
+                    RemoveProjectedSnapshotsByRoot_NoLock(staleRoot);
+                }
+            }
+        }
+
+        _logger.LogDebug(
+            "traypreview.rootsnapshot.miss trayRoot={TrayRoot} fingerprint={Fingerprint} rowCount={RowCount} elapsedMs={ElapsedMs}",
+            normalizedTrayRoot,
+            built.RootFingerprint,
+            built.RowDescriptors.Count,
+            Environment.TickCount64 - startedAt);
+        return built;
+    }
+
+    private CachedSnapshot BuildProjectedSnapshotCore(
+        SimsTrayPreviewRequest request,
+        RootSnapshot rootSnapshot,
+        string cacheKey,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        IEnumerable<PreviewRowDescriptor> orderedRows = rootSnapshot.RowDescriptors;
+        orderedRows = ApplyPresetTypeFilter(orderedRows, request.PresetTypeFilter);
+        orderedRows = ApplyBuildSizeFilter(orderedRows, request.BuildSizeFilter);
+        orderedRows = ApplyHouseholdSizeFilter(orderedRows, request.HouseholdSizeFilter);
+        orderedRows = ApplyTimeFilter(orderedRows, request.TimeFilter);
+        if (HasMetadataDependentFilters(request))
+        {
+            var preIndexedRows = orderedRows.ToList();
+            EnsureMetadataIndex(rootSnapshot.NormalizedTrayRoot, preIndexedRows, cancellationToken);
+            var metadataIndex = GetMetadataIndexEntries(rootSnapshot.NormalizedTrayRoot, preIndexedRows);
+
+            orderedRows = ApplyAuthorFilter(preIndexedRows, request.AuthorFilter, metadataIndex);
+            orderedRows = ApplySearchFilter(orderedRows, request.SearchQuery, metadataIndex);
+        }
+
+        var filteredRows = orderedRows.ToList();
+        return new CachedSnapshot
+        {
+            CacheKey = cacheKey,
+            RootFingerprint = rootSnapshot.RootFingerprint,
+            RowDescriptors = filteredRows,
+            Summary = CreateSummary(filteredRows),
+            CachedAtUtc = DateTime.UtcNow
+        };
+    }
+
+    private RootSnapshot BuildRootSnapshotCore(
+        string trayPath,
+        string normalizedTrayRoot,
+        long directoryWriteUtcTicks,
+        CancellationToken cancellationToken)
+    {
         var dir = new DirectoryInfo(trayPath);
         if (!dir.Exists)
         {
@@ -313,7 +407,7 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
             childGroups.Add(group);
         }
 
-        IEnumerable<PreviewRowDescriptor> orderedRows = groups
+        var orderedRows = groups
             .Values
             .Where(group => !childParentKeys.ContainsKey(group.Key))
             .Select(group => CreatePreviewRowDescriptor(
@@ -324,33 +418,32 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
             .OrderByDescending(item => item.LatestWriteTimeLocal)
             .ThenByDescending(item => item.FileCount)
             .ThenByDescending(item => item.TotalBytes)
-            .ThenBy(item => item.Group.Key, StringComparer.OrdinalIgnoreCase);
+            .ThenBy(item => item.Group.Key, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
         ScheduleThumbnailCleanup(trayPath, groups.Keys.ToArray());
 
-        orderedRows = ApplyPresetTypeFilter(orderedRows, request.PresetTypeFilter);
-        orderedRows = ApplyBuildSizeFilter(orderedRows, request.BuildSizeFilter);
-        orderedRows = ApplyHouseholdSizeFilter(orderedRows, request.HouseholdSizeFilter);
-        orderedRows = ApplyTimeFilter(orderedRows, request.TimeFilter);
-        if (HasMetadataDependentFilters(request))
+        return new RootSnapshot
         {
-            var preIndexedRows = orderedRows.ToList();
-            EnsureMetadataIndex(normalizedTrayRoot, preIndexedRows, cancellationToken);
-            var metadataIndex = GetMetadataIndexEntries(normalizedTrayRoot, preIndexedRows);
-
-            orderedRows = ApplyAuthorFilter(preIndexedRows, request.AuthorFilter, metadataIndex);
-            orderedRows = ApplySearchFilter(orderedRows, request.SearchQuery, metadataIndex);
-        }
-
-        var filteredRows = orderedRows.ToList();
-
-        return new CachedSnapshot
-        {
-            CacheKey = cacheKey,
-            RowDescriptors = filteredRows,
-            Summary = CreateSummary(filteredRows),
+            NormalizedTrayRoot = normalizedTrayRoot,
+            DirectoryWriteUtcTicks = directoryWriteUtcTicks,
+            RootFingerprint = BuildRootFingerprint(normalizedTrayRoot, directoryWriteUtcTicks, orderedRows),
+            RowDescriptors = orderedRows,
             CachedAtUtc = DateTime.UtcNow
         };
+    }
+
+    private void RemoveProjectedSnapshotsByRoot_NoLock(string normalizedTrayRoot)
+    {
+        var projectionKeyPrefix = normalizedTrayRoot + "|";
+        var staleProjectionKeys = _projectedSnapshotCache.Keys
+            .Where(key => key.StartsWith(projectionKeyPrefix, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+        foreach (var staleProjectionKey in staleProjectionKeys)
+        {
+            _projectedSnapshotCache.Remove(staleProjectionKey);
+        }
     }
 
     private IReadOnlyList<SimsTrayPreviewItem> BuildPageItems(
@@ -1231,9 +1324,8 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         return true;
     }
 
-    private static string BuildCacheKey(SimsTrayPreviewRequest request)
+    private static string BuildProjectedCacheKey(SimsTrayPreviewRequest request, RootSnapshot rootSnapshot)
     {
-        var normalizedTrayPath = Path.GetFullPath(request.TrayPath.Trim()).TrimEnd(Path.DirectorySeparatorChar).ToLowerInvariant();
         var normalizedPresetTypeFilter = NormalizeFilterToken(request.PresetTypeFilter);
         var normalizedBuildSizeFilter = NormalizeFilterToken(request.BuildSizeFilter);
         var normalizedHouseholdSizeFilter = NormalizeFilterToken(request.HouseholdSizeFilter);
@@ -1243,14 +1335,42 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
 
         return string.Join(
             "|",
-            normalizedTrayPath,
-            request.PageSize,
+            rootSnapshot.NormalizedTrayRoot.ToLowerInvariant(),
+            rootSnapshot.RootFingerprint,
             normalizedPresetTypeFilter,
             normalizedBuildSizeFilter,
             normalizedHouseholdSizeFilter,
             normalizedAuthorFilter,
             normalizedTimeFilter,
             normalizedSearchQuery);
+    }
+
+    private static string BuildRootFingerprint(
+        string normalizedTrayRoot,
+        long directoryWriteUtcTicks,
+        IReadOnlyCollection<PreviewRowDescriptor> rows)
+    {
+        unchecked
+        {
+            long hash = 17;
+            hash = (hash * 31) + StringComparer.OrdinalIgnoreCase.GetHashCode(normalizedTrayRoot);
+            hash = (hash * 31) + directoryWriteUtcTicks.GetHashCode();
+            hash = (hash * 31) + rows.Count.GetHashCode();
+
+            foreach (var row in rows)
+            {
+                hash = (hash * 31) + StringComparer.OrdinalIgnoreCase.GetHashCode(row.Group.Key);
+                hash = (hash * 31) + row.FileCount.GetHashCode();
+                hash = (hash * 31) + row.TotalBytes.GetHashCode();
+                hash = (hash * 31) + row.LatestWriteTimeLocal.Ticks.GetHashCode();
+            }
+
+            return string.Join(
+                "-",
+                directoryWriteUtcTicks.ToString("x16", CultureInfo.InvariantCulture),
+                rows.Count.ToString("x8", CultureInfo.InvariantCulture),
+                hash.ToString("x16", CultureInfo.InvariantCulture));
+        }
     }
 
     private static TrayIdentity ParseIdentity(string fileName)
@@ -1886,9 +2006,19 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         return null;
     }
 
+    private sealed class RootSnapshot
+    {
+        public required string NormalizedTrayRoot { get; init; }
+        public required long DirectoryWriteUtcTicks { get; init; }
+        public required string RootFingerprint { get; init; }
+        public IReadOnlyList<PreviewRowDescriptor> RowDescriptors { get; init; } = Array.Empty<PreviewRowDescriptor>();
+        public required DateTime CachedAtUtc { get; init; }
+    }
+
     private sealed class CachedSnapshot
     {
         public required string CacheKey { get; init; }
+        public required string RootFingerprint { get; init; }
         public IReadOnlyList<SimsTrayPreviewItem> Rows { get; init; } = Array.Empty<SimsTrayPreviewItem>();
         public IReadOnlyList<PreviewRowDescriptor> RowDescriptors { get; init; } = Array.Empty<PreviewRowDescriptor>();
         public required SimsTrayPreviewSummary Summary { get; init; }

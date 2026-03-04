@@ -1,8 +1,81 @@
 
+using Microsoft.Extensions.Logging;
+
 namespace SimsModDesktop.Tests;
 
 public sealed class SimsTrayPreviewServiceTests
 {
+    [Fact]
+    public async Task BuildSummaryAsync_FilterOnlyChange_ReusesRootSnapshot()
+    {
+        using var trayDir = new TempDirectory();
+        CreateTrayFiles(trayDir.Path, "villa_small_20x20", ".trayitem", ".blueprint");
+        CreateTrayFiles(trayDir.Path, "villa_large_50x40", ".trayitem", ".blueprint");
+
+        var logger = new RecordingLogger<SimsTrayPreviewService>();
+        var service = new SimsTrayPreviewService(
+            trayThumbnailService: null,
+            trayMetadataService: null,
+            metadataIndexStore: null,
+            logger: logger);
+        var requestA = new SimsTrayPreviewRequest
+        {
+            TrayPath = trayDir.Path,
+            PresetTypeFilter = "Lot",
+            BuildSizeFilter = "20 x 20",
+            TimeFilter = "All",
+            PageSize = 50
+        };
+        var requestB = new SimsTrayPreviewRequest
+        {
+            TrayPath = trayDir.Path,
+            PresetTypeFilter = "Lot",
+            BuildSizeFilter = "50 x 40",
+            TimeFilter = "Last90d",
+            PageSize = 50
+        };
+
+        var summaryA = await service.BuildSummaryAsync(requestA);
+        var summaryB = await service.BuildSummaryAsync(requestB);
+
+        Assert.Equal(1, summaryA.TotalItems);
+        Assert.Equal(1, summaryB.TotalItems);
+        Assert.Equal(1, logger.Messages.Count(message => message.Contains("traypreview.rootsnapshot.miss", StringComparison.Ordinal)));
+        Assert.Contains(
+            logger.Messages,
+            message => message.Contains("traypreview.rootsnapshot.hit", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task BuildSummaryAsync_RootChanged_TriggersNewRootSnapshotScan()
+    {
+        using var trayDir = new TempDirectory();
+        CreateTrayFiles(trayDir.Path, "villa_small_20x20", ".trayitem", ".blueprint");
+
+        var logger = new RecordingLogger<SimsTrayPreviewService>();
+        var service = new SimsTrayPreviewService(
+            trayThumbnailService: null,
+            trayMetadataService: null,
+            metadataIndexStore: null,
+            logger: logger);
+        var request = new SimsTrayPreviewRequest
+        {
+            TrayPath = trayDir.Path,
+            PresetTypeFilter = "Lot",
+            PageSize = 50
+        };
+
+        var initialSummary = await service.BuildSummaryAsync(request);
+        CreateTrayFiles(trayDir.Path, "villa_large_50x40", ".trayitem", ".blueprint");
+        Directory.SetLastWriteTimeUtc(trayDir.Path, DateTime.UtcNow.AddSeconds(1));
+
+        var updatedSummary = await service.BuildSummaryAsync(request);
+
+        Assert.Equal(1, initialSummary.TotalItems);
+        Assert.Equal(2, updatedSummary.TotalItems);
+        Assert.Equal(2, logger.Messages.Count(message => message.Contains("traypreview.rootsnapshot.miss", StringComparison.Ordinal)));
+    }
+
     [Fact]
     public async Task BuildPageAsync_BuildSizeFilter_FiltersLotsAndRoomsByParsedDimensions()
     {
@@ -579,6 +652,40 @@ public sealed class SimsTrayPreviewServiceTests
         public void ReleaseCleanup()
         {
             _cleanupRelease.TrySetResult();
+        }
+    }
+
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        public List<string> Messages { get; } = [];
+
+        public IDisposable BeginScope<TState>(TState state) where TState : notnull
+        {
+            return NullScope.Instance;
+        }
+
+        public bool IsEnabled(LogLevel logLevel)
+        {
+            return true;
+        }
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            Messages.Add(formatter(state, exception));
+        }
+
+        private sealed class NullScope : IDisposable
+        {
+            public static readonly NullScope Instance = new();
+
+            public void Dispose()
+            {
+            }
         }
     }
 }

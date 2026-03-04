@@ -55,6 +55,11 @@ public sealed partial class MainWindowViewModel
             NotifyTrayExportCommandsChanged = NotifyTrayExportCommandsChanged,
             PickFolderPathsAsync = async (title, allowMultiple) =>
                 await _fileDialogService.PickFolderPathsAsync(title, allowMultiple),
+            RunOnUiAsync = action =>
+            {
+                ExecuteOnUi(action);
+                return Task.CompletedTask;
+            },
             SubscribeTaskPropertyChanged = (task, handler) => task.PropertyChanged += handler,
             UnsubscribeTaskPropertyChanged = (task, handler) => task.PropertyChanged -= handler
         };

@@ -6,6 +6,7 @@ using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.TrayDependencyEngine;
 using SimsModDesktop.Presentation.ViewModels;
+using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 using SimsModDesktop.Presentation.ViewModels.Panels;
 using SimsModDesktop.Presentation.ViewModels.Preview;
 
@@ -33,6 +34,7 @@ public sealed class TrayPreviewWorkspaceViewModelTests
             filter,
             runner,
             new PassiveTrayThumbnailService(),
+            new UiLogSink(),
             new FakeFileDialogService(),
             new FakeTrayDependencyExportService(),
             cacheWarmupController,

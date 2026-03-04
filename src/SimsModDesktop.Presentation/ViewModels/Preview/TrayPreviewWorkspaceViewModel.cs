@@ -11,6 +11,10 @@ namespace SimsModDesktop.Presentation.ViewModels.Preview;
 
 public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
 {
+    private const string TrayPreviewLogSource = "TrayPreview";
+    private const string TrayCacheLogSource = "TrayCache";
+
+    private readonly IUiLogSink _uiLogSink;
     private readonly IFileDialogService _fileDialogService;
     private readonly ITrayDependencyExportService _trayDependencyExportService;
     private readonly MainWindowCacheWarmupController _cacheWarmupController;
@@ -18,6 +22,8 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
     private bool _isActive;
     private bool _hasPendingRefresh = true;
     private int _isExportRunning;
+    private CancellationTokenSource? _workspaceLoadCts;
+    private int _workspaceLoadOperationId;
     private bool _isDependencyCacheWarmupBlocking;
     private bool _isTrayDependencyCacheReady;
     private int _trayDependencyCacheWarmupPercent;
@@ -30,6 +36,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         TrayPreviewPanelViewModel filter,
         ITrayPreviewCoordinator trayPreviewCoordinator,
         ITrayThumbnailService trayThumbnailService,
+        IUiLogSink uiLogSink,
         IFileDialogService fileDialogService,
         ITrayDependencyExportService trayDependencyExportService,
         MainWindowCacheWarmupController cacheWarmupController,
@@ -37,6 +44,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
     {
         Filter = filter;
         Surface = new TrayLikePreviewSurfaceViewModel(trayPreviewCoordinator, trayThumbnailService);
+        _uiLogSink = uiLogSink;
         _fileDialogService = fileDialogService;
         _trayDependencyExportService = trayDependencyExportService;
         _cacheWarmupController = cacheWarmupController;
@@ -132,6 +140,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
 
     public void ResetAfterCacheClear()
     {
+        CancelWorkspaceLoad();
         _cacheWarmupController.Reset();
         IsTrayDependencyCacheReady = false;
         SetTrayDependencyCacheWarmupState(false, 0, string.Empty, string.Empty);
@@ -140,7 +149,8 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
 
     public Task EnsureLoadedAsync(bool forceReload = false)
     {
-        return EnsureWorkspaceReadyAndLoadAsync(forceReload);
+        var (operationId, cancellationToken) = BeginWorkspaceLoadOperation();
+        return EnsureWorkspaceReadyAndLoadAsync(forceReload, operationId, cancellationToken);
     }
 
     public void SetIsActive(bool isActive)
@@ -153,6 +163,12 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         _isActive = isActive;
         if (!_isActive)
         {
+            CancelWorkspaceLoad();
+            SetTrayDependencyCacheWarmupState(
+                false,
+                TrayDependencyCacheWarmupPercent,
+                TrayDependencyCacheWarmupStageText,
+                TrayDependencyCacheWarmupDetail);
             Surface.PauseBackgroundLoading();
             return;
         }
@@ -162,7 +178,13 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         {
             var forceReload = _hasPendingRefresh;
             _hasPendingRefresh = false;
-            _ = EnsureWorkspaceReadyAndLoadAsync(forceReload);
+            if (!forceReload && IsTrayDependencyCacheReady && Surface.HasItems)
+            {
+                _ = Surface.EnsureLoadedAsync(forceReload: false);
+                return;
+            }
+
+            QueueWorkspaceLoad(forceReload);
         }
     }
 
@@ -189,7 +211,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
             if (_isActive)
             {
                 _hasPendingRefresh = false;
-                _ = EnsureWorkspaceReadyAndLoadAsync(forceReload: true);
+                QueueWorkspaceLoad(forceReload: true);
             }
         }
     }
@@ -204,7 +226,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         _cacheWarmupController.Reset();
         if (_isActive)
         {
-            _ = EnsureWorkspaceReadyAndLoadAsync(forceReload: false);
+            QueueWorkspaceLoad(forceReload: false);
         }
     }
 
@@ -258,45 +280,121 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         }
     }
 
-    private async Task EnsureWorkspaceReadyAndLoadAsync(bool forceReload)
+    private (int OperationId, CancellationToken CancellationToken) BeginWorkspaceLoadOperation()
     {
-        var modsPath = _trayDependencies.ModsPath?.Trim() ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(modsPath) || !Directory.Exists(modsPath))
+        _workspaceLoadCts?.Cancel();
+        _workspaceLoadCts?.Dispose();
+        _workspaceLoadCts = new CancellationTokenSource();
+        var operationId = Interlocked.Increment(ref _workspaceLoadOperationId);
+        return (operationId, _workspaceLoadCts.Token);
+    }
+
+    private void QueueWorkspaceLoad(bool forceReload)
+    {
+        var (operationId, cancellationToken) = BeginWorkspaceLoadOperation();
+        _ = EnsureWorkspaceReadyAndLoadAsync(forceReload, operationId, cancellationToken);
+    }
+
+    private void CancelWorkspaceLoad()
+    {
+        _workspaceLoadCts?.Cancel();
+        _workspaceLoadCts?.Dispose();
+        _workspaceLoadCts = null;
+        Interlocked.Increment(ref _workspaceLoadOperationId);
+    }
+
+    private bool IsCurrentWorkspaceLoad(int operationId)
+    {
+        return operationId == Volatile.Read(ref _workspaceLoadOperationId);
+    }
+
+    private async Task EnsureWorkspaceReadyAndLoadAsync(
+        bool forceReload,
+        int operationId,
+        CancellationToken cancellationToken)
+    {
+        if (!IsCurrentWorkspaceLoad(operationId))
         {
-            IsTrayDependencyCacheReady = false;
-            SetTrayDependencyCacheWarmupState(
-                false,
-                0,
-                "Missing Mods Path",
-                "Set a valid Mods Path in Settings before using Tray dependency export.");
-            LogText = "Tray dependency cache is unavailable: Mods Path is missing.";
             return;
         }
 
-        IsTrayDependencyCacheReady = false;
-        SetTrayDependencyCacheWarmupState(true, 0, "Validate", "Preparing tray dependency cache...");
+        var modsPath = _trayDependencies.ModsPath?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(modsPath) || !Directory.Exists(modsPath))
+        {
+            await ExecuteOnUiAsync(() =>
+            {
+                if (!IsCurrentWorkspaceLoad(operationId))
+                {
+                    return;
+                }
+
+                IsTrayDependencyCacheReady = false;
+                SetTrayDependencyCacheWarmupState(
+                    false,
+                    0,
+                    "Missing Mods Path",
+                    "Set a valid Mods Path in Settings before using Tray dependency export.");
+                LogText = "Tray dependency cache is unavailable: Mods Path is missing.";
+            }).ConfigureAwait(false);
+            return;
+        }
+
+        await ExecuteOnUiAsync(() =>
+        {
+            if (!IsCurrentWorkspaceLoad(operationId))
+            {
+                return;
+            }
+
+            IsTrayDependencyCacheReady = false;
+            SetTrayDependencyCacheWarmupState(true, 0, "Validate", "Preparing tray dependency cache...");
+        }).ConfigureAwait(false);
+
         try
         {
             await _cacheWarmupController.EnsureTrayWorkspaceReadyAsync(
                 modsPath,
-                CreateCacheWarmupHost()).ConfigureAwait(false);
-            IsTrayDependencyCacheReady = true;
-            SetTrayDependencyCacheWarmupState(false, 100, string.Empty, string.Empty);
+                CreateCacheWarmupHost(operationId, cancellationToken),
+                cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            await ExecuteOnUiAsync(() =>
+            {
+                if (!IsCurrentWorkspaceLoad(operationId))
+                {
+                    return;
+                }
+
+                IsTrayDependencyCacheReady = true;
+                SetTrayDependencyCacheWarmupState(false, 100, string.Empty, string.Empty);
+            }).ConfigureAwait(false);
 
             if (!string.IsNullOrWhiteSpace(Filter.TrayRoot) && Directory.Exists(Filter.TrayRoot))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 await Surface.EnsureLoadedAsync(forceReload).ConfigureAwait(false);
             }
         }
+        catch (OperationCanceledException)
+        {
+        }
         catch (Exception ex)
         {
-            IsTrayDependencyCacheReady = false;
-            SetTrayDependencyCacheWarmupState(
-                false,
-                0,
-                "Warmup Failed",
-                "Tray dependency cache warmup failed.");
-            LogText = "Tray dependency cache warmup failed." + Environment.NewLine + ex.Message;
+            await ExecuteOnUiAsync(() =>
+            {
+                if (!IsCurrentWorkspaceLoad(operationId))
+                {
+                    return;
+                }
+
+                IsTrayDependencyCacheReady = false;
+                SetTrayDependencyCacheWarmupState(
+                    false,
+                    0,
+                    "Warmup Failed",
+                    "Tray dependency cache warmup failed.");
+                LogText = "Tray dependency cache warmup failed." + Environment.NewLine + ex.Message;
+            }).ConfigureAwait(false);
         }
     }
 
@@ -525,7 +623,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
 
         if (_lastPersistedLogText.Length == 0)
         {
-            PersistentUiLog.Append("TrayPreview", text);
+            _uiLogSink.Append(TrayPreviewLogSource, text);
             _lastPersistedLogText = text;
             return;
         }
@@ -535,24 +633,29 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
             var delta = text[_lastPersistedLogText.Length..];
             if (!string.IsNullOrWhiteSpace(delta))
             {
-                PersistentUiLog.Append("TrayPreview", delta);
+                _uiLogSink.Append(TrayPreviewLogSource, delta);
             }
 
             _lastPersistedLogText = text;
             return;
         }
 
-        PersistentUiLog.Append("TrayPreview", "[log-reset]");
-        PersistentUiLog.Append("TrayPreview", text);
+        _uiLogSink.Append(TrayPreviewLogSource, "[log-reset]");
+        _uiLogSink.Append(TrayPreviewLogSource, text);
         _lastPersistedLogText = text;
     }
 
-    private MainWindowCacheWarmupHost CreateCacheWarmupHost()
+    private MainWindowCacheWarmupHost CreateCacheWarmupHost(int operationId, CancellationToken cancellationToken)
     {
         return new MainWindowCacheWarmupHost
         {
             ReportProgress = progress =>
             {
+                if (cancellationToken.IsCancellationRequested || !IsCurrentWorkspaceLoad(operationId))
+                {
+                    return;
+                }
+
                 SetTrayDependencyCacheWarmupState(
                     progress.IsBlocking,
                     progress.Percent,
@@ -561,9 +664,14 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
             },
             AppendLog = message =>
             {
+                if (cancellationToken.IsCancellationRequested || !IsCurrentWorkspaceLoad(operationId))
+                {
+                    return;
+                }
+
                 if (!string.IsNullOrWhiteSpace(message))
                 {
-                    PersistentUiLog.Append("TrayCache", message);
+                    _uiLogSink.Append(TrayCacheLogSource, message);
                 }
             }
         };
@@ -581,6 +689,19 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         TrayDependencyCacheWarmupPercent = percent;
         TrayDependencyCacheWarmupStageText = stageText;
         TrayDependencyCacheWarmupDetail = detail;
+    }
+
+    private static Task ExecuteOnUiAsync(Action action)
+    {
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            action();
+            return Task.CompletedTask;
+        }
+
+        // Do not block waiting for UI thread pumping in headless test contexts.
+        Dispatcher.UIThread.Post(action);
+        return Task.CompletedTask;
     }
 
     private static readonly string[] SupportedTrayExportExtensions =

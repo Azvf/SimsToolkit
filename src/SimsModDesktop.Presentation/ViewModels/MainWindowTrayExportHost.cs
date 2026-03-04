@@ -20,6 +20,7 @@ internal sealed class MainWindowTrayExportHost
     public required Action<string> RaisePropertyChanged { get; init; }
     public required Action NotifyTrayExportCommandsChanged { get; init; }
     public required Func<string, bool, Task<IReadOnlyList<string>>> PickFolderPathsAsync { get; init; }
+    public required Func<Action, Task> RunOnUiAsync { get; init; }
     public required Action<TrayExportTaskItemViewModel, PropertyChangedEventHandler> SubscribeTaskPropertyChanged { get; init; }
     public required Action<TrayExportTaskItemViewModel, PropertyChangedEventHandler> UnsubscribeTaskPropertyChanged { get; init; }
 }
