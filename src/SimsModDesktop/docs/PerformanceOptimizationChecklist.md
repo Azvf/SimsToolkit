@@ -65,14 +65,14 @@ Acceptance:
 
 Implementation:
 
-- [ ] Add FTS5 table
-- [ ] Sync insert/update/delete with `ModIndexedItems`
-- [ ] Route search queries through `MATCH`
+- [x] Add FTS5 table
+- [x] Sync insert/update/delete with `ModIndexedItems`
+- [x] Route search queries through `MATCH`
 
 Tests:
 
-- [ ] Search results remain functionally equivalent for key scenarios
-- [ ] No-search query path remains valid
+- [x] Search results remain functionally equivalent for key scenarios
+- [x] No-search query path remains valid
 
 Logging:
 
@@ -80,7 +80,7 @@ Logging:
 
 Acceptance:
 
-- [ ] Production search path no longer depends on `LIKE '%...%'`
+- [x] Production search path no longer depends on `LIKE '%...%'`
 
 ### WS4: Tray Package Cache Refactor
 

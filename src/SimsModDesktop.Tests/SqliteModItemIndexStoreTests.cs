@@ -114,6 +114,123 @@ public sealed class SqliteModItemIndexStoreTests
     }
 
     [Fact]
+    public async Task QueryPageAsync_WithSearchQuery_UsesFtsAndKeepsNoSearchPathWorking()
+    {
+        using var temp = new TempDirectory();
+        var store = new SqliteModItemIndexStore(temp.Path);
+        var packagePath = Path.Combine(temp.Path, "demo.package");
+        File.WriteAllBytes(packagePath, [1, 2, 3, 4]);
+        var now = DateTime.UtcNow.Ticks;
+
+        await store.ReplacePackageAsync(new ModItemIndexBuildResult
+        {
+            PackageState = new ModPackageIndexState
+            {
+                PackagePath = packagePath,
+                FileLength = 4,
+                LastWriteUtcTicks = now,
+                PackageType = ".package",
+                ScopeHint = "Mixed",
+                IndexedUtcTicks = now,
+                ItemCount = 2,
+                CasItemCount = 1,
+                BuildBuyItemCount = 1,
+                UnclassifiedEntityCount = 0,
+                TextureResourceCount = 0,
+                EditableTextureCount = 0,
+                Status = "Ready"
+            },
+            Items =
+            [
+                new ModIndexedItemRecord
+                {
+                    ItemKey = "item-hair",
+                    PackagePath = packagePath,
+                    PackageFingerprintLength = 4,
+                    PackageFingerprintLastWriteUtcTicks = now,
+                    EntityKind = "Cas",
+                    EntitySubType = "Hair",
+                    DisplayName = "Localized Hair",
+                    SortName = "Localized Hair",
+                    SearchText = "Localized Hair Hair Adult Female",
+                    ScopeText = "Cas",
+                    ThumbnailStatus = "Placeholder",
+                    TextureCount = 0,
+                    EditableTextureCount = 0,
+                    HasTextureData = false,
+                    SourceResourceKey = "034AEECB:00000001:0000000000000001",
+                    SourceGroupText = "00000001",
+                    CreatedUtcTicks = now,
+                    UpdatedUtcTicks = now,
+                    SortKeyStable = "Cas:Hair:0000000000000001",
+                    DisplayStage = ModItemDisplayStage.Fast,
+                    ThumbnailStage = ModItemThumbnailStage.None,
+                    TextureStage = ModItemTextureStage.Pending,
+                    LastFastParsedUtcTicks = now,
+                    PendingDeepRefresh = true,
+                    DisplayNameSource = "Fallback",
+                    TextureCandidates = Array.Empty<ModPackageTextureCandidate>()
+                },
+                new ModIndexedItemRecord
+                {
+                    ItemKey = "item-object",
+                    PackagePath = packagePath,
+                    PackageFingerprintLength = 4,
+                    PackageFingerprintLastWriteUtcTicks = now,
+                    EntityKind = "BuildBuy",
+                    EntitySubType = "Object",
+                    DisplayName = "Modern Sofa",
+                    SortName = "Modern Sofa",
+                    SearchText = "Modern Sofa BuildBuy Object",
+                    ScopeText = "BuildBuy",
+                    ThumbnailStatus = "Placeholder",
+                    TextureCount = 0,
+                    EditableTextureCount = 0,
+                    HasTextureData = false,
+                    SourceResourceKey = "319E4F1D:00000001:0000000000000002",
+                    SourceGroupText = "00000001",
+                    CreatedUtcTicks = now,
+                    UpdatedUtcTicks = now,
+                    SortKeyStable = "BuildBuy:Object:0000000000000002",
+                    DisplayStage = ModItemDisplayStage.Fast,
+                    ThumbnailStage = ModItemThumbnailStage.None,
+                    TextureStage = ModItemTextureStage.Pending,
+                    LastFastParsedUtcTicks = now,
+                    PendingDeepRefresh = true,
+                    DisplayNameSource = "Fallback",
+                    TextureCandidates = Array.Empty<ModPackageTextureCandidate>()
+                }
+            ]
+        });
+
+        var filtered = await store.QueryPageAsync(new ModItemCatalogQuery
+        {
+            ModsRoot = temp.Path,
+            SearchQuery = "Local Hair",
+            EntityKindFilter = "All",
+            SubTypeFilter = "All",
+            SortBy = "Name",
+            PageIndex = 1,
+            PageSize = 50
+        });
+
+        var unfiltered = await store.QueryPageAsync(new ModItemCatalogQuery
+        {
+            ModsRoot = temp.Path,
+            SearchQuery = string.Empty,
+            EntityKindFilter = "All",
+            SubTypeFilter = "All",
+            SortBy = "Name",
+            PageIndex = 1,
+            PageSize = 50
+        });
+
+        Assert.Single(filtered.Items);
+        Assert.Equal("item-hair", filtered.Items[0].ItemKey);
+        Assert.Equal(2, unfiltered.Items.Count);
+    }
+
+    [Fact]
     public async Task CountIndexedPackagesAsync_RebuildsOldSchema()
     {
         using var temp = new TempDirectory();

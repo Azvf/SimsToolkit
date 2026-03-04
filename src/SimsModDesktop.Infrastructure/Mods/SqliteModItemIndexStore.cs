@@ -6,7 +6,7 @@ namespace SimsModDesktop.Infrastructure.Mods;
 
 public sealed class SqliteModItemIndexStore : IModItemIndexStore
 {
-    private const int SchemaVersion = 3;
+    private const int SchemaVersion = 4;
     private readonly AppCacheDatabase _database;
 
     public SqliteModItemIndexStore()
@@ -118,42 +118,75 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
         var pageIndex = Math.Max(1, query.PageIndex);
         var pageSize = Math.Max(1, query.PageSize);
         var offset = (pageIndex - 1) * pageSize;
-        var searchPattern = string.IsNullOrWhiteSpace(query.SearchQuery) ? null : $"%{query.SearchQuery.Trim()}%";
+        var ftsQuery = BuildFtsQuery(query.SearchQuery);
         var kindFilter = NormalizeFilter(query.EntityKindFilter);
         var subTypeFilter = NormalizeFilter(query.SubTypeFilter);
         var rootPrefix = string.IsNullOrWhiteSpace(query.ModsRoot) ? null : $"{NormalizePath(query.ModsRoot)}%";
-        const string whereClause = """
-            WHERE (@RootPrefix IS NULL OR PackagePath LIKE @RootPrefix)
-              AND (@KindFilter IS NULL OR EntityKind = @KindFilter)
-              AND (@SubTypeFilter IS NULL OR EntitySubType = @SubTypeFilter)
-              AND (@SearchPattern IS NULL OR SearchText LIKE @SearchPattern)
-            """;
+        var parameters = new
+        {
+            RootPrefix = rootPrefix,
+            KindFilter = kindFilter,
+            SubTypeFilter = subTypeFilter,
+            SearchPattern = ftsQuery,
+            PageSize = pageSize,
+            Offset = offset
+        };
 
-        var totalItems = connection.ExecuteScalar<int>(
-            $"""
-            SELECT COUNT(*)
-            FROM ModIndexedItems
-            {whereClause};
-            """,
-            new { RootPrefix = rootPrefix, KindFilter = kindFilter, SubTypeFilter = subTypeFilter, SearchPattern = searchPattern });
+        int totalItems;
+        IEnumerable<IndexedItemRow> rows;
+        if (ftsQuery is null)
+        {
+            const string whereClause = """
+                WHERE (@RootPrefix IS NULL OR items.PackagePath LIKE @RootPrefix)
+                  AND (@KindFilter IS NULL OR items.EntityKind = @KindFilter)
+                  AND (@SubTypeFilter IS NULL OR items.EntitySubType = @SubTypeFilter)
+                """;
+            totalItems = connection.ExecuteScalar<int>(
+                $"""
+                SELECT COUNT(*)
+                FROM ModIndexedItems items
+                {whereClause};
+                """,
+                parameters);
 
-        var rows = connection.Query<IndexedItemRow>(
-            $"""
-            SELECT *
-            FROM ModIndexedItems
-            {whereClause}
-            ORDER BY {ResolveOrderBy(query.SortBy)}
-            LIMIT @PageSize OFFSET @Offset;
-            """,
-            new
-            {
-                RootPrefix = rootPrefix,
-                KindFilter = kindFilter,
-                SubTypeFilter = subTypeFilter,
-                SearchPattern = searchPattern,
-                PageSize = pageSize,
-                Offset = offset
-            });
+            rows = connection.Query<IndexedItemRow>(
+                $"""
+                SELECT items.*
+                FROM ModIndexedItems items
+                {whereClause}
+                ORDER BY {ResolveOrderBy(query.SortBy)}
+                LIMIT @PageSize OFFSET @Offset;
+                """,
+                parameters);
+        }
+        else
+        {
+            const string whereClause = """
+                WHERE search.SearchText MATCH @SearchPattern
+                  AND (@RootPrefix IS NULL OR items.PackagePath LIKE @RootPrefix)
+                  AND (@KindFilter IS NULL OR items.EntityKind = @KindFilter)
+                  AND (@SubTypeFilter IS NULL OR items.EntitySubType = @SubTypeFilter)
+                """;
+            totalItems = connection.ExecuteScalar<int>(
+                $"""
+                SELECT COUNT(*)
+                FROM ModIndexedItems items
+                INNER JOIN ModIndexedItemsSearch search ON search.ItemKey = items.ItemKey
+                {whereClause};
+                """,
+                parameters);
+
+            rows = connection.Query<IndexedItemRow>(
+                $"""
+                SELECT items.*
+                FROM ModIndexedItems items
+                INNER JOIN ModIndexedItemsSearch search ON search.ItemKey = items.ItemKey
+                {whereClause}
+                ORDER BY {ResolveOrderBy(query.SortBy)}
+                LIMIT @PageSize OFFSET @Offset;
+                """,
+                parameters);
+        }
 
         var totalPages = Math.Max(1, (int)Math.Ceiling(totalItems / (double)pageSize));
         return Task.FromResult(new ModItemCatalogPage
@@ -259,6 +292,9 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
     {
         connection.Execute(
             """
+            DELETE FROM ModIndexedItemsSearch WHERE ItemKey IN (
+                SELECT ItemKey FROM ModIndexedItems WHERE PackagePath = @PackagePath
+            );
             DELETE FROM ModIndexedItemTextures WHERE ItemKey IN (
                 SELECT ItemKey FROM ModIndexedItems WHERE PackagePath = @PackagePath
             );
@@ -320,11 +356,13 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
     private static void InsertItem(System.Data.IDbConnection connection, System.Data.IDbTransaction transaction, ModIndexedItemRecord item)
     {
         connection.Execute(InsertItemSql, CreateItemParameters(item), transaction);
+        ReplaceItemSearchRow(connection, transaction, item);
     }
 
     private static void UpsertItem(System.Data.IDbConnection connection, System.Data.IDbTransaction transaction, ModIndexedItemRecord item)
     {
         connection.Execute(UpsertItemSql, CreateItemParameters(item), transaction);
+        ReplaceItemSearchRow(connection, transaction, item);
     }
 
     private static object CreateItemParameters(ModIndexedItemRecord item)
@@ -519,9 +557,9 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
     {
         return (sortBy ?? string.Empty).Trim() switch
         {
-            "Package" => "PackagePath ASC, SortKeyStable ASC",
-            "Name" => "SortKeyStable ASC, SortName ASC",
-            _ => "SortKeyStable ASC, UpdatedUtcTicks DESC"
+            "Package" => "items.PackagePath ASC, items.SortKeyStable ASC",
+            "Name" => "items.SortKeyStable ASC, items.SortName ASC",
+            _ => "items.SortKeyStable ASC, items.UpdatedUtcTicks DESC"
         };
     }
 
@@ -561,6 +599,7 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
             connection.Execute(
                 """
                 DROP TABLE IF EXISTS ModIndexedItemTextures;
+                DROP TABLE IF EXISTS ModIndexedItemsSearch;
                 DROP TABLE IF EXISTS ModIndexedItems;
                 DROP TABLE IF EXISTS ModPackageIndexState;
                 DELETE FROM ModItemIndexSchemaMeta;
@@ -649,10 +688,15 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
                 PRIMARY KEY (ItemKey, ResourceKeyText)
             );
 
+            CREATE VIRTUAL TABLE IF NOT EXISTS ModIndexedItemsSearch USING fts5(
+                ItemKey UNINDEXED,
+                SearchText,
+                tokenize = 'unicode61 remove_diacritics 2'
+            );
+
             CREATE INDEX IF NOT EXISTS IX_ModIndexedItems_PackagePath ON ModIndexedItems (PackagePath);
             CREATE INDEX IF NOT EXISTS IX_ModIndexedItems_EntityKind_SubType ON ModIndexedItems (EntityKind, EntitySubType);
             CREATE INDEX IF NOT EXISTS IX_ModIndexedItems_SortName ON ModIndexedItems (SortName);
-            CREATE INDEX IF NOT EXISTS IX_ModIndexedItems_SearchText ON ModIndexedItems (SearchText);
             CREATE INDEX IF NOT EXISTS IX_ModIndexedItems_SortKeyStable ON ModIndexedItems (SortKeyStable);
             """);
 
@@ -748,6 +792,59 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
             LastDeepParsedUtcTicks = excluded.LastDeepParsedUtcTicks,
             PendingDeepRefresh = excluded.PendingDeepRefresh;
         """;
+
+    private static void ReplaceItemSearchRow(System.Data.IDbConnection connection, System.Data.IDbTransaction transaction, ModIndexedItemRecord item)
+    {
+        connection.Execute(
+            """
+            DELETE FROM ModIndexedItemsSearch
+            WHERE ItemKey = @ItemKey;
+
+            INSERT INTO ModIndexedItemsSearch (ItemKey, SearchText)
+            VALUES (@ItemKey, @SearchText);
+            """,
+            new
+            {
+                item.ItemKey,
+                item.SearchText
+            },
+            transaction);
+    }
+
+    private static string? BuildFtsQuery(string? searchQuery)
+    {
+        if (string.IsNullOrWhiteSpace(searchQuery))
+        {
+            return null;
+        }
+
+        var tokens = searchQuery
+            .Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(NormalizeFtsToken)
+            .Where(token => !string.IsNullOrWhiteSpace(token))
+            .ToArray();
+        if (tokens.Length == 0)
+        {
+            return null;
+        }
+
+        return string.Join(" AND ", tokens.Select(token => $"{token}*"));
+    }
+
+    private static string? NormalizeFtsToken(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return null;
+        }
+
+        var normalized = new string(token
+            .Where(ch => char.IsLetterOrDigit(ch) || ch == '_')
+            .ToArray());
+        return string.IsNullOrWhiteSpace(normalized)
+            ? null
+            : normalized;
+    }
 
     private sealed class PackageStateRow
     {
