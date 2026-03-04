@@ -8,7 +8,29 @@ on:
   pull_request:
 
 jobs:
+  architecture-guards:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+          include-prerelease: true
+
+      - name: Restore
+        run: dotnet restore SimsDesktopTools.sln
+
+      - name: Build
+        run: dotnet build SimsDesktopTools.sln --configuration Release --no-restore
+
+      - name: Engineering Guard Tests
+        run: dotnet test src/SimsModDesktop.Tests/SimsModDesktop.Tests.csproj --configuration Release --no-build --filter "FullyQualifiedName~ArchitectureProjectsTests|FullyQualifiedName~ArchitectureBoundaryTests|FullyQualifiedName~PureArchitectureConstraintsTests|FullyQualifiedName~EngineeringConventionsGuardTests" --verbosity minimal
+
   build-and-test:
+    needs: architecture-guards
     runs-on: windows-latest
     steps:
       - name: Checkout

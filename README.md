@@ -101,6 +101,8 @@ Dependency injection is layered through:
 * The app architecture intentionally keeps application layer free from legacy routing types
 * Architecture guard tests assert forbidden old artifacts are not reintroduced
 * Multiple `NoOp*UseCase` registrations exist as migration seams for future use-case extraction
+* Engineering conventions for layer boundaries and placement rules: `src/SimsModDesktop/docs/EngineeringConventions.md`
+* Pull request review checklist for structural changes: `src/SimsModDesktop/docs/PullRequestChecklist.md`
 
 ---
 
