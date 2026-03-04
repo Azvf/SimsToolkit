@@ -118,7 +118,7 @@
                     </Border>
 
                     <Border Grid.Row="2" Classes="card-muted" Padding="16" MinHeight="0">
-                        <Grid RowDefinitions="Auto,*" RowSpacing="16" MinHeight="0">
+                        <Grid RowDefinitions="Auto,Auto,*" RowSpacing="16" MinHeight="0">
                             <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12">
                                 <TextBlock Classes="helper-text"
                                            VerticalAlignment="Center"
@@ -133,7 +133,30 @@
                                         Command="{Binding ModPreviewWorkspace.RefreshCommand}" />
                             </Grid>
 
-                            <Grid Grid.Row="1"
+                            <Border Grid.Row="1"
+                                    Classes="card"
+                                    Padding="12"
+                                    IsVisible="{Binding ModPreviewWorkspace.IsCacheWarmupBlocking}">
+                                <StackPanel Spacing="6">
+                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                        <TextBlock Classes="sub-title"
+                                                   Text="{Binding ModPreviewWorkspace.CacheWarmupStageText}" />
+                                        <TextBlock Grid.Column="1"
+                                                   Classes="helper-text"
+                                                   Text="{Binding ModPreviewWorkspace.CacheWarmupPercentText}" />
+                                    </Grid>
+                                    <ProgressBar Minimum="0"
+                                                 Maximum="100"
+                                                 Height="8"
+                                                 Value="{Binding ModPreviewWorkspace.CacheWarmupPercent}" />
+                                    <TextBlock Classes="helper-text"
+                                               Text="{Binding ModPreviewWorkspace.CacheWarmupDetail}"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+
+                            <Grid Grid.Row="2"
+                                  IsEnabled="{Binding ModPreviewWorkspace.IsInteractionEnabled}"
                                   ColumnDefinitions="*,420"
                                   ColumnSpacing="16"
                                   MinHeight="0">
@@ -179,15 +202,42 @@
             </Border>
 
             <Border Classes="card" IsVisible="{Binding IsTrayPreviewWorkspace}" Padding="24" MinHeight="0">
-                <Grid RowDefinitions="Auto,*"
+                <Grid RowDefinitions="Auto,Auto,*"
                       RowSpacing="24"
                       MinHeight="0">
-                    <Border Classes="card-muted" Padding="16">
+                    <Border Classes="card-muted"
+                            Padding="16"
+                            IsEnabled="{Binding TrayPreviewWorkspace.IsInteractionEnabled}">
                         <preview:TrayLikePreviewFilterBarView DataContext="{Binding TrayPreviewWorkspace.Filter}" />
                     </Border>
 
-                    <preview:TrayLikePreviewSurfaceView Grid.Row="1"
-                                                        DataContext="{Binding TrayPreviewWorkspace.Surface}" />
+                    <Border Grid.Row="1"
+                            Classes="card-muted"
+                            Padding="12"
+                            IsVisible="{Binding TrayPreviewWorkspace.IsDependencyCacheWarmupBlocking}">
+                        <StackPanel Spacing="6">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <TextBlock Classes="sub-title"
+                                           Text="{Binding TrayPreviewWorkspace.TrayDependencyCacheWarmupStageText}" />
+                                <TextBlock Grid.Column="1"
+                                           Classes="helper-text"
+                                           Text="{Binding TrayPreviewWorkspace.TrayDependencyCacheWarmupPercentText}" />
+                            </Grid>
+                            <ProgressBar Minimum="0"
+                                         Maximum="100"
+                                         Height="8"
+                                         Value="{Binding TrayPreviewWorkspace.TrayDependencyCacheWarmupPercent}" />
+                            <TextBlock Classes="helper-text"
+                                       Text="{Binding TrayPreviewWorkspace.TrayDependencyCacheWarmupDetail}"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Row="2"
+                            Background="Transparent"
+                            IsEnabled="{Binding TrayPreviewWorkspace.IsInteractionEnabled}">
+                        <preview:TrayLikePreviewSurfaceView DataContext="{Binding TrayPreviewWorkspace.Surface}" />
+                    </Border>
                 </Grid>
             </Border>
 

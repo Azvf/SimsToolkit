@@ -78,10 +78,18 @@ public sealed class DbpfCatalogSnapshot
     public required IReadOnlyList<DbpfCatalogIssue> Issues { get; init; }
 }
 
+public readonly record struct DbpfCatalogPackageFile(string FilePath, long Length, long LastWriteUtcTicks);
+
 public interface IDbpfPackageCatalog
 {
     Task<DbpfCatalogSnapshot> BuildSnapshotAsync(
         string rootPath,
+        DbpfCatalogBuildOptions? options = null,
+        CancellationToken cancellationToken = default);
+
+    Task<DbpfCatalogSnapshot> BuildSnapshotAsync(
+        string rootPath,
+        IReadOnlyList<DbpfCatalogPackageFile> packageFiles,
         DbpfCatalogBuildOptions? options = null,
         CancellationToken cancellationToken = default);
 }

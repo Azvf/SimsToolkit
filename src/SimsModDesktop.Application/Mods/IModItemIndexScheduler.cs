@@ -10,6 +10,7 @@ public interface IModItemIndexScheduler
     bool IsDeepPassRunning { get; }
 
     Task QueueRefreshAsync(
-        IReadOnlyList<string> packagePaths,
+        ModIndexRefreshRequest request,
+        IProgress<ModIndexRefreshProgress>? progress = null,
         CancellationToken cancellationToken = default);
 }

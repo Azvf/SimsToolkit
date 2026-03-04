@@ -54,6 +54,7 @@ public sealed class ShellSystemOperationsController : ObservableObject
         var result = await _appCacheMaintenanceService.ClearAsync();
         if (result.Success)
         {
+            _workspaceVm.ModPreviewWorkspace.ResetAfterCacheClear();
             _workspaceVm.TrayPreviewWorkspace.ResetAfterCacheClear();
             if (isTraySectionActive)
             {

@@ -11,9 +11,9 @@ namespace SimsModDesktop.Presentation.ViewModels.Preview;
 public sealed class ModPreviewWorkspaceViewModel : ObservableObject
 {
     private readonly ModPreviewPanelViewModel _filter;
-    private readonly IModPackageScanService _scanService;
     private readonly IModItemCatalogService _catalogService;
     private readonly IModItemIndexScheduler _indexScheduler;
+    private readonly MainWindowCacheWarmupController _cacheWarmupController;
     private readonly object _eventLock = new();
 
     private CancellationTokenSource? _refreshCts;
@@ -25,11 +25,15 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
     private bool _hasPendingRefresh = true;
     private bool _hasLoadedStablePage;
     private bool _inspectHasNewerSnapshot;
+    private bool _isCacheWarmupBlocking;
     private string _statusText = "Set a valid Mods path to build the item catalog.";
     private string _summaryText = "No indexed items loaded.";
     private string _pageText = "Page 0/0";
     private string _jumpPageText = string.Empty;
     private string _indexingStatusText = "No package indexing has started yet.";
+    private string _cacheWarmupStageText = string.Empty;
+    private string _cacheWarmupDetail = string.Empty;
+    private int _cacheWarmupPercent;
     private int _currentPage = 1;
     private int _totalPages = 1;
     private ModItemListItemViewModel? _selectedItem;
@@ -38,15 +42,15 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
         ModPreviewPanelViewModel filter,
         IModItemCatalogService catalogService,
         IModItemIndexScheduler indexScheduler,
-        IModPackageScanService scanService,
+        MainWindowCacheWarmupController cacheWarmupController,
         IModItemInspectService inspectService,
         IModPackageTextureEditService textureEditService,
         IFileDialogService fileDialogService)
     {
         _filter = filter;
-        _scanService = scanService;
         _catalogService = catalogService;
         _indexScheduler = indexScheduler;
+        _cacheWarmupController = cacheWarmupController;
         Inspect = new ModItemInspectViewModel(inspectService, textureEditService, fileDialogService);
 
         CatalogItems = new PatchableObservableCollection<ModItemListItemViewModel>();
@@ -85,6 +89,7 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
             OnPropertyChanged(nameof(CanGoPrevPage));
             OnPropertyChanged(nameof(CanGoNextPage));
             OnPropertyChanged(nameof(CanJumpPage));
+            OnPropertyChanged(nameof(IsInteractionEnabled));
             RefreshCommand.NotifyCanExecuteChanged();
             PrevPageCommand.NotifyCanExecuteChanged();
             NextPageCommand.NotifyCanExecuteChanged();
@@ -96,11 +101,26 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
         !string.IsNullOrWhiteSpace(_filter.ModsRoot) && Directory.Exists(_filter.ModsRoot);
 
     public bool HasItems => CatalogItems.Count > 0;
+    public bool IsInteractionEnabled => !_isCacheWarmupBlocking && !IsBusy;
     public bool IsEmptyStateVisible => !IsBusy && !HasItems;
     public bool IsLoadingStateVisible => IsBusy && !HasItems;
     public bool CanGoPrevPage => !IsBusy && _currentPage > 1;
     public bool CanGoNextPage => !IsBusy && _currentPage < _totalPages;
     public bool CanJumpPage => !IsBusy && int.TryParse(JumpPageText, out var page) && page >= 1 && page <= _totalPages;
+
+    public bool IsCacheWarmupBlocking
+    {
+        get => _isCacheWarmupBlocking;
+        private set
+        {
+            if (!SetProperty(ref _isCacheWarmupBlocking, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(IsInteractionEnabled));
+        }
+    }
 
     public string StatusText
     {
@@ -139,6 +159,35 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
     {
         get => _indexingStatusText;
         private set => SetProperty(ref _indexingStatusText, value);
+    }
+
+    public int CacheWarmupPercent
+    {
+        get => _cacheWarmupPercent;
+        private set
+        {
+            var normalized = Math.Clamp(value, 0, 100);
+            if (!SetProperty(ref _cacheWarmupPercent, normalized))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(CacheWarmupPercentText));
+        }
+    }
+
+    public string CacheWarmupPercentText => $"{CacheWarmupPercent}%";
+
+    public string CacheWarmupStageText
+    {
+        get => _cacheWarmupStageText;
+        private set => SetProperty(ref _cacheWarmupStageText, value);
+    }
+
+    public string CacheWarmupDetail
+    {
+        get => _cacheWarmupDetail;
+        private set => SetProperty(ref _cacheWarmupDetail, value);
     }
 
     public ModItemListItemViewModel? SelectedItem
@@ -191,6 +240,20 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
         }
     }
 
+    public void ResetAfterCacheClear()
+    {
+        _cacheWarmupController.Reset();
+        CatalogItems.ReplaceAllStable(Array.Empty<ModItemListItemViewModel>());
+        SelectedItem = null;
+        _hasLoadedStablePage = false;
+        SummaryText = "No indexed items loaded.";
+        StatusText = "Page cache cleared. Refresh to validate and rebuild the item catalog.";
+        IndexingStatusText = "No package indexing has started yet.";
+        PageText = "Page 0/0";
+        SetCacheWarmupState(false, 0, string.Empty, string.Empty);
+        Inspect.SetBackgroundSyncActive(false);
+    }
+
     public Task RefreshAsync()
     {
         return RefreshAsync(forcePageReset: true);
@@ -215,6 +278,7 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
                 StatusText = "Set a valid Mods path to build the item catalog.";
                 IndexingStatusText = "No package indexing has started yet.";
                 PageText = "Page 0/0";
+                SetCacheWarmupState(false, 0, string.Empty, string.Empty);
                 OnPropertyChanged(nameof(HasItems));
                 OnPropertyChanged(nameof(IsEmptyStateVisible));
                 OnPropertyChanged(nameof(IsLoadingStateVisible));
@@ -235,10 +299,14 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
 
         try
         {
-            var packageScan = await _scanService.ScanAsync(_filter.ModsRoot, cancellationToken).ConfigureAwait(false);
-            await LoadPageShellAsync(cancellationToken, allowSkeletonWhenEmpty: packageScan.Count > 0).ConfigureAwait(false);
+            SetCacheWarmupState(true, 0, "Validate", "Validating package inventory...");
+            var warmupResult = await _cacheWarmupController.EnsureModsWorkspaceReadyAsync(
+                _filter.ModsRoot,
+                CreateCacheWarmupHost(),
+                cancellationToken).ConfigureAwait(false);
+            await LoadPageShellAsync(cancellationToken).ConfigureAwait(false);
 
-            if (packageScan.Count == 0)
+            if (warmupResult.Snapshot.Entries.Count == 0)
             {
                 await ExecuteOnUiAsync(() =>
                 {
@@ -250,22 +318,16 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
 
             await ExecuteOnUiAsync(() =>
             {
-                IndexingStatusText = "Fast parsing package metadata in the background...";
+                IndexingStatusText = "Validated catalog rows loaded. Prioritized deep enrichment continues in the background.";
                 Inspect.SetBackgroundSyncActive(true);
             }).ConfigureAwait(false);
-
-            _ = Task.Run(
-                async () =>
-                {
-                    try
-                    {
-                        await _indexScheduler.QueueRefreshAsync(packageScan.Select(result => result.PackagePath).ToArray(), cancellationToken).ConfigureAwait(false);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                    }
-                },
-                cancellationToken);
+            _cacheWarmupController.QueueModsPriorityDeepEnrichment(
+                _filter.ModsRoot,
+                CatalogItems
+                    .Select(item => item.PackagePath)
+                    .Where(path => !string.IsNullOrWhiteSpace(path))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray());
         }
         catch (OperationCanceledException)
         {
@@ -278,8 +340,9 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
                 SelectedItem = null;
                 SummaryText = "Item catalog load failed.";
                 StatusText = ex.Message;
-                IndexingStatusText = "Background indexing did not start.";
+                IndexingStatusText = "Page cache warmup failed.";
                 PageText = "Page 0/0";
+                SetCacheWarmupState(false, 0, string.Empty, string.Empty);
                 OnPropertyChanged(nameof(HasItems));
                 OnPropertyChanged(nameof(IsEmptyStateVisible));
                 OnPropertyChanged(nameof(IsLoadingStateVisible));
@@ -287,11 +350,15 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
         }
         finally
         {
-            await ExecuteOnUiAsync(() => IsBusy = false).ConfigureAwait(false);
+            await ExecuteOnUiAsync(() =>
+            {
+                IsBusy = false;
+                SetCacheWarmupState(false, 100, string.Empty, string.Empty);
+            }).ConfigureAwait(false);
         }
     }
 
-    private async Task LoadPageShellAsync(CancellationToken cancellationToken, bool allowSkeletonWhenEmpty)
+    private async Task LoadPageShellAsync(CancellationToken cancellationToken)
     {
         var page = await QueryCurrentPageAsync(cancellationToken).ConfigureAwait(false);
         var rows = page.Items.Select(item => new ModItemListItemViewModel(item)).ToArray();
@@ -307,19 +374,6 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
                 ApplyStableRows(rows, page.TotalItems, page.PageSize, "Item catalog loaded from the local database.");
                 _hasLoadedStablePage = true;
                 IndexingStatusText = "Deep enrichment will continue in the background if packages changed.";
-                return;
-            }
-
-            if (allowSkeletonWhenEmpty)
-            {
-                CatalogItems.ReplaceAllStable(BuildSkeletonRows(page.PageSize).Select(row => new ModItemListItemViewModel(row)));
-                SelectedItem = null;
-                _hasLoadedStablePage = false;
-                SummaryText = $"Items: {page.TotalItems} | Page Size: {page.PageSize}";
-                StatusText = "Loading basic catalog rows...";
-                OnPropertyChanged(nameof(HasItems));
-                OnPropertyChanged(nameof(IsEmptyStateVisible));
-                OnPropertyChanged(nameof(IsLoadingStateVisible));
                 return;
             }
 
@@ -364,7 +418,7 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
 
         await ExecuteOnUiAsync(() =>
         {
-            if (!_hasLoadedStablePage || CatalogItems.Any(item => item.IsPlaceholder))
+            if (!_hasLoadedStablePage)
             {
                 var replacementRows = page.Items.Select(item => new ModItemListItemViewModel(item)).ToArray();
                 ApplyStableRows(replacementRows, page.TotalItems, page.PageSize, "Basic metadata loaded. Deep enrichment continues in the background.");
@@ -429,40 +483,6 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
         SelectedItem = resolvedSelection;
     }
 
-    private static IReadOnlyList<ModItemListRow> BuildSkeletonRows(int count)
-    {
-        var safeCount = Math.Max(1, count);
-        var rows = new List<ModItemListRow>(safeCount);
-        for (var index = 0; index < safeCount; index++)
-        {
-            rows.Add(new ModItemListRow
-            {
-                ItemKey = $"__skeleton__:{index}",
-                DisplayName = "Loading item metadata...",
-                EntityKind = "Pending",
-                EntitySubType = "Pending",
-                PackagePath = string.Empty,
-                PackageName = string.Empty,
-                ScopeText = "Pending",
-                ThumbnailStatus = "Placeholder",
-                TextureCount = 0,
-                EditableTextureCount = 0,
-                TextureSummaryText = "Basic metadata loaded",
-                IsPlaceholder = true,
-                DisplayStage = ModItemDisplayStage.Fast,
-                ThumbnailStage = ModItemThumbnailStage.None,
-                TextureStage = ModItemTextureStage.Pending,
-                ShowThumbnailPlaceholder = true,
-                ShowMetadataPlaceholder = true,
-                StableSubtitleText = "Basic metadata loaded",
-                SortKeyStable = $"__skeleton__:{index}",
-                UpdatedUtcTicks = 0
-            });
-        }
-
-        return rows;
-    }
-
     private async Task LoadPreviousPageAsync()
     {
         if (!CanGoPrevPage)
@@ -509,6 +529,16 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
     private void OnFilterPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         OnPropertyChanged(nameof(HasValidModsPath));
+        if (string.Equals(e.PropertyName, nameof(ModPreviewPanelViewModel.ModsRoot), StringComparison.Ordinal))
+        {
+            _cacheWarmupController.Reset();
+            CatalogItems.ReplaceAllStable(Array.Empty<ModItemListItemViewModel>());
+            SelectedItem = null;
+            _hasLoadedStablePage = false;
+            SummaryText = "No indexed items loaded.";
+            PageText = "Page 0/0";
+        }
+
         _hasPendingRefresh = true;
         if (_isActive)
         {
@@ -631,6 +661,48 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
         {
             _pendingDeepKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
+    }
+
+    private MainWindowCacheWarmupHost CreateCacheWarmupHost()
+    {
+        return new MainWindowCacheWarmupHost
+        {
+            ReportProgress = progress =>
+            {
+                ExecuteOnUi(() =>
+                {
+                    SetCacheWarmupState(
+                        progress.IsBlocking,
+                        progress.Percent,
+                        string.IsNullOrWhiteSpace(progress.Stage) ? "Warmup" : progress.Stage,
+                        progress.Detail);
+                    if (!string.IsNullOrWhiteSpace(progress.Detail))
+                    {
+                        StatusText = progress.Detail;
+                    }
+                });
+            },
+            AppendLog = _ => { }
+        };
+    }
+
+    private void SetCacheWarmupState(bool blocking, int percent, string stageText, string detail)
+    {
+        IsCacheWarmupBlocking = blocking;
+        CacheWarmupPercent = percent;
+        CacheWarmupStageText = stageText;
+        CacheWarmupDetail = detail;
+    }
+
+    private static void ExecuteOnUi(Action action)
+    {
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            action();
+            return;
+        }
+
+        Dispatcher.UIThread.Post(action);
     }
 
     private static Task ExecuteOnUiAsync(Action action)

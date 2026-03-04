@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.ComponentModel;
 using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.Presentation.ViewModels.Infrastructure;
@@ -9,24 +8,7 @@ namespace SimsModDesktop.Presentation.ViewModels.Shell;
 
 public sealed class ShellSettingsController : ObservableObject
 {
-    private static readonly DebugToggleDefinition[] DebugToggleDefinitions =
-    [
-        new(
-            DebugConfigKeys.StartupTrayCacheWarmupEnabled,
-            "Startup Tray Cache Warmup",
-            "Build tray dependency package index on startup when no local cache exists.",
-            DefaultValue: true),
-        new(
-            DebugConfigKeys.StartupTrayCacheWarmupShowBanner,
-            "Warmup Progress Banner",
-            "Show startup warmup progress panel and status text in Shell.",
-            DefaultValue: true),
-        new(
-            DebugConfigKeys.StartupTrayCacheWarmupVerboseLog,
-            "Warmup Verbose Log",
-            "Write warmup progress checkpoints into the toolkit log.",
-            DefaultValue: true)
-    ];
+    private static readonly DebugToggleDefinition[] DebugToggleDefinitions = [];
 
     private readonly MainWindowViewModel _workspaceVm;
     private readonly SaveWorkspaceViewModel _savesVm;
@@ -219,9 +201,6 @@ public sealed class ShellSettingsController : ObservableObject
     public bool IsDerivedPathsReadOnly => !string.IsNullOrWhiteSpace(Ts4RootPath);
     public bool IsDarkThemeSelected => string.Equals(RequestedTheme, "Dark", StringComparison.OrdinalIgnoreCase);
     public bool IsLightThemeSelected => string.Equals(RequestedTheme, "Light", StringComparison.OrdinalIgnoreCase);
-    public bool EnableStartupTrayCacheWarmup => GetDebugToggleValue(DebugConfigKeys.StartupTrayCacheWarmupEnabled);
-    public bool ShowStartupTrayCacheWarmupBanner => GetDebugToggleValue(DebugConfigKeys.StartupTrayCacheWarmupShowBanner);
-    public bool EnableStartupTrayCacheWarmupVerboseLog => GetDebugToggleValue(DebugConfigKeys.StartupTrayCacheWarmupVerboseLog);
 
     public async Task InitializeAsync()
     {
@@ -444,7 +423,6 @@ public sealed class ShellSettingsController : ObservableObject
                 definition.DisplayName,
                 definition.Description,
                 definition.DefaultValue);
-            item.PropertyChanged += OnDebugConfigItemPropertyChanged;
             DebugConfigItems.Add(item);
             _debugConfigItemsByKey[definition.Key] = item;
         }
@@ -491,43 +469,6 @@ public sealed class ShellSettingsController : ObservableObject
                 definition.DefaultValue ? bool.TrueString : bool.FalseString,
                 definition.Description))
             .ToList();
-    }
-
-    private bool GetDebugToggleValue(string key)
-    {
-        if (_debugConfigItemsByKey.TryGetValue(key, out var item))
-        {
-            return item.Value;
-        }
-
-        for (var index = 0; index < DebugToggleDefinitions.Length; index++)
-        {
-            if (string.Equals(DebugToggleDefinitions[index].Key, key, StringComparison.OrdinalIgnoreCase))
-            {
-                return DebugToggleDefinitions[index].DefaultValue;
-            }
-        }
-
-        return false;
-    }
-
-    private void OnDebugConfigItemPropertyChanged(object? sender, PropertyChangedEventArgs e)
-    {
-        if (!string.Equals(e.PropertyName, nameof(DebugConfigToggleItemViewModel.Value), StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        OnPropertyChanged(nameof(EnableStartupTrayCacheWarmup));
-        OnPropertyChanged(nameof(ShowStartupTrayCacheWarmupBanner));
-        OnPropertyChanged(nameof(EnableStartupTrayCacheWarmupVerboseLog));
-    }
-
-    private static class DebugConfigKeys
-    {
-        public const string StartupTrayCacheWarmupEnabled = "startup.tray_cache_warmup.enabled";
-        public const string StartupTrayCacheWarmupShowBanner = "startup.tray_cache_warmup.show_banner";
-        public const string StartupTrayCacheWarmupVerboseLog = "startup.tray_cache_warmup.verbose_log";
     }
 
     private sealed record DebugToggleDefinition(

@@ -43,7 +43,6 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<IDbpfPackageCatalog, DbpfPackageCatalog>();
         services.AddSingleton<IDbpfResourceReader, DbpfResourceReader>();
         services.AddSingleton<IPackageIndexCache, PackageIndexCache>();
-        services.AddSingleton<ITrayDependencyCacheWarmupService, TrayDependencyCacheWarmupService>();
         services.AddSingleton<ITrayDependencyExportService, TrayDependencyExportService>();
         services.AddSingleton<ITrayDependencyAnalysisService, TrayDependencyAnalysisService>();
         services.AddTransient<MainWindow>();

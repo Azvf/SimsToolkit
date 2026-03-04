@@ -35,6 +35,7 @@ public sealed record TrayDependencyAnalysisRequest
     public required string TrayPath { get; init; }
     public required string ModsRootPath { get; init; }
     public required string TrayItemKey { get; init; }
+    public PackageIndexSnapshot? PreloadedSnapshot { get; init; }
     public int? MinMatchCount { get; init; }
     public int? TopN { get; init; }
     public int? MaxPackageCount { get; init; }
@@ -186,31 +187,21 @@ public sealed record TrayResourceKey(uint Type, uint Group, ulong Instance);
 
 public interface IPackageIndexCache
 {
-    Task<PackageIndexSnapshot> GetSnapshotAsync(
+    Task<PackageIndexSnapshot?> TryLoadSnapshotAsync(
         string modsRootPath,
+        long inventoryVersion,
+        CancellationToken cancellationToken = default);
+
+    Task<PackageIndexSnapshot> BuildSnapshotAsync(
+        PackageIndexBuildRequest request,
         IProgress<TrayDependencyExportProgress>? progress = null,
         CancellationToken cancellationToken = default);
-}
-
-public interface ITrayDependencyCacheWarmupService
-{
-    Task<TrayDependencyCacheWarmupResult> WarmupIfMissingAsync(
-        string modsRootPath,
-        IProgress<TrayDependencyExportProgress>? progress = null,
-        CancellationToken cancellationToken = default);
-}
-
-public sealed record TrayDependencyCacheWarmupResult
-{
-    public bool WarmedUp { get; init; }
-    public bool Skipped { get; init; }
-    public int PackageCount { get; init; }
-    public string Message { get; init; } = string.Empty;
 }
 
 public sealed record PackageIndexSnapshot
 {
     public required string ModsRootPath { get; init; }
+    public long InventoryVersion { get; init; }
     public required IReadOnlyList<IndexedPackageFile> Packages { get; init; }
     internal IReadOnlyDictionary<TrayResourceKey, ResolvedResourceRef[]> ExactIndex { get; init; } =
         new Dictionary<TrayResourceKey, ResolvedResourceRef[]>();
@@ -218,6 +209,22 @@ public sealed record PackageIndexSnapshot
         new Dictionary<TypeInstanceKey, ResolvedResourceRef[]>();
     internal IReadOnlyDictionary<ulong, ResolvedResourceRef[]> SupportedInstanceIndex { get; init; } =
         new Dictionary<ulong, ResolvedResourceRef[]>();
+}
+
+public sealed record PackageIndexBuildRequest
+{
+    public required string ModsRootPath { get; init; }
+    public long InventoryVersion { get; init; }
+    public required IReadOnlyList<PackageIndexBuildFile> PackageFiles { get; init; }
+    public IReadOnlyList<PackageIndexBuildFile> ChangedPackageFiles { get; init; } = Array.Empty<PackageIndexBuildFile>();
+    public IReadOnlyList<string> RemovedPackagePaths { get; init; } = Array.Empty<string>();
+}
+
+public sealed record PackageIndexBuildFile
+{
+    public required string FilePath { get; init; }
+    public long Length { get; init; }
+    public long LastWriteUtcTicks { get; init; }
 }
 
 public sealed record IndexedPackageFile

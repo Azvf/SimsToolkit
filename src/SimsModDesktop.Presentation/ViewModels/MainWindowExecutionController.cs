@@ -18,6 +18,7 @@ public sealed class MainWindowExecutionController
     private readonly ITrayDependencyAnalysisService _trayDependencyAnalysisService;
     private readonly IToolkitActionPlanner _toolkitActionPlanner;
     private readonly MainWindowRecoveryController _recoveryController;
+    private readonly MainWindowCacheWarmupController _cacheWarmupController;
     private readonly ITextureCompressionService _textureCompressionService;
     private readonly ITextureDimensionProbe _textureDimensionProbe;
     private readonly ILogger<MainWindowExecutionController> _logger;
@@ -27,6 +28,7 @@ public sealed class MainWindowExecutionController
         ITrayDependencyAnalysisService trayDependencyAnalysisService,
         IToolkitActionPlanner toolkitActionPlanner,
         MainWindowRecoveryController recoveryController,
+        MainWindowCacheWarmupController cacheWarmupController,
         ITextureCompressionService textureCompressionService,
         ITextureDimensionProbe textureDimensionProbe,
         ILogger<MainWindowExecutionController> logger)
@@ -35,6 +37,7 @@ public sealed class MainWindowExecutionController
         _trayDependencyAnalysisService = trayDependencyAnalysisService;
         _toolkitActionPlanner = toolkitActionPlanner;
         _recoveryController = recoveryController;
+        _cacheWarmupController = cacheWarmupController;
         _textureCompressionService = textureCompressionService;
         _textureDimensionProbe = textureDimensionProbe;
         _logger = logger;
@@ -363,8 +366,22 @@ public sealed class MainWindowExecutionController
         try
         {
             await _recoveryController.MarkRecoveryStartedAsync(operationId);
+            var preloadedSnapshot = await _cacheWarmupController.EnsureTrayWorkspaceReadyAsync(
+                plan.Request.ModsRootPath,
+                new MainWindowCacheWarmupHost
+                {
+                    ReportProgress = progress =>
+                    {
+                        var detail = string.IsNullOrWhiteSpace(progress.Detail)
+                            ? "Preparing tray dependency cache..."
+                            : progress.Detail;
+                        host.SetProgress(progress.Percent <= 0, Math.Clamp(progress.Percent, 0, 100), detail);
+                    },
+                    AppendLog = host.AppendLog
+                },
+                executionCts.Token);
             var result = await _trayDependencyAnalysisService.AnalyzeAsync(
-                plan.Request,
+                plan.Request with { PreloadedSnapshot = preloadedSnapshot },
                 new Progress<TrayDependencyAnalysisProgress>(progress => HandleTrayDependencyAnalysisProgress(host, progress)),
                 executionCts.Token);
             host.AppendLog($"[traydependencies] matched={result.MatchedPackageCount}");

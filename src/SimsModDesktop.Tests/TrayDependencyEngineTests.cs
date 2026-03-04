@@ -14,13 +14,13 @@ public sealed class TrayDependencyEngineTests
         WritePackage(packagePath, KnownInstance, KnownResourceType, group: 0, resourceData: [1, 2, 3, 4]);
 
         var cache = new PackageIndexCache();
-        var first = await cache.GetSnapshotAsync(modsRoot.Path);
-        var second = await cache.GetSnapshotAsync(modsRoot.Path);
+        var first = await BuildSnapshotAsync(cache, modsRoot.Path);
+        var second = await cache.TryLoadSnapshotAsync(modsRoot.Path, first.InventoryVersion);
 
         Assert.Same(first, second);
 
         File.SetLastWriteTimeUtc(packagePath, DateTime.UtcNow.AddSeconds(5));
-        var third = await cache.GetSnapshotAsync(modsRoot.Path);
+        var third = await BuildSnapshotAsync(cache, modsRoot.Path);
 
         Assert.NotSame(first, third);
         Assert.Single(third.Packages);
@@ -39,7 +39,7 @@ public sealed class TrayDependencyEngineTests
             ]);
 
         var cache = new PackageIndexCache();
-        var snapshot = await cache.GetSnapshotAsync(modsRoot.Path);
+        var snapshot = await BuildSnapshotAsync(cache, modsRoot.Path);
 
         Assert.Single(snapshot.Packages);
         Assert.Equal(2, snapshot.Packages[0].Entries.Length);
@@ -60,7 +60,7 @@ public sealed class TrayDependencyEngineTests
         PatchHeaderIndexRecordSize(packagePath, 32u);
 
         var cache = new PackageIndexCache();
-        var snapshot = await cache.GetSnapshotAsync(modsRoot.Path);
+        var snapshot = await BuildSnapshotAsync(cache, modsRoot.Path);
 
         Assert.Single(snapshot.Packages);
         Assert.Equal(2, snapshot.Packages[0].Entries.Length);
@@ -78,29 +78,35 @@ public sealed class TrayDependencyEngineTests
         var firstCache = new PackageIndexCache(cacheRoot.Path, catalog);
         var secondCache = new PackageIndexCache(cacheRoot.Path, catalog);
 
-        var first = await firstCache.GetSnapshotAsync(modsRoot.Path);
-        var second = await secondCache.GetSnapshotAsync(modsRoot.Path);
+        var buildRequest = CreateBuildRequest(modsRoot.Path);
+        var first = await firstCache.BuildSnapshotAsync(buildRequest);
+        var second = await secondCache.TryLoadSnapshotAsync(modsRoot.Path, buildRequest.InventoryVersion);
 
         Assert.Equal(1, catalog.CallCount);
         Assert.Single(first.Packages);
-        Assert.Single(second.Packages);
+        Assert.NotNull(second);
+        Assert.Single(second!.Packages);
         Assert.True(File.Exists(Path.Combine(cacheRoot.Path, "cache.db")));
     }
 
     [Fact]
-    public async Task PackageIndexCache_HasPersistedSnapshotAsync_ReturnsTrueAfterSnapshotIsPersisted()
+    public async Task PackageIndexCache_TryLoadSnapshotAsync_ReturnsPersistedSnapshotAfterBuild()
     {
         using var modsRoot = new TempDirectory("mods-persisted-check");
         using var cacheRoot = new TempDirectory("pkg-cache-check");
         var packagePath = Path.Combine(modsRoot.Path, "sample.package");
         WritePackage(packagePath, KnownInstance, KnownResourceType, group: 0, resourceData: [1, 2, 3, 4]);
 
-        var cache = new PackageIndexCache(cacheRoot.Path);
-        Assert.False(await cache.HasPersistedSnapshotAsync(modsRoot.Path));
+        var buildRequest = CreateBuildRequest(modsRoot.Path);
+        var firstCache = new PackageIndexCache(cacheRoot.Path);
+        Assert.Null(await firstCache.TryLoadSnapshotAsync(modsRoot.Path, buildRequest.InventoryVersion));
 
-        _ = await cache.GetSnapshotAsync(modsRoot.Path);
+        _ = await firstCache.BuildSnapshotAsync(buildRequest);
+        var secondCache = new PackageIndexCache(cacheRoot.Path);
+        var loaded = await secondCache.TryLoadSnapshotAsync(modsRoot.Path, buildRequest.InventoryVersion);
 
-        Assert.True(await cache.HasPersistedSnapshotAsync(modsRoot.Path));
+        Assert.NotNull(loaded);
+        Assert.Single(loaded!.Packages);
     }
 
     [Fact]
@@ -117,6 +123,7 @@ public sealed class TrayDependencyEngineTests
         WritePackage(packagePath, KnownInstance, KnownResourceType, group: 0, resourceData: [9, 9, 9, 9]);
 
         var service = new TrayDependencyExportService(new PackageIndexCache());
+        var preloadedSnapshot = await BuildSnapshotAsync(new PackageIndexCache(), modsRoot.Path);
         var request = new TrayDependencyExportRequest
         {
             ItemTitle = "Sample",
@@ -125,7 +132,8 @@ public sealed class TrayDependencyEngineTests
             TraySourceFiles = [trayItemPath],
             ModsRootPath = modsRoot.Path,
             TrayExportRoot = Path.Combine(exportRoot.Path, "Sample_0x1", "Tray"),
-            ModsExportRoot = Path.Combine(exportRoot.Path, "Sample_0x1", "Mods")
+            ModsExportRoot = Path.Combine(exportRoot.Path, "Sample_0x1", "Mods"),
+            PreloadedSnapshot = preloadedSnapshot
         };
 
         var progressEvents = new List<TrayDependencyExportProgress>();
@@ -162,6 +170,7 @@ public sealed class TrayDependencyEngineTests
         WritePackage(packagePath, KnownInstance, KnownResourceType, group: 0, resourceData: [9, 9, 9, 9]);
 
         var service = new TrayDependencyExportService(new PackageIndexCache());
+        var preloadedSnapshot = await BuildSnapshotAsync(new PackageIndexCache(), modsRoot.Path);
         var request = new TrayDependencyExportRequest
         {
             ItemTitle = "Sample",
@@ -170,7 +179,8 @@ public sealed class TrayDependencyEngineTests
             TraySourceFiles = [trayItemPath, blueprintAPath, blueprintBPath],
             ModsRootPath = modsRoot.Path,
             TrayExportRoot = Path.Combine(exportRoot.Path, "Sample_0x1", "Tray"),
-            ModsExportRoot = Path.Combine(exportRoot.Path, "Sample_0x1", "Mods")
+            ModsExportRoot = Path.Combine(exportRoot.Path, "Sample_0x1", "Mods"),
+            PreloadedSnapshot = preloadedSnapshot
         };
 
         var result = await service.ExportAsync(request);
@@ -182,7 +192,7 @@ public sealed class TrayDependencyEngineTests
     }
 
     [Fact]
-    public async Task TrayDependencyExportService_RunsExportPipelineOffCallerThread()
+    public async Task TrayDependencyExportService_BlocksWhenPreloadedSnapshotIsMissing()
     {
         using var trayRoot = new TempDirectory("tray-export-async");
         using var exportRoot = new TempDirectory("out-export-async");
@@ -190,8 +200,12 @@ public sealed class TrayDependencyEngineTests
         var trayItemPath = Path.Combine(trayRoot.Path, "0x1.trayitem");
         WriteTrayItem(trayItemPath, KnownInstance);
 
-        var gate = new TaskCompletionSource<PackageIndexSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var service = new TrayDependencyExportService(new BlockingPackageIndexCache(gate.Task));
+        var service = new TrayDependencyExportService(new BlockingPackageIndexCache(Task.FromResult(new PackageIndexSnapshot
+        {
+            ModsRootPath = trayRoot.Path,
+            InventoryVersion = 1,
+            Packages = Array.Empty<IndexedPackageFile>()
+        })));
         var request = new TrayDependencyExportRequest
         {
             ItemTitle = "Sample",
@@ -203,20 +217,11 @@ public sealed class TrayDependencyEngineTests
             ModsExportRoot = Path.Combine(exportRoot.Path, "Sample_0x1", "Mods")
         };
 
-        var exportTask = service.ExportAsync(request);
+        var result = await service.ExportAsync(request);
 
-        Assert.False(exportTask.IsCompleted);
-
-        gate.SetResult(new PackageIndexSnapshot
-        {
-            ModsRootPath = trayRoot.Path,
-            Packages = Array.Empty<IndexedPackageFile>()
-        });
-
-        var result = await exportTask;
-
-        Assert.True(result.Success);
+        Assert.False(result.Success);
         Assert.Equal(1, result.CopiedTrayFileCount);
+        Assert.Contains(result.Issues, issue => issue.Kind == TrayDependencyIssueKind.CacheBuildError);
     }
 
     [Fact]
@@ -236,7 +241,7 @@ public sealed class TrayDependencyEngineTests
             group: 0,
             resourceData: [4, 3, 2, 1]);
 
-        var preloadedSnapshot = await new PackageIndexCache().GetSnapshotAsync(modsRoot.Path);
+        var preloadedSnapshot = await BuildSnapshotAsync(new PackageIndexCache(), modsRoot.Path);
         var service = new TrayDependencyExportService(new ThrowingPackageIndexCache());
         var request = new TrayDependencyExportRequest
         {
@@ -287,7 +292,10 @@ public sealed class TrayDependencyEngineTests
             resourceData: [1, 2, 3, 4]);
 
         var service = new TrayDependencyExportService(new PackageIndexCache());
-        var request = CreateRequest("CasPart", "0xcas", trayRoot.Path, trayItemPath, modsRoot.Path, exportRoot.Path);
+        var request = CreateRequest("CasPart", "0xcas", trayRoot.Path, trayItemPath, modsRoot.Path, exportRoot.Path) with
+        {
+            PreloadedSnapshot = await BuildSnapshotAsync(new PackageIndexCache(), modsRoot.Path)
+        };
 
         var result = await service.ExportAsync(request);
 
@@ -323,7 +331,10 @@ public sealed class TrayDependencyEngineTests
             resourceData: [9, 8, 7, 6]);
 
         var service = new TrayDependencyExportService(new PackageIndexCache());
-        var request = CreateRequest("SkinTone", "0xskin", trayRoot.Path, trayItemPath, modsRoot.Path, exportRoot.Path);
+        var request = CreateRequest("SkinTone", "0xskin", trayRoot.Path, trayItemPath, modsRoot.Path, exportRoot.Path) with
+        {
+            PreloadedSnapshot = await BuildSnapshotAsync(new PackageIndexCache(), modsRoot.Path)
+        };
 
         var result = await service.ExportAsync(request);
 
@@ -360,7 +371,10 @@ public sealed class TrayDependencyEngineTests
             resourceData: [4, 3, 2, 1]);
 
         var service = new TrayDependencyExportService(new PackageIndexCache());
-        var request = CreateRequest("ObjectDef", "0xobj", trayRoot.Path, trayItemPath, modsRoot.Path, exportRoot.Path);
+        var request = CreateRequest("ObjectDef", "0xobj", trayRoot.Path, trayItemPath, modsRoot.Path, exportRoot.Path) with
+        {
+            PreloadedSnapshot = await BuildSnapshotAsync(new PackageIndexCache(), modsRoot.Path)
+        };
 
         var result = await service.ExportAsync(request);
 
@@ -383,12 +397,13 @@ public sealed class TrayDependencyEngineTests
         var packagePath = Path.Combine(modsRoot.Path, "resolved.package");
         WritePackage(packagePath, KnownInstance, KnownResourceType, group: 0, resourceData: [1, 2, 3, 4]);
 
-        var service = new TrayDependencyAnalysisService(new PackageIndexCache());
+        var service = new TrayDependencyAnalysisService();
         var request = new TrayDependencyAnalysisRequest
         {
             TrayPath = trayRoot.Path,
             ModsRootPath = modsRoot.Path,
             TrayItemKey = "0x1",
+            PreloadedSnapshot = await BuildSnapshotAsync(new PackageIndexCache(), modsRoot.Path),
             OutputCsv = Path.Combine(outputRoot.Path, "matched.csv"),
             ExportMatchedPackages = true,
             ExportTargetPath = Path.Combine(outputRoot.Path, "exports"),
@@ -503,6 +518,55 @@ public sealed class TrayDependencyEngineTests
         };
     }
 
+    private static PackageIndexBuildRequest CreateBuildRequest(string modsRootPath)
+    {
+        var normalizedRoot = Path.GetFullPath(modsRootPath.Trim());
+        var packageFiles = Directory.EnumerateFiles(normalizedRoot, "*.package", SearchOption.AllDirectories)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .Select(path =>
+            {
+                var info = new FileInfo(path);
+                return new PackageIndexBuildFile
+                {
+                    FilePath = path,
+                    Length = info.Length,
+                    LastWriteUtcTicks = info.LastWriteTimeUtc.Ticks
+                };
+            })
+            .ToArray();
+
+        return new PackageIndexBuildRequest
+        {
+            ModsRootPath = normalizedRoot,
+            InventoryVersion = ComputeInventoryVersion(packageFiles),
+            PackageFiles = packageFiles
+        };
+    }
+
+    private static async Task<PackageIndexSnapshot> BuildSnapshotAsync(PackageIndexCache cache, string modsRootPath)
+    {
+        var buildRequest = CreateBuildRequest(modsRootPath);
+        return await cache.BuildSnapshotAsync(buildRequest);
+    }
+
+    private static long ComputeInventoryVersion(IReadOnlyList<PackageIndexBuildFile> packageFiles)
+    {
+        unchecked
+        {
+            long hash = 17;
+            for (var i = 0; i < packageFiles.Count; i++)
+            {
+                var item = packageFiles[i];
+                hash = (hash * 31) + StringComparer.OrdinalIgnoreCase.GetHashCode(item.FilePath);
+                hash = (hash * 31) + item.Length.GetHashCode();
+                hash = (hash * 31) + item.LastWriteUtcTicks.GetHashCode();
+            }
+
+            hash &= long.MaxValue;
+            return hash == 0 ? 1 : hash;
+        }
+    }
+
     private static byte[] BuildResourceKeyBytes(uint type, uint group, ulong instance)
     {
         var data = new byte[16];
@@ -557,23 +621,45 @@ public sealed class TrayDependencyEngineTests
             _snapshotTask = snapshotTask;
         }
 
-        public Task<PackageIndexSnapshot> GetSnapshotAsync(
+        public async Task<PackageIndexSnapshot?> TryLoadSnapshotAsync(
             string modsRootPath,
+            long inventoryVersion,
+            CancellationToken cancellationToken = default)
+        {
+            var snapshot = await _snapshotTask.ConfigureAwait(false);
+            return snapshot with { InventoryVersion = inventoryVersion };
+        }
+
+        public async Task<PackageIndexSnapshot> BuildSnapshotAsync(
+            PackageIndexBuildRequest request,
             IProgress<TrayDependencyExportProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
-            return _snapshotTask;
+            var snapshot = await _snapshotTask.ConfigureAwait(false);
+            return snapshot with
+            {
+                ModsRootPath = request.ModsRootPath,
+                InventoryVersion = request.InventoryVersion
+            };
         }
     }
 
     private sealed class ThrowingPackageIndexCache : IPackageIndexCache
     {
-        public Task<PackageIndexSnapshot> GetSnapshotAsync(
+        public Task<PackageIndexSnapshot?> TryLoadSnapshotAsync(
             string modsRootPath,
+            long inventoryVersion,
+            CancellationToken cancellationToken = default)
+        {
+            throw new InvalidOperationException("TryLoadSnapshotAsync should not be called when a preloaded snapshot is supplied.");
+        }
+
+        public Task<PackageIndexSnapshot> BuildSnapshotAsync(
+            PackageIndexBuildRequest request,
             IProgress<TrayDependencyExportProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
-            throw new InvalidOperationException("GetSnapshotAsync should not be called when a preloaded snapshot is supplied.");
+            throw new InvalidOperationException("BuildSnapshotAsync should not be called when a preloaded snapshot is supplied.");
         }
     }
 
@@ -590,6 +676,16 @@ public sealed class TrayDependencyEngineTests
         {
             CallCount++;
             return _inner.BuildSnapshotAsync(rootPath, options, cancellationToken);
+        }
+
+        public Task<DbpfCatalogSnapshot> BuildSnapshotAsync(
+            string rootPath,
+            IReadOnlyList<DbpfCatalogPackageFile> packageFiles,
+            DbpfCatalogBuildOptions? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            return _inner.BuildSnapshotAsync(rootPath, packageFiles, options, cancellationToken);
         }
     }
 }

@@ -18,8 +18,8 @@ public sealed class TrayDependencyEngineCoreTests
         WritePackage(packagePath, [new PackageSpec(SupportedResourceType, 0, FirstInstance, [1, 2, 3, 4])]);
 
         var cache = new PackageIndexCache();
-        var first = await cache.GetSnapshotAsync(fixture.Path);
-        var second = await cache.GetSnapshotAsync(fixture.Path);
+        var first = await BuildSnapshotAsync(cache, fixture.Path);
+        var second = await cache.TryLoadSnapshotAsync(fixture.Path, first.InventoryVersion);
 
         Assert.Same(first, second);
     }
@@ -41,8 +41,10 @@ public sealed class TrayDependencyEngineCoreTests
                 new PackageSpec(SupportedResourceType, 0, SecondInstance, [5, 6, 7, 8])
             ]);
 
+        var packageIndexCache = new PackageIndexCache();
+        var preloadedSnapshot = await BuildSnapshotAsync(packageIndexCache, modsRoot.Path);
         var countingReader = new CountingResourceReader();
-        var service = new TrayDependencyExportService(new PackageIndexCache(), countingReader);
+        var service = new TrayDependencyExportService(packageIndexCache, countingReader);
         var request = new TrayDependencyExportRequest
         {
             ItemTitle = "Session",
@@ -51,7 +53,8 @@ public sealed class TrayDependencyEngineCoreTests
             TraySourceFiles = [trayItemPath],
             ModsRootPath = modsRoot.Path,
             TrayExportRoot = Path.Combine(exportRoot.Path, "Session_0xsession", "Tray"),
-            ModsExportRoot = Path.Combine(exportRoot.Path, "Session_0xsession", "Mods")
+            ModsExportRoot = Path.Combine(exportRoot.Path, "Session_0xsession", "Mods"),
+            PreloadedSnapshot = preloadedSnapshot
         };
 
         var result = await service.ExportAsync(request);
@@ -115,6 +118,54 @@ public sealed class TrayDependencyEngineCoreTests
         foreach (var spec in specs)
         {
             stream.Write(spec.ResourceData);
+        }
+    }
+
+    private static PackageIndexBuildRequest CreateBuildRequest(string modsRootPath)
+    {
+        var normalizedRoot = Path.GetFullPath(modsRootPath.Trim());
+        var packageFiles = Directory.EnumerateFiles(normalizedRoot, "*.package", SearchOption.AllDirectories)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .Select(path =>
+            {
+                var info = new FileInfo(path);
+                return new PackageIndexBuildFile
+                {
+                    FilePath = path,
+                    Length = info.Length,
+                    LastWriteUtcTicks = info.LastWriteTimeUtc.Ticks
+                };
+            })
+            .ToArray();
+
+        return new PackageIndexBuildRequest
+        {
+            ModsRootPath = normalizedRoot,
+            InventoryVersion = ComputeInventoryVersion(packageFiles),
+            PackageFiles = packageFiles
+        };
+    }
+
+    private static async Task<PackageIndexSnapshot> BuildSnapshotAsync(PackageIndexCache cache, string modsRootPath)
+    {
+        return await cache.BuildSnapshotAsync(CreateBuildRequest(modsRootPath));
+    }
+
+    private static long ComputeInventoryVersion(IReadOnlyList<PackageIndexBuildFile> packageFiles)
+    {
+        unchecked
+        {
+            long hash = 17;
+            for (var i = 0; i < packageFiles.Count; i++)
+            {
+                var item = packageFiles[i];
+                hash = (hash * 31) + StringComparer.OrdinalIgnoreCase.GetHashCode(item.FilePath);
+                hash = (hash * 31) + item.Length.GetHashCode();
+                hash = (hash * 31) + item.LastWriteUtcTicks.GetHashCode();
+            }
+
+            hash &= long.MaxValue;
+            return hash == 0 ? 1 : hash;
         }
     }
 

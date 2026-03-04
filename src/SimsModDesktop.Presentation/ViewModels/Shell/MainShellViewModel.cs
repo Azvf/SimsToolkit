@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using Avalonia.Threading;
 using Microsoft.Extensions.Logging;
 using SimsModDesktop.Application.Recovery;
 using SimsModDesktop.Application.Settings;
@@ -7,7 +6,6 @@ using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.Presentation.Diagnostics;
 using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 using SimsModDesktop.Presentation.ViewModels.Saves;
-using SimsModDesktop.TrayDependencyEngine;
 
 namespace SimsModDesktop.Presentation.ViewModels.Shell;
 
@@ -19,19 +17,11 @@ public sealed class MainShellViewModel : ObservableObject
     private readonly ShellSettingsController _settingsController;
     private readonly ShellSystemOperationsController _systemOperationsController;
     private readonly IOperationRecoveryCoordinator? _operationRecoveryCoordinator;
-    private readonly ITrayDependencyCacheWarmupService? _trayDependencyCacheWarmupService;
     private readonly ILogger<MainShellViewModel> _logger;
 
     private AppSection _selectedSection = AppSection.Toolkit;
     private bool _isInitialized;
     private bool _isSidebarExpanded = true;
-    private bool _trayDependencyCacheWarmupQueued;
-    private bool _isTrayDependencyCacheWarmupVisible;
-    private bool _isTrayDependencyCacheWarmupRunning;
-    private bool _isTrayDependencyCacheWarmupIndeterminate = true;
-    private int _trayDependencyCacheWarmupPercent;
-    private string _trayDependencyCacheWarmupDetail = string.Empty;
-    private int _lastWarmupProgressLogPercent = -1;
 
     public event EventHandler? Ts4RootFocusRequested;
 
@@ -42,8 +32,7 @@ public sealed class MainShellViewModel : ObservableObject
         ShellSettingsController settingsController,
         ShellSystemOperationsController systemOperationsController,
         ILogger<MainShellViewModel> logger,
-        IOperationRecoveryCoordinator? operationRecoveryCoordinator = null,
-        ITrayDependencyCacheWarmupService? trayDependencyCacheWarmupService = null)
+        IOperationRecoveryCoordinator? operationRecoveryCoordinator = null)
     {
         _workspaceVm = workspaceVm;
         _savesVm = savesVm;
@@ -52,7 +41,6 @@ public sealed class MainShellViewModel : ObservableObject
         _systemOperationsController = systemOperationsController;
         _logger = logger;
         _operationRecoveryCoordinator = operationRecoveryCoordinator;
-        _trayDependencyCacheWarmupService = trayDependencyCacheWarmupService;
 
         SelectSectionCommand = new RelayCommand<string>(SelectSection);
         LaunchGameCommand = new AsyncRelayCommand(LaunchGameAsync, () => CanLaunchGame);
@@ -112,50 +100,6 @@ public sealed class MainShellViewModel : ObservableObject
     public double SidebarWidth => IsSidebarExpanded ? 240 : 56;
     public double ShellColumnSpacing => IsSidebarExpanded ? 24 : 8;
     public bool ShowSidebarBranding => IsSidebarExpanded;
-    public bool IsTrayDependencyCacheWarmupVisible
-    {
-        get => _isTrayDependencyCacheWarmupVisible;
-        private set => SetProperty(ref _isTrayDependencyCacheWarmupVisible, value);
-    }
-
-    public bool IsTrayDependencyCacheWarmupRunning
-    {
-        get => _isTrayDependencyCacheWarmupRunning;
-        private set => SetProperty(ref _isTrayDependencyCacheWarmupRunning, value);
-    }
-
-    public bool IsTrayDependencyCacheWarmupIndeterminate
-    {
-        get => _isTrayDependencyCacheWarmupIndeterminate;
-        private set => SetProperty(ref _isTrayDependencyCacheWarmupIndeterminate, value);
-    }
-
-    public int TrayDependencyCacheWarmupPercent
-    {
-        get => _trayDependencyCacheWarmupPercent;
-        private set
-        {
-            var normalized = Math.Clamp(value, 0, 100);
-            if (!SetProperty(ref _trayDependencyCacheWarmupPercent, normalized))
-            {
-                return;
-            }
-
-            OnPropertyChanged(nameof(TrayDependencyCacheWarmupPercentText));
-        }
-    }
-
-    public string TrayDependencyCacheWarmupPercentText => $"{TrayDependencyCacheWarmupPercent}%";
-
-    public string TrayDependencyCacheWarmupDetail
-    {
-        get => _trayDependencyCacheWarmupDetail;
-        private set => SetProperty(ref _trayDependencyCacheWarmupDetail, value);
-    }
-
-    public string TrayDependencyCacheWarmupTitle => "Preparing startup dependency cache";
-    public string TrayDependencyCacheWarmupHint =>
-        "First-time indexing on very large Mods libraries can take several minutes.";
 
     public AppSection SelectedSection
     {
@@ -293,7 +237,6 @@ public sealed class MainShellViewModel : ObservableObject
         SelectedSection = _navigation.SelectedSection;
         ApplyNavigationToWorkspace();
         timing.Mark("navigation.bound");
-        QueueTrayDependencyCacheWarmup();
 
         if (_operationRecoveryCoordinator is not null)
         {
@@ -358,158 +301,6 @@ public sealed class MainShellViewModel : ObservableObject
         _workspaceVm.TrayPreview.TrayRoot = TrayPath;
         _workspaceVm.TrayDependencies.TrayPath = TrayPath;
         _workspaceVm.TrayDependencies.ModsPath = ModsPath;
-    }
-
-    private void QueueTrayDependencyCacheWarmup()
-    {
-        if (_trayDependencyCacheWarmupService is null || _trayDependencyCacheWarmupQueued)
-        {
-            return;
-        }
-
-        var timing = PerformanceLogScope.Begin(_logger, "startup.traycache.warmup", _workspaceVm.AppendSystemLog);
-
-        if (!_settingsController.EnableStartupTrayCacheWarmup)
-        {
-            _workspaceVm.AppendSystemLog("[startup][tray-cache] warmup-disabled-by-config");
-            timing.Skip("disabled-by-config");
-            return;
-        }
-
-        var modsPath = ModsPath?.Trim() ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(modsPath) || !Directory.Exists(modsPath))
-        {
-            timing.Skip("missing-mods-path");
-            return;
-        }
-
-        _trayDependencyCacheWarmupQueued = true;
-        _lastWarmupProgressLogPercent = -1;
-        SetTrayDependencyCacheWarmupState(
-            visible: _settingsController.ShowStartupTrayCacheWarmupBanner,
-            running: true,
-            indeterminate: true,
-            percent: 0,
-            detail: "Checking package index cache...");
-        _workspaceVm.AppendSystemLog($"[startup][tray-cache] warmup-start modsPath={modsPath}");
-
-        var progress = new Progress<TrayDependencyExportProgress>(HandleTrayDependencyCacheWarmupProgress);
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                var result = await _trayDependencyCacheWarmupService
-                    .WarmupIfMissingAsync(modsPath, progress)
-                    .ConfigureAwait(false);
-
-                if (result.WarmedUp)
-                {
-                    SetTrayDependencyCacheWarmupState(
-                        visible: _settingsController.ShowStartupTrayCacheWarmupBanner,
-                        running: false,
-                        indeterminate: false,
-                        percent: 100,
-                        detail: string.IsNullOrWhiteSpace(result.Message)
-                            ? "Startup package index cache is ready."
-                            : result.Message);
-                    _workspaceVm.AppendSystemLog($"[startup][tray-cache] warmup-completed packages={result.PackageCount}");
-                    timing.Success(null, ("modsPath", modsPath), ("packageCount", result.PackageCount));
-                    await Task.Delay(2500).ConfigureAwait(false);
-                    SetTrayDependencyCacheVisibility(false);
-                    return;
-                }
-
-                _workspaceVm.AppendSystemLog(
-                    "[startup][tray-cache] " +
-                    (string.IsNullOrWhiteSpace(result.Message)
-                        ? "warmup-skipped"
-                        : result.Message));
-                timing.Skip(result.Message, ("modsPath", modsPath));
-                SetTrayDependencyCacheVisibility(false);
-            }
-            catch (Exception ex)
-            {
-                _workspaceVm.AppendSystemLog("[startup][tray-cache] warmup-failed: " + ex.Message);
-                timing.Fail(ex, null, ("modsPath", modsPath));
-                SetTrayDependencyCacheWarmupState(
-                    visible: _settingsController.ShowStartupTrayCacheWarmupBanner,
-                    running: false,
-                    indeterminate: false,
-                    percent: 0,
-                    detail: "Startup cache warmup failed. First tray export may take longer.");
-            }
-        });
-    }
-
-    private void HandleTrayDependencyCacheWarmupProgress(TrayDependencyExportProgress progress)
-    {
-        var normalizedPercent = Math.Clamp(progress.Percent, 0, 100);
-        var detail = string.IsNullOrWhiteSpace(progress.Detail)
-            ? "Indexing packages..."
-            : progress.Detail.Trim();
-        var indeterminate = normalizedPercent == 0 && progress.Stage != TrayDependencyExportStage.Completed;
-        var running = progress.Stage != TrayDependencyExportStage.Completed;
-
-        SetTrayDependencyCacheWarmupState(
-            visible: _settingsController.ShowStartupTrayCacheWarmupBanner,
-            running: running,
-            indeterminate: indeterminate,
-            percent: running ? normalizedPercent : 100,
-            detail: detail);
-
-        if (!_settingsController.EnableStartupTrayCacheWarmupVerboseLog)
-        {
-            return;
-        }
-
-        if (progress.Stage != TrayDependencyExportStage.IndexingPackages)
-        {
-            return;
-        }
-
-        if (_lastWarmupProgressLogPercent >= 0 &&
-            normalizedPercent < 100 &&
-            normalizedPercent < _lastWarmupProgressLogPercent + 10)
-        {
-            return;
-        }
-
-        _lastWarmupProgressLogPercent = normalizedPercent;
-        _workspaceVm.AppendSystemLog(
-            $"[startup][tray-cache] progress={normalizedPercent}% detail={detail}");
-    }
-
-    private void SetTrayDependencyCacheWarmupState(
-        bool visible,
-        bool running,
-        bool indeterminate,
-        int percent,
-        string detail)
-    {
-        ExecuteOnUi(() =>
-        {
-            IsTrayDependencyCacheWarmupVisible = visible;
-            IsTrayDependencyCacheWarmupRunning = running;
-            IsTrayDependencyCacheWarmupIndeterminate = indeterminate;
-            TrayDependencyCacheWarmupPercent = percent;
-            TrayDependencyCacheWarmupDetail = detail;
-        });
-    }
-
-    private void SetTrayDependencyCacheVisibility(bool visible)
-    {
-        ExecuteOnUi(() => IsTrayDependencyCacheWarmupVisible = visible);
-    }
-
-    private static void ExecuteOnUi(Action action)
-    {
-        if (Dispatcher.UIThread.CheckAccess())
-        {
-            action();
-            return;
-        }
-
-        Dispatcher.UIThread.Post(action);
     }
 
     private async Task LaunchGameAsync()
@@ -577,15 +368,6 @@ public sealed class MainShellViewModel : ObservableObject
         if (string.Equals(e.PropertyName, nameof(HasAllCorePathsValid), StringComparison.Ordinal))
         {
             NavigateToSettingsForPathFixCommand.NotifyCanExecuteChanged();
-        }
-
-        if (string.Equals(
-                e.PropertyName,
-                nameof(ShellSettingsController.ShowStartupTrayCacheWarmupBanner),
-                StringComparison.Ordinal) &&
-            IsTrayDependencyCacheWarmupRunning)
-        {
-            SetTrayDependencyCacheVisibility(_settingsController.ShowStartupTrayCacheWarmupBanner);
         }
     }
 

@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.ComponentModel;
+using Avalonia.Threading;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.TrayDependencyEngine;
@@ -11,10 +13,16 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
 {
     private readonly IFileDialogService _fileDialogService;
     private readonly ITrayDependencyExportService _trayDependencyExportService;
+    private readonly MainWindowCacheWarmupController _cacheWarmupController;
     private readonly TrayDependenciesPanelViewModel _trayDependencies;
     private bool _isActive;
     private bool _hasPendingRefresh = true;
     private int _isExportRunning;
+    private bool _isDependencyCacheWarmupBlocking;
+    private bool _isTrayDependencyCacheReady;
+    private int _trayDependencyCacheWarmupPercent;
+    private string _trayDependencyCacheWarmupStageText = string.Empty;
+    private string _trayDependencyCacheWarmupDetail = string.Empty;
     private string _lastPersistedLogText = string.Empty;
     private string _logText = "Tray preview ready.";
 
@@ -24,18 +32,20 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         ITrayThumbnailService trayThumbnailService,
         IFileDialogService fileDialogService,
         ITrayDependencyExportService trayDependencyExportService,
+        MainWindowCacheWarmupController cacheWarmupController,
         TrayDependenciesPanelViewModel trayDependencies)
     {
         Filter = filter;
         Surface = new TrayLikePreviewSurfaceViewModel(trayPreviewCoordinator, trayThumbnailService);
         _fileDialogService = fileDialogService;
         _trayDependencyExportService = trayDependencyExportService;
+        _cacheWarmupController = cacheWarmupController;
         _trayDependencies = trayDependencies;
 
         OpenSelectedCommand = new RelayCommand(OpenSelected, () => Surface.HasSelection);
         ExportSelectedCommand = new AsyncRelayCommand(
             ExportSelectedAsync,
-            () => Surface.HasSelection,
+            () => Surface.HasSelection && IsTrayDependencyCacheReady && !IsDependencyCacheWarmupBlocking,
             disableWhileRunning: false);
 
         Surface.Configure(Filter, () => Filter.TrayRoot, PreviewSurfaceSelectionMode.Multiple, autoLoad: false);
@@ -50,6 +60,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         Surface.SetFooter("Tray Preview Log", LogText);
 
         Filter.PropertyChanged += OnFilterPropertyChanged;
+        _trayDependencies.PropertyChanged += OnTrayDependenciesPropertyChanged;
         Surface.PropertyChanged += OnSurfacePropertyChanged;
     }
 
@@ -58,14 +69,78 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
     public RelayCommand OpenSelectedCommand { get; }
     public AsyncRelayCommand ExportSelectedCommand { get; }
 
+    public bool IsDependencyCacheWarmupBlocking
+    {
+        get => _isDependencyCacheWarmupBlocking;
+        private set
+        {
+            if (!SetProperty(ref _isDependencyCacheWarmupBlocking, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(IsInteractionEnabled));
+            ExportSelectedCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    public bool IsTrayDependencyCacheReady
+    {
+        get => _isTrayDependencyCacheReady;
+        private set
+        {
+            if (!SetProperty(ref _isTrayDependencyCacheReady, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(IsInteractionEnabled));
+            ExportSelectedCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    public bool IsInteractionEnabled => !IsDependencyCacheWarmupBlocking && IsTrayDependencyCacheReady;
+
+    public int TrayDependencyCacheWarmupPercent
+    {
+        get => _trayDependencyCacheWarmupPercent;
+        private set
+        {
+            var normalized = Math.Clamp(value, 0, 100);
+            if (!SetProperty(ref _trayDependencyCacheWarmupPercent, normalized))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(TrayDependencyCacheWarmupPercentText));
+        }
+    }
+
+    public string TrayDependencyCacheWarmupPercentText => $"{TrayDependencyCacheWarmupPercent}%";
+
+    public string TrayDependencyCacheWarmupStageText
+    {
+        get => _trayDependencyCacheWarmupStageText;
+        private set => SetProperty(ref _trayDependencyCacheWarmupStageText, value);
+    }
+
+    public string TrayDependencyCacheWarmupDetail
+    {
+        get => _trayDependencyCacheWarmupDetail;
+        private set => SetProperty(ref _trayDependencyCacheWarmupDetail, value);
+    }
+
     public void ResetAfterCacheClear()
     {
+        _cacheWarmupController.Reset();
+        IsTrayDependencyCacheReady = false;
+        SetTrayDependencyCacheWarmupState(false, 0, string.Empty, string.Empty);
         Surface.ResetAfterCacheClear();
     }
 
     public Task EnsureLoadedAsync(bool forceReload = false)
     {
-        return Surface.EnsureLoadedAsync(forceReload);
+        return EnsureWorkspaceReadyAndLoadAsync(forceReload);
     }
 
     public void SetIsActive(bool isActive)
@@ -87,7 +162,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         {
             var forceReload = _hasPendingRefresh;
             _hasPendingRefresh = false;
-            _ = Surface.EnsureLoadedAsync(forceReload);
+            _ = EnsureWorkspaceReadyAndLoadAsync(forceReload);
         }
     }
 
@@ -114,8 +189,22 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
             if (_isActive)
             {
                 _hasPendingRefresh = false;
-                Surface.NotifyTrayPathChanged();
+                _ = EnsureWorkspaceReadyAndLoadAsync(forceReload: true);
             }
+        }
+    }
+
+    private void OnTrayDependenciesPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (!string.Equals(e.PropertyName, nameof(TrayDependenciesPanelViewModel.ModsPath), StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _cacheWarmupController.Reset();
+        if (_isActive)
+        {
+            _ = EnsureWorkspaceReadyAndLoadAsync(forceReload: false);
         }
     }
 
@@ -169,6 +258,48 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         }
     }
 
+    private async Task EnsureWorkspaceReadyAndLoadAsync(bool forceReload)
+    {
+        var modsPath = _trayDependencies.ModsPath?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(modsPath) || !Directory.Exists(modsPath))
+        {
+            IsTrayDependencyCacheReady = false;
+            SetTrayDependencyCacheWarmupState(
+                false,
+                0,
+                "Missing Mods Path",
+                "Set a valid Mods Path in Settings before using Tray dependency export.");
+            LogText = "Tray dependency cache is unavailable: Mods Path is missing.";
+            return;
+        }
+
+        IsTrayDependencyCacheReady = false;
+        SetTrayDependencyCacheWarmupState(true, 0, "Validate", "Preparing tray dependency cache...");
+        try
+        {
+            await _cacheWarmupController.EnsureTrayWorkspaceReadyAsync(
+                modsPath,
+                CreateCacheWarmupHost()).ConfigureAwait(false);
+            IsTrayDependencyCacheReady = true;
+            SetTrayDependencyCacheWarmupState(false, 100, string.Empty, string.Empty);
+
+            if (!string.IsNullOrWhiteSpace(Filter.TrayRoot) && Directory.Exists(Filter.TrayRoot))
+            {
+                await Surface.EnsureLoadedAsync(forceReload).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            IsTrayDependencyCacheReady = false;
+            SetTrayDependencyCacheWarmupState(
+                false,
+                0,
+                "Warmup Failed",
+                "Tray dependency cache warmup failed.");
+            LogText = "Tray dependency cache warmup failed." + Environment.NewLine + ex.Message;
+        }
+    }
+
     private async Task ExportSelectedAsync()
     {
         if (Interlocked.Exchange(ref _isExportRunning, 1) == 1)
@@ -189,6 +320,12 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
             if (string.IsNullOrWhiteSpace(modsPath) || !Directory.Exists(modsPath))
             {
                 LogText = "Mods Path is missing. Set a valid Mods Path before exporting referenced mods.";
+                return;
+            }
+
+            if (!_cacheWarmupController.TryGetReadyTraySnapshot(modsPath, out var preloadedSnapshot))
+            {
+                LogText = "Tray dependency cache is not ready. Re-open the Tray page and wait for cache warmup to finish.";
                 return;
             }
 
@@ -240,7 +377,8 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
                     TraySourceFiles = sourceFiles,
                     ModsRootPath = modsPath,
                     TrayExportRoot = Path.Combine(itemRoot, "Tray"),
-                    ModsExportRoot = Path.Combine(itemRoot, "Mods")
+                    ModsExportRoot = Path.Combine(itemRoot, "Mods"),
+                    PreloadedSnapshot = preloadedSnapshot
                 };
 
                 try
@@ -407,6 +545,42 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         PersistentUiLog.Append("TrayPreview", "[log-reset]");
         PersistentUiLog.Append("TrayPreview", text);
         _lastPersistedLogText = text;
+    }
+
+    private MainWindowCacheWarmupHost CreateCacheWarmupHost()
+    {
+        return new MainWindowCacheWarmupHost
+        {
+            ReportProgress = progress =>
+            {
+                SetTrayDependencyCacheWarmupState(
+                    progress.IsBlocking,
+                    progress.Percent,
+                    string.IsNullOrWhiteSpace(progress.Stage) ? "Warmup" : progress.Stage,
+                    progress.Detail);
+            },
+            AppendLog = message =>
+            {
+                if (!string.IsNullOrWhiteSpace(message))
+                {
+                    PersistentUiLog.Append("TrayCache", message);
+                }
+            }
+        };
+    }
+
+    private void SetTrayDependencyCacheWarmupState(bool blocking, int percent, string stageText, string detail)
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => SetTrayDependencyCacheWarmupState(blocking, percent, stageText, detail));
+            return;
+        }
+
+        IsDependencyCacheWarmupBlocking = blocking;
+        TrayDependencyCacheWarmupPercent = percent;
+        TrayDependencyCacheWarmupStageText = stageText;
+        TrayDependencyCacheWarmupDetail = detail;
     }
 
     private static readonly string[] SupportedTrayExportExtensions =

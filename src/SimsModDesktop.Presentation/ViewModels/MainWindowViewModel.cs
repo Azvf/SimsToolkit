@@ -137,7 +137,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
         OpenSelectedTrayPreviewPathsCommand = new RelayCommand(OpenSelectedTrayPreviewPaths, () => HasSelectedTrayPreviewItems);
         SelectAllTrayPreviewPageCommand = new RelayCommand(SelectAllTrayPreviewPage, () => HasTrayPreviewItems);
         ClearTrayPreviewSelectionCommand = new RelayCommand(ClearTrayPreviewSelection, () => HasSelectedTrayPreviewItems);
-        ExportSelectedTrayPreviewFilesCommand = new AsyncRelayCommand(ExportSelectedTrayPreviewFilesAsync, () => HasSelectedTrayPreviewItems);
+        ExportSelectedTrayPreviewFilesCommand = new AsyncRelayCommand(
+            ExportSelectedTrayPreviewFilesAsync,
+            () => HasSelectedTrayPreviewItems &&
+                  TrayPreviewWorkspace.IsTrayDependencyCacheReady &&
+                  !TrayPreviewWorkspace.IsDependencyCacheWarmupBlocking);
         ClearCompletedTrayExportTasksCommand = new RelayCommand(ClearCompletedTrayExportTasks, () => HasCompletedTrayExportTasks);
         ToggleTrayExportQueueCommand = new RelayCommand(ToggleTrayExportQueue, () => HasTrayExportTasks);
         OpenTrayExportTaskPathCommand = new RelayCommand<TrayExportTaskItemViewModel>(OpenTrayExportTaskPath, task => task?.HasExportRoot == true);
@@ -156,6 +160,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _statusController.PropertyChanged += OnStatusControllerPropertyChanged;
         _trayPreviewStateController.PropertyChanged += OnTrayPreviewStateControllerPropertyChanged;
         _trayPreviewSelectionController.PropertyChanged += OnTrayPreviewSelectionControllerPropertyChanged;
+        TrayPreviewWorkspace.PropertyChanged += OnTrayPreviewWorkspacePropertyChanged;
         _localization.SetLanguage(_selectedLanguageCode);
         _selectedLanguageCode = _localization.CurrentLanguageCode;
         ProgressMessage = L("progress.idle");

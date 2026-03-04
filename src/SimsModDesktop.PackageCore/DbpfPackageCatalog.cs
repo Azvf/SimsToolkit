@@ -14,20 +14,36 @@ public sealed class DbpfPackageCatalog : IDbpfPackageCatalog
         DbpfCatalogBuildOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        options ??= new DbpfCatalogBuildOptions();
         var normalizedRoot = Path.GetFullPath(rootPath.Trim());
-        var packagePaths = Directory.Exists(normalizedRoot)
+        var packageFiles = Directory.Exists(normalizedRoot)
             ? Directory.EnumerateFiles(normalizedRoot, "*.package", SearchOption.AllDirectories)
                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .Select(path =>
+                {
+                    var info = new FileInfo(path);
+                    return new DbpfCatalogPackageFile(path, info.Length, info.LastWriteTimeUtc.Ticks);
+                })
                 .ToArray()
-            : Array.Empty<string>();
+            : Array.Empty<DbpfCatalogPackageFile>();
 
-        var metadata = packagePaths
-            .Select(path =>
-            {
-                var info = new FileInfo(path);
-                return new PackageFileMetadata(path, info.Length, info.LastWriteTimeUtc.Ticks);
-            })
+        return await BuildSnapshotAsync(normalizedRoot, packageFiles, options, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<DbpfCatalogSnapshot> BuildSnapshotAsync(
+        string rootPath,
+        IReadOnlyList<DbpfCatalogPackageFile> packageFiles,
+        DbpfCatalogBuildOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        options ??= new DbpfCatalogBuildOptions();
+        var normalizedRoot = Path.GetFullPath(rootPath.Trim());
+        var metadata = packageFiles
+            .Where(file => !string.IsNullOrWhiteSpace(file.FilePath))
+            .Select(file => new PackageFileMetadata(
+                Path.GetFullPath(file.FilePath.Trim()),
+                file.Length,
+                file.LastWriteUtcTicks))
+            .OrderBy(file => file.FilePath, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
         var cacheFilePath = options.CacheFilePath ?? GetDefaultCacheFilePath();

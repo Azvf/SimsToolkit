@@ -1,6 +1,7 @@
 using System.Collections.Specialized;
 using System.ComponentModel;
 using SimsModDesktop.Application.Localization;
+using SimsModDesktop.Presentation.ViewModels.Preview;
 
 namespace SimsModDesktop.Presentation.ViewModels;
 
@@ -159,6 +160,17 @@ public sealed partial class MainWindowViewModel
 
     private void OnTrayExportTasksChanged(object? sender, NotifyCollectionChangedEventArgs e)
         => _trayExportController.OnTrayExportTasksChanged(CreateTrayExportHost(), sender, e);
+
+    private void OnTrayPreviewWorkspacePropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (!string.Equals(e.PropertyName, nameof(TrayPreviewWorkspaceViewModel.IsTrayDependencyCacheReady), StringComparison.Ordinal) &&
+            !string.Equals(e.PropertyName, nameof(TrayPreviewWorkspaceViewModel.IsDependencyCacheWarmupBlocking), StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        ExportSelectedTrayPreviewFilesCommand.NotifyCanExecuteChanged();
+    }
 
     private void NotifyTrayPreviewFilterVisibilityChanged()
     {

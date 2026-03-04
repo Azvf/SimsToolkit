@@ -1,8 +1,11 @@
 using Avalonia.Threading;
+using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Application.Requests;
+using SimsModDesktop.Application.Mods;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.TrayDependencyEngine;
+using SimsModDesktop.Presentation.ViewModels;
 using SimsModDesktop.Presentation.ViewModels.Panels;
 using SimsModDesktop.Presentation.ViewModels.Preview;
 
@@ -14,15 +17,26 @@ public sealed class TrayPreviewWorkspaceViewModelTests
     public async Task SetIsActive_DefersInitialLoadUntilTraySectionIsActive()
     {
         using var trayRoot = new TempDirectory();
+        using var modsRoot = new TempDirectory();
         var filter = new TrayPreviewPanelViewModel();
         var runner = new CountingTrayPreviewCoordinator();
+        var trayDependencies = new TrayDependenciesPanelViewModel
+        {
+            ModsPath = modsRoot.Path
+        };
+        var cacheWarmupController = new MainWindowCacheWarmupController(
+            new FakeInventoryService(),
+            new NoOpModItemIndexScheduler(),
+            new FakePackageIndexCache(),
+            NullLogger<MainWindowCacheWarmupController>.Instance);
         var workspace = new TrayPreviewWorkspaceViewModel(
             filter,
             runner,
             new PassiveTrayThumbnailService(),
             new FakeFileDialogService(),
             new FakeTrayDependencyExportService(),
-            new TrayDependenciesPanelViewModel());
+            cacheWarmupController,
+            trayDependencies);
 
         filter.TrayRoot = trayRoot.Path;
         await Task.Delay(50);
@@ -164,6 +178,71 @@ public sealed class TrayPreviewWorkspaceViewModelTests
                 Success = true
             });
         }
+    }
+
+    private sealed class FakeInventoryService : IModPackageInventoryService
+    {
+        public Task<ModPackageInventoryRefreshResult> RefreshAsync(
+            string modsRoot,
+            IProgress<ModPackageInventoryRefreshProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new ModPackageInventoryRefreshResult
+            {
+                Snapshot = new ModPackageInventorySnapshot
+                {
+                    ModsRootPath = modsRoot,
+                    InventoryVersion = 1,
+                    Entries = Array.Empty<ModPackageInventoryEntry>(),
+                    LastValidatedUtcTicks = DateTime.UtcNow.Ticks
+                }
+            });
+        }
+    }
+
+    private sealed class NoOpModItemIndexScheduler : IModItemIndexScheduler
+    {
+        public event EventHandler<ModFastBatchAppliedEventArgs>? FastBatchApplied;
+        public event EventHandler<ModEnrichmentAppliedEventArgs>? EnrichmentApplied;
+        public event EventHandler? AllWorkCompleted;
+        public bool IsFastPassRunning => false;
+        public bool IsDeepPassRunning => false;
+
+        public Task QueueRefreshAsync(
+            ModIndexRefreshRequest request,
+            IProgress<ModIndexRefreshProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+    }
+
+    private sealed class FakePackageIndexCache : IPackageIndexCache
+    {
+        public Task<PackageIndexSnapshot?> TryLoadSnapshotAsync(
+            string modsRootPath,
+            long inventoryVersion,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<PackageIndexSnapshot?>(new PackageIndexSnapshot
+            {
+                ModsRootPath = modsRootPath,
+                InventoryVersion = inventoryVersion <= 0 ? 1 : inventoryVersion,
+                Packages = Array.Empty<IndexedPackageFile>()
+            });
+        }
+
+        public Task<PackageIndexSnapshot> BuildSnapshotAsync(
+            PackageIndexBuildRequest request,
+            IProgress<TrayDependencyExportProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new PackageIndexSnapshot
+            {
+                ModsRootPath = request.ModsRootPath,
+                InventoryVersion = request.InventoryVersion,
+                Packages = Array.Empty<IndexedPackageFile>()
+            });
+        }
+
     }
 
     private static SimsTrayPreviewItem CreateItem(string key)

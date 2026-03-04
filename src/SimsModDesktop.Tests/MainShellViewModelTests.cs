@@ -122,8 +122,10 @@ public sealed class MainShellViewModelTests
         var trayPreviewCoordinator = new FakeTrayPreviewCoordinator();
         var vm = CreateShellViewModel(cacheService, trayPreviewCoordinator, trayThumbnailService);
         using var trayRoot = new TempDirectory();
+        using var modsRoot = new TempDirectory();
 
         vm.TrayPath = trayRoot.Path;
+        vm.ModsPath = modsRoot.Path;
         await Task.Delay(50);
         var baselineLoadCount = trayPreviewCoordinator.LoadCount;
 
@@ -170,91 +172,30 @@ public sealed class MainShellViewModelTests
     }
 
     [Fact]
-    public async Task InitializeAsync_WarmsTrayDependencyCache_WhenModsPathExistsAndCacheIsMissing()
+    public async Task InitializeAsync_DoesNotEmitStartupWarmupLogs_WhenModsPathExists()
     {
         using var root = new TempDirectory();
         var modsPath = Directory.CreateDirectory(Path.Combine(root.Path, "Mods")).FullName;
         var settings = new AppSettings();
         settings.GameLaunch.ModsPath = modsPath;
 
-        var warmupService = new FakeTrayDependencyCacheWarmupService();
-        var vm = CreateShellViewModel(initialSettings: settings, trayDependencyCacheWarmupService: warmupService);
+        var vm = CreateShellViewModel(initialSettings: settings);
 
         await vm.InitializeAsync();
-        await WaitForAsync(() => warmupService.CallCount == 1);
-        await WaitForAsync(() =>
-            vm.WorkspaceVm.LogText.Contains("[timing][done] operation=startup.traycache.warmup", StringComparison.Ordinal));
 
-        Assert.Equal(modsPath, warmupService.LastModsPath);
-        Assert.Contains("[timing][start] operation=startup.traycache.warmup", vm.WorkspaceVm.LogText, StringComparison.Ordinal);
-        Assert.Contains("[timing][done] operation=startup.traycache.warmup", vm.WorkspaceVm.LogText, StringComparison.Ordinal);
+        Assert.DoesNotContain("[timing][start] operation=startup.traycache.warmup", vm.WorkspaceVm.LogText, StringComparison.Ordinal);
+        Assert.DoesNotContain("[timing][done] operation=startup.traycache.warmup", vm.WorkspaceVm.LogText, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task InitializeAsync_ShowsWarmupProgressHint_WhenStartupWarmupRuns()
+    public async Task ResetDebugConfigCommand_IsDisabled_WhenNoDebugTogglesAreDefined()
     {
-        using var root = new TempDirectory();
-        var modsPath = Directory.CreateDirectory(Path.Combine(root.Path, "Mods")).FullName;
-        var settings = new AppSettings();
-        settings.GameLaunch.ModsPath = modsPath;
-
-        var warmupService = new FakeTrayDependencyCacheWarmupService
-        {
-            ShouldReportProgress = true
-        };
-        var vm = CreateShellViewModel(initialSettings: settings, trayDependencyCacheWarmupService: warmupService);
+        var vm = CreateShellViewModel(initialSettings: new AppSettings());
 
         await vm.InitializeAsync();
-        await WaitForAsync(() =>
-            vm.WorkspaceVm.LogText.Contains("[timing][done] operation=startup.traycache.warmup", StringComparison.Ordinal));
 
-        Assert.Contains("Startup", vm.TrayDependencyCacheWarmupDetail, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task InitializeAsync_DoesNotWarmup_WhenDebugConfigDisablesStartupWarmup()
-    {
-        using var root = new TempDirectory();
-        var modsPath = Directory.CreateDirectory(Path.Combine(root.Path, "Mods")).FullName;
-        var settings = new AppSettings();
-        settings.GameLaunch.ModsPath = modsPath;
-        var debugConfigEntries = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["startup.tray_cache_warmup.enabled"] = "false"
-        };
-
-        var warmupService = new FakeTrayDependencyCacheWarmupService();
-        var vm = CreateShellViewModel(
-            initialSettings: settings,
-            trayDependencyCacheWarmupService: warmupService,
-            initialDebugConfigEntries: debugConfigEntries);
-
-        await vm.InitializeAsync();
-        await Task.Delay(100);
-
-        Assert.Equal(0, warmupService.CallCount);
-        Assert.False(vm.IsTrayDependencyCacheWarmupVisible);
-        Assert.Contains("[timing][skip] operation=startup.traycache.warmup", vm.WorkspaceVm.LogText, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task ResetDebugConfigCommand_RestoresToggleDefaults()
-    {
-        var settings = new AppSettings();
-        var debugConfigEntries = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["startup.tray_cache_warmup.verbose_log"] = "false"
-        };
-        var vm = CreateShellViewModel(initialSettings: settings, initialDebugConfigEntries: debugConfigEntries);
-
-        await vm.InitializeAsync();
-        var verboseToggle = vm.DebugConfigItems.First(item =>
-            string.Equals(item.Key, "startup.tray_cache_warmup.verbose_log", StringComparison.OrdinalIgnoreCase));
-        Assert.False(verboseToggle.Value);
-
-        vm.ResetDebugConfigCommand.Execute(null);
-
-        Assert.True(verboseToggle.Value);
+        Assert.Empty(vm.DebugConfigItems);
+        Assert.False(vm.ResetDebugConfigCommand.CanExecute(null));
     }
 
     [Fact]
@@ -286,7 +227,6 @@ public sealed class MainShellViewModelTests
         FakeTrayThumbnailService? trayThumbnailService = null,
         AppSettings? initialSettings = null,
         FakeAppThemeService? themeService = null,
-        FakeTrayDependencyCacheWarmupService? trayDependencyCacheWarmupService = null,
         IReadOnlyDictionary<string, string>? initialDebugConfigEntries = null)
     {
         var settingsStore = new FakeSettingsStore(initialSettings ?? new AppSettings());
@@ -322,8 +262,7 @@ public sealed class MainShellViewModelTests
             settingsController,
             systemOperationsController,
             NullLogger<MainShellViewModel>.Instance,
-            null,
-            trayDependencyCacheWarmupService ?? new FakeTrayDependencyCacheWarmupService());
+            null);
     }
 
     private static MainWindowViewModel CreateWorkspaceViewModel(
@@ -341,6 +280,11 @@ public sealed class MainShellViewModelTests
         var modPreview = new ModPreviewPanelViewModel();
         var trayPreview = new TrayPreviewPanelViewModel();
         var sharedFileOps = new SharedFileOpsPanelViewModel();
+        var cacheWarmupController = new MainWindowCacheWarmupController(
+            new NoOpModPackageInventoryService(),
+            new NoOpModItemIndexScheduler(),
+            new FakePackageIndexCache(),
+            NullLogger<MainWindowCacheWarmupController>.Instance);
 
         var trayPreviewWorkspace = new TrayPreviewWorkspaceViewModel(
             trayPreview,
@@ -348,12 +292,13 @@ public sealed class MainShellViewModelTests
             trayThumbnailService,
             new FakeFileDialogService(),
             new FakeTrayDependencyExportService(),
+            cacheWarmupController,
             trayDependencies);
         var modPreviewWorkspace = new ModPreviewWorkspaceViewModel(
             modPreview,
             new NoOpModItemCatalogService(),
             new NoOpModItemIndexScheduler(),
-            new NoOpModPackageScanService(),
+            cacheWarmupController,
             new NoOpModItemInspectService(),
             NullModPackageTextureEditService.Instance,
             new FakeFileDialogService());
@@ -383,6 +328,7 @@ public sealed class MainShellViewModelTests
                 new FakeTrayDependencyAnalysisService(),
                 toolkitActionPlanner,
                 recoveryController,
+                cacheWarmupController,
                 CreateTextureCompressionService(),
                 new TextureDimensionProbe(),
                 NullLogger<MainWindowExecutionController>.Instance),
@@ -396,7 +342,10 @@ public sealed class MainShellViewModelTests
                 trayPreviewStateController,
                 trayPreviewSelectionController,
                 NullLogger<MainWindowTrayPreviewController>.Instance),
-            new MainWindowTrayExportController(trayExportService, new FakePackageIndexCache()),
+            new MainWindowTrayExportController(
+                trayExportService,
+                cacheWarmupController,
+                NullLogger<MainWindowTrayExportController>.Instance),
             new MainWindowValidationController(toolkitActionPlanner),
             new MainWindowLifecycleController(
                 settingsPersistenceController,
@@ -647,7 +596,10 @@ public sealed class MainShellViewModelTests
         public bool IsFastPassRunning => false;
         public bool IsDeepPassRunning => false;
 
-        public Task QueueRefreshAsync(IReadOnlyList<string> packagePaths, CancellationToken cancellationToken = default)
+        public Task QueueRefreshAsync(
+            ModIndexRefreshRequest request,
+            IProgress<ModIndexRefreshProgress>? progress = null,
+            CancellationToken cancellationToken = default)
             => Task.CompletedTask;
     }
 
@@ -655,6 +607,26 @@ public sealed class MainShellViewModelTests
     {
         public Task<IReadOnlyList<ModPackageScanResult>> ScanAsync(string modsRoot, CancellationToken cancellationToken = default)
             => Task.FromResult<IReadOnlyList<ModPackageScanResult>>(Array.Empty<ModPackageScanResult>());
+    }
+
+    private sealed class NoOpModPackageInventoryService : IModPackageInventoryService
+    {
+        public Task<ModPackageInventoryRefreshResult> RefreshAsync(
+            string modsRoot,
+            IProgress<ModPackageInventoryRefreshProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new ModPackageInventoryRefreshResult
+            {
+                Snapshot = new ModPackageInventorySnapshot
+                {
+                    ModsRootPath = modsRoot,
+                    InventoryVersion = 1,
+                    Entries = Array.Empty<ModPackageInventoryEntry>(),
+                    LastValidatedUtcTicks = DateTime.UtcNow.Ticks
+                }
+            });
+        }
     }
 
     private sealed class NoOpModItemInspectService : IModItemInspectService
@@ -802,57 +774,32 @@ public sealed class MainShellViewModelTests
         }
     }
 
-    private sealed class FakeTrayDependencyCacheWarmupService : ITrayDependencyCacheWarmupService
-    {
-        public int CallCount { get; private set; }
-        public string LastModsPath { get; private set; } = string.Empty;
-        public bool ShouldReportProgress { get; set; }
-
-        public Task<TrayDependencyCacheWarmupResult> WarmupIfMissingAsync(
-            string modsRootPath,
-            IProgress<TrayDependencyExportProgress>? progress = null,
-            CancellationToken cancellationToken = default)
-        {
-            CallCount++;
-            LastModsPath = modsRootPath;
-            if (ShouldReportProgress)
-            {
-                progress?.Report(new TrayDependencyExportProgress
-                {
-                    Stage = TrayDependencyExportStage.IndexingPackages,
-                    Percent = 30,
-                    Detail = "Indexing packages... 3/10"
-                });
-                progress?.Report(new TrayDependencyExportProgress
-                {
-                    Stage = TrayDependencyExportStage.Completed,
-                    Percent = 100,
-                    Detail = "Startup package index cache is ready (10/10)."
-                });
-            }
-
-            return Task.FromResult(new TrayDependencyCacheWarmupResult
-            {
-                WarmedUp = true,
-                PackageCount = 10,
-                Message = "Startup warmup completed for 10 package(s)."
-            });
-        }
-    }
-
     private sealed class FakePackageIndexCache : IPackageIndexCache
     {
-        public Task<PackageIndexSnapshot> GetSnapshotAsync(
+        public Task<PackageIndexSnapshot?> TryLoadSnapshotAsync(
             string modsRootPath,
+            long inventoryVersion,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<PackageIndexSnapshot?>(new PackageIndexSnapshot
+            {
+                ModsRootPath = string.IsNullOrWhiteSpace(modsRootPath)
+                    ? string.Empty
+                    : Path.GetFullPath(modsRootPath.Trim()),
+                InventoryVersion = inventoryVersion <= 0 ? 1 : inventoryVersion,
+                Packages = Array.Empty<IndexedPackageFile>()
+            });
+        }
+
+        public Task<PackageIndexSnapshot> BuildSnapshotAsync(
+            PackageIndexBuildRequest request,
             IProgress<TrayDependencyExportProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
-            var normalizedRoot = string.IsNullOrWhiteSpace(modsRootPath)
-                ? string.Empty
-                : Path.GetFullPath(modsRootPath.Trim());
             return Task.FromResult(new PackageIndexSnapshot
             {
-                ModsRootPath = normalizedRoot,
+                ModsRootPath = request.ModsRootPath,
+                InventoryVersion = request.InventoryVersion,
                 Packages = Array.Empty<IndexedPackageFile>()
             });
         }

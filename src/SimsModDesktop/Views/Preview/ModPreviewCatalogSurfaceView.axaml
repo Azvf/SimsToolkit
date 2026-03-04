@@ -91,6 +91,22 @@
             </ListBox>
 
             <Border Classes="tray-preview-empty-state"
+                    IsVisible="{Binding IsLoadingStateVisible}">
+                <StackPanel HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Spacing="8">
+                    <TextBlock Classes="tray-preview-empty-description"
+                               Text="Validating and loading item catalog..." />
+                    <ProgressBar Width="220"
+                                 Height="8"
+                                 IsIndeterminate="True" />
+                    <TextBlock Classes="helper-text"
+                               Text="{Binding CacheWarmupDetail}"
+                               TextAlignment="Center" />
+                </StackPanel>
+            </Border>
+
+            <Border Classes="tray-preview-empty-state"
                     IsVisible="{Binding IsEmptyStateVisible}">
                 <StackPanel HorizontalAlignment="Center"
                             VerticalAlignment="Center"

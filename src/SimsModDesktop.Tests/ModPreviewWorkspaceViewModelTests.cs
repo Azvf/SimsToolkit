@@ -1,9 +1,12 @@
 using Avalonia.Threading;
+using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Application.Mods;
 using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Presentation.Dialogs;
+using SimsModDesktop.Presentation.ViewModels;
 using SimsModDesktop.Presentation.ViewModels.Panels;
 using SimsModDesktop.Presentation.ViewModels.Preview;
+using SimsModDesktop.TrayDependencyEngine;
 
 namespace SimsModDesktop.Tests;
 
@@ -22,7 +25,7 @@ public sealed class ModPreviewWorkspaceViewModelTests
             filter,
             catalogService: new FakeCatalogService(),
             indexScheduler: new NoOpScheduler(),
-            scanService: new FakeScanService(),
+            cacheWarmupController: CreateCacheWarmupController(),
             inspectService: new FakeInspectService(),
             textureEditService: NullModPackageTextureEditService.Instance,
             fileDialogService: new FakeFileDialogService());
@@ -68,21 +71,41 @@ public sealed class ModPreviewWorkspaceViewModelTests
         }
     }
 
-    private sealed class FakeScanService : IModPackageScanService
+    private static MainWindowCacheWarmupController CreateCacheWarmupController()
     {
-        public Task<IReadOnlyList<ModPackageScanResult>> ScanAsync(string modsRoot, CancellationToken cancellationToken = default)
+        return new MainWindowCacheWarmupController(
+            new FakeInventoryService(),
+            new NoOpScheduler(),
+            new FakePackageIndexCache(),
+            NullLogger<MainWindowCacheWarmupController>.Instance);
+    }
+
+    private sealed class FakeInventoryService : IModPackageInventoryService
+    {
+        public Task<ModPackageInventoryRefreshResult> RefreshAsync(
+            string modsRoot,
+            IProgress<ModPackageInventoryRefreshProgress>? progress = null,
+            CancellationToken cancellationToken = default)
         {
-            return Task.FromResult<IReadOnlyList<ModPackageScanResult>>(
-            [
-                new ModPackageScanResult
+            var entry = new ModPackageInventoryEntry
+            {
+                PackagePath = Path.Combine(modsRoot, "demo.package"),
+                FileLength = 1024,
+                LastWriteUtcTicks = DateTime.UtcNow.Ticks,
+                PackageType = ".package",
+                ScopeHint = "CAS"
+            };
+            return Task.FromResult(new ModPackageInventoryRefreshResult
+            {
+                Snapshot = new ModPackageInventorySnapshot
                 {
-                    PackagePath = Path.Combine(modsRoot, "demo.package"),
-                    FileLength = 1024,
-                    LastWriteUtcTicks = DateTime.UtcNow.Ticks,
-                    PackageType = ".package",
-                    ScopeHint = "CAS"
-                }
-            ]);
+                    ModsRootPath = modsRoot,
+                    InventoryVersion = 1,
+                    Entries = [entry],
+                    LastValidatedUtcTicks = DateTime.UtcNow.Ticks
+                },
+                AddedEntries = [entry]
+            });
         }
     }
 
@@ -94,20 +117,44 @@ public sealed class ModPreviewWorkspaceViewModelTests
         public bool IsFastPassRunning => false;
         public bool IsDeepPassRunning => false;
 
-        public Task QueueRefreshAsync(IReadOnlyList<string> packagePaths, CancellationToken cancellationToken = default)
+        public Task QueueRefreshAsync(
+            ModIndexRefreshRequest request,
+            IProgress<ModIndexRefreshProgress>? progress = null,
+            CancellationToken cancellationToken = default)
         {
             FastBatchApplied?.Invoke(this, new ModFastBatchAppliedEventArgs
             {
-                PackagePaths = packagePaths
+                PackagePaths = request.ChangedPackages
             });
             EnrichmentApplied?.Invoke(this, new ModEnrichmentAppliedEventArgs
             {
-                PackagePaths = packagePaths,
+                PackagePaths = request.ChangedPackages,
                 AffectedItemKeys = ["item-1"]
             });
             AllWorkCompleted?.Invoke(this, EventArgs.Empty);
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class FakePackageIndexCache : IPackageIndexCache
+    {
+        public Task<PackageIndexSnapshot?> TryLoadSnapshotAsync(
+            string modsRootPath,
+            long inventoryVersion,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<PackageIndexSnapshot?>(null);
+
+        public Task<PackageIndexSnapshot> BuildSnapshotAsync(
+            PackageIndexBuildRequest request,
+            IProgress<TrayDependencyExportProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new PackageIndexSnapshot
+            {
+                ModsRootPath = request.ModsRootPath,
+                InventoryVersion = request.InventoryVersion,
+                Packages = Array.Empty<IndexedPackageFile>()
+            });
+
     }
 
     private sealed class FakeInspectService : IModItemInspectService

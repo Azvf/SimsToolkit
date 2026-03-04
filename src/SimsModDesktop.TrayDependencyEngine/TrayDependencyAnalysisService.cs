@@ -23,18 +23,14 @@ public sealed class TrayDependencyAnalysisService : ITrayDependencyAnalysisServi
         ".sgi"
     };
 
-    private readonly IPackageIndexCache _packageIndexCache;
     private readonly TrayBundleLoader _bundleLoader = new();
     private readonly TraySearchExtractor _searchExtractor = new();
     private readonly DirectMatchEngine _directMatchEngine = new();
     private readonly DependencyExpandEngine _dependencyExpandEngine;
     private readonly ModFileExporter _fileExporter = new();
 
-    public TrayDependencyAnalysisService(
-        IPackageIndexCache packageIndexCache,
-        IDbpfResourceReader? resourceReader = null)
+    public TrayDependencyAnalysisService(IDbpfResourceReader? resourceReader = null)
     {
-        _packageIndexCache = packageIndexCache;
         _dependencyExpandEngine = new DependencyExpandEngine(resourceReader ?? new DbpfResourceReader());
     }
 
@@ -55,18 +51,10 @@ public sealed class TrayDependencyAnalysisService : ITrayDependencyAnalysisServi
                 return BuildResult(Array.Empty<TrayDependencyAnalysisRow>(), Array.Empty<TrayDependencyAnalysisRow>(), issues);
             }
 
-            var snapshot = await _packageIndexCache.GetSnapshotAsync(
-                request.ModsRootPath,
-                new Progress<TrayDependencyExportProgress>(update =>
-                {
-                    if (update.Stage != TrayDependencyExportStage.IndexingPackages)
-                    {
-                        return;
-                    }
-
-                    Report(progress, TrayDependencyAnalysisStage.IndexingPackages, update.Percent, update.Detail);
-                }),
-                cancellationToken);
+            if (!TryGetValidatedSnapshot(request, issues, progress, out var snapshot))
+            {
+                return BuildResult(Array.Empty<TrayDependencyAnalysisRow>(), Array.Empty<TrayDependencyAnalysisRow>(), issues);
+            }
 
             cancellationToken.ThrowIfCancellationRequested();
             Report(progress, TrayDependencyAnalysisStage.ParsingTray, 40, "Parsing tray references...");
@@ -135,6 +123,7 @@ public sealed class TrayDependencyAnalysisService : ITrayDependencyAnalysisServi
                     matchedRows.Select(row => row.PackagePath).ToArray(),
                     matchedExportPath,
                     issues,
+                    null,
                     out exportedMatchedPackageCount);
             }
 
@@ -161,6 +150,7 @@ public sealed class TrayDependencyAnalysisService : ITrayDependencyAnalysisServi
                     unusedRows.Select(row => row.PackagePath).ToArray(),
                     unusedExportPath,
                     issues,
+                    null,
                     out exportedUnusedPackageCount);
             }
 
@@ -242,6 +232,58 @@ public sealed class TrayDependencyAnalysisService : ITrayDependencyAnalysisServi
         }
 
         return true;
+    }
+
+    private static bool TryGetValidatedSnapshot(
+        TrayDependencyAnalysisRequest request,
+        List<TrayDependencyIssue> issues,
+        IProgress<TrayDependencyAnalysisProgress>? progress,
+        out PackageIndexSnapshot snapshot)
+    {
+        snapshot = null!;
+        if (request.PreloadedSnapshot is null)
+        {
+            issues.Add(new TrayDependencyIssue
+            {
+                Severity = TrayDependencyIssueSeverity.Error,
+                Kind = TrayDependencyIssueKind.CacheBuildError,
+                Message = "Tray dependency cache is not ready. Open the Tray page and wait for cache warmup to finish."
+            });
+            return false;
+        }
+
+        if (!MatchesModsRoot(request.PreloadedSnapshot, request.ModsRootPath))
+        {
+            issues.Add(new TrayDependencyIssue
+            {
+                Severity = TrayDependencyIssueSeverity.Error,
+                Kind = TrayDependencyIssueKind.CacheBuildError,
+                FilePath = request.ModsRootPath,
+                Message = "Tray dependency cache does not match the configured Mods path."
+            });
+            return false;
+        }
+
+        Report(
+            progress,
+            TrayDependencyAnalysisStage.IndexingPackages,
+            35,
+            $"Using validated package index cache ({request.PreloadedSnapshot.Packages.Count}/{request.PreloadedSnapshot.Packages.Count}).");
+        snapshot = request.PreloadedSnapshot;
+        return true;
+    }
+
+    private static bool MatchesModsRoot(PackageIndexSnapshot snapshot, string? modsRootPath)
+    {
+        if (snapshot is null || string.IsNullOrWhiteSpace(modsRootPath))
+        {
+            return false;
+        }
+
+        return string.Equals(
+            snapshot.ModsRootPath,
+            Path.GetFullPath(modsRootPath.Trim()),
+            StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool MatchesTrayItemKey(string path, string normalizedKey)

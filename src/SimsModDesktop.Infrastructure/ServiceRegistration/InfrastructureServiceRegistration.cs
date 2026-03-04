@@ -54,6 +54,7 @@ public static class InfrastructureServiceRegistration
         services.AddSingleton<IModPackageTextureEditStore, SqliteModPackageTextureEditStore>();
         services.AddSingleton<IModPackageTextureEditService, ModPackageTextureEditService>();
         services.AddSingleton<IModItemIndexStore, SqliteModItemIndexStore>();
+        services.AddSingleton<IModPackageInventoryService, SqliteModPackageInventoryService>();
         services.AddSingleton<IModItemCatalogService, SqliteModItemCatalogService>();
         services.AddSingleton<IModItemInspectService, SqliteModItemInspectService>();
         services.AddSingleton<IModPreviewCatalogService, ModPreviewCatalogService>();

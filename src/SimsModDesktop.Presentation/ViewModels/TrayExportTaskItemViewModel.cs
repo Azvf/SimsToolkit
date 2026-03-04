@@ -158,18 +158,32 @@ public sealed class TrayExportTaskItemViewModel : ObservableObject
         IsDetailsExpanded = !IsDetailsExpanded;
     }
 
-    public void MarkTrayRunning()
+    public void UpdatePendingProgress(int percent, string? detail)
     {
-        ProgressText = "Preparing";
-        ProgressPercent = 5d;
-        StatusText = "Exporting tray files...";
+        var clamped = Math.Clamp(percent, 0, 100);
+        ProgressPercent = Math.Max(ProgressPercent, clamped);
+        ProgressText = $"{Math.Clamp((int)Math.Round(ProgressPercent), 0, 100)}%";
+
+        if (!string.IsNullOrWhiteSpace(detail))
+        {
+            StatusText = detail.Trim();
+        }
+    }
+
+    public void MarkTrayRunning(string? detail = null)
+    {
+        ProgressPercent = Math.Max(ProgressPercent, 5d);
+        ProgressText = $"{Math.Clamp((int)Math.Round(ProgressPercent), 0, 100)}%";
+        StatusText = string.IsNullOrWhiteSpace(detail)
+            ? "Exporting tray files..."
+            : detail.Trim();
     }
 
     public void MarkTrayCompleted(int exportedCount, int skippedCount)
     {
         CompletedSteps = 1;
-        ProgressText = "Tray ready";
-        ProgressPercent = 20d;
+        ProgressPercent = Math.Max(ProgressPercent, 20d);
+        ProgressText = $"{Math.Clamp((int)Math.Round(ProgressPercent), 0, 100)}%";
         StatusText = skippedCount == 0
             ? $"Tray files exported ({exportedCount})"
             : $"Tray files exported ({exportedCount}), skipped {skippedCount}";
@@ -177,14 +191,16 @@ public sealed class TrayExportTaskItemViewModel : ObservableObject
 
     public void MarkModsRunning()
     {
-        ProgressText = "0%";
+        ProgressPercent = Math.Max(ProgressPercent, 20d);
+        ProgressText = $"{Math.Clamp((int)Math.Round(ProgressPercent), 0, 100)}%";
         StatusText = "Exporting referenced mods...";
     }
 
     public void UpdateModsProgress(int percent, string? detail)
     {
-        ProgressText = $"{Math.Clamp(percent, 0, 100)}%";
-        ProgressPercent = Math.Clamp(percent, 0, 100);
+        var clamped = Math.Clamp(percent, 0, 100);
+        ProgressPercent = Math.Max(ProgressPercent, clamped);
+        ProgressText = $"{Math.Clamp((int)Math.Round(ProgressPercent), 0, 100)}%";
 
         if (!string.IsNullOrWhiteSpace(detail))
         {

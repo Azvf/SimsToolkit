@@ -1,6 +1,9 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Text.Json;
 using Dapper;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.PackageCore;
 
 namespace SimsModDesktop.TrayDependencyEngine;
@@ -8,6 +11,7 @@ namespace SimsModDesktop.TrayDependencyEngine;
 public sealed class TrayDependencyExportService : ITrayDependencyExportService
 {
     private readonly IPackageIndexCache _packageIndexCache;
+    private readonly ILogger<TrayDependencyExportService> _logger;
     private readonly TrayBundleLoader _bundleLoader = new();
     private readonly TraySearchExtractor _searchExtractor = new();
     private readonly DirectMatchEngine _directMatchEngine = new();
@@ -16,9 +20,11 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
 
     public TrayDependencyExportService(
         IPackageIndexCache packageIndexCache,
-        IDbpfResourceReader? resourceReader = null)
+        IDbpfResourceReader? resourceReader = null,
+        ILogger<TrayDependencyExportService>? logger = null)
     {
         _packageIndexCache = packageIndexCache;
+        _logger = logger ?? NullLogger<TrayDependencyExportService>.Instance;
         _dependencyExpandEngine = new DependencyExpandEngine(resourceReader ?? new DbpfResourceReader());
     }
 
@@ -31,6 +37,7 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
 
         return Task.Run(async () =>
         {
+            var timing = Stopwatch.StartNew();
             var issues = new List<TrayDependencyIssue>();
             var inputSourceFileCount = request.TraySourceFiles
                 .Where(path => !string.IsNullOrWhiteSpace(path))
@@ -43,6 +50,13 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
             var snapshotPackageCount = 0;
             var directMatchCount = 0;
             var expandedMatchCount = 0;
+            _logger.LogInformation(
+                "Tray export start trayKey={TrayItemKey} title={ItemTitle} sourceFiles={SourceFileCount} modsPath={ModsPath} preloadedSnapshot={HasPreloadedSnapshot}",
+                request.TrayItemKey,
+                request.ItemTitle,
+                inputSourceFileCount,
+                request.ModsRootPath,
+                request.PreloadedSnapshot is not null);
 
             Report(progress, TrayDependencyExportStage.Preparing, 0, "Copying tray files...");
 
@@ -79,7 +93,29 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
             }
             else
             {
-                snapshot = await _packageIndexCache.GetSnapshotAsync(request.ModsRootPath, progress, cancellationToken);
+                issues.Add(new TrayDependencyIssue
+                {
+                    Severity = TrayDependencyIssueSeverity.Error,
+                    Kind = TrayDependencyIssueKind.CacheBuildError,
+                    Message = "Tray dependency cache is not ready. Open the Tray page and wait for cache warmup to finish before exporting."
+                });
+                _logger.LogWarning(
+                    "Tray export blocked because no preloaded snapshot was provided trayKey={TrayItemKey} modsPath={ModsPath}",
+                    request.TrayItemKey,
+                    request.ModsRootPath);
+                return BuildResult(
+                    copiedTrayFileCount,
+                    0,
+                    issues,
+                    BuildDiagnostics(
+                        inputSourceFileCount,
+                        bundleTrayItemFileCount,
+                        bundleAuxiliaryFileCount,
+                        candidateResourceKeyCount,
+                        candidateIdCount,
+                        snapshotPackageCount,
+                        directMatchCount,
+                        expandedMatchCount));
             }
 
             snapshotPackageCount = snapshot.Packages.Count;
@@ -143,10 +179,10 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
             cancellationToken.ThrowIfCancellationRequested();
             Report(progress, TrayDependencyExportStage.CopyingMods, 85, $"Copying referenced mods ({filePaths.Length})...");
 
-            _fileExporter.CopyFiles(filePaths, request.ModsExportRoot, issues, out var copiedModFileCount);
+            _fileExporter.CopyFiles(filePaths, request.ModsExportRoot, issues, progress, out var copiedModFileCount);
 
             Report(progress, TrayDependencyExportStage.Completed, 100, "Completed.");
-            return BuildResult(
+            var result = BuildResult(
                 copiedTrayFileCount,
                 copiedModFileCount,
                 issues,
@@ -159,6 +195,15 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
                     snapshotPackageCount,
                     directMatchCount,
                     expandedMatchCount));
+            _logger.LogInformation(
+                "Tray export completed trayKey={TrayItemKey} success={Success} trayFiles={CopiedTrayFiles} modFiles={CopiedModFiles} issues={IssueCount} elapsedMs={ElapsedMs}",
+                request.TrayItemKey,
+                result.Success,
+                result.CopiedTrayFileCount,
+                result.CopiedModFileCount,
+                result.Issues.Count,
+                timing.ElapsedMilliseconds);
+            return result;
         }, cancellationToken);
     }
 
@@ -321,117 +366,112 @@ public sealed class PackageIndexCache : IPackageIndexCache
     private readonly Dictionary<string, CacheState> _states = new(StringComparer.OrdinalIgnoreCase);
     private readonly IDbpfPackageCatalog _packageCatalog;
     private readonly SqliteCacheDatabase _database;
+    private readonly ILogger<PackageIndexCache> _logger;
 
-    public PackageIndexCache(IDbpfPackageCatalog? packageCatalog = null)
+    public PackageIndexCache(IDbpfPackageCatalog? packageCatalog = null, ILogger<PackageIndexCache>? logger = null)
         : this(
             Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "SimsModDesktop",
                 "Cache",
                 "TrayDependencyPackageIndex"),
-            packageCatalog)
+            packageCatalog,
+            logger)
     {
     }
 
-    public PackageIndexCache(string cacheRootPath, IDbpfPackageCatalog? packageCatalog = null)
+    public PackageIndexCache(string cacheRootPath, IDbpfPackageCatalog? packageCatalog = null, ILogger<PackageIndexCache>? logger = null)
     {
         _packageCatalog = packageCatalog ?? new DbpfPackageCatalog();
         _database = new SqliteCacheDatabase(Path.Combine(cacheRootPath, "cache.db"));
+        _logger = logger ?? NullLogger<PackageIndexCache>.Instance;
     }
 
-    public Task<bool> HasPersistedSnapshotAsync(
+    public Task<PackageIndexSnapshot?> TryLoadSnapshotAsync(
         string modsRootPath,
+        long inventoryVersion,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(modsRootPath))
+        if (string.IsNullOrWhiteSpace(modsRootPath) || inventoryVersion <= 0)
         {
-            return Task.FromResult(false);
+            return Task.FromResult<PackageIndexSnapshot?>(null);
         }
 
-        string normalizedRoot;
-        try
+        cancellationToken.ThrowIfCancellationRequested();
+        var normalizedRoot = Path.GetFullPath(modsRootPath.Trim());
+
+        CacheState? existingState;
+        lock (_sync)
         {
-            normalizedRoot = Path.GetFullPath(modsRootPath.Trim());
+            _states.TryGetValue(BuildCacheKey(normalizedRoot, inventoryVersion), out existingState);
         }
-        catch
+
+        if (existingState is not null)
         {
-            return Task.FromResult(false);
+            return Task.FromResult<PackageIndexSnapshot?>(existingState.Snapshot);
         }
 
         try
         {
             using var connection = OpenConnection();
-            var count = connection.ExecuteScalar<int>(
+            var row = connection.QuerySingleOrDefault<PersistedCacheRow>(
                 """
-                SELECT COUNT(1)
-                FROM PackageIndexCache
-                WHERE ModsRootPath = @ModsRootPath;
+                SELECT
+                    ModsRootPath,
+                    InventoryVersion,
+                    SnapshotJson
+                FROM PackageIndexSnapshots
+                WHERE ModsRootPath = @ModsRootPath
+                  AND InventoryVersion = @InventoryVersion
+                LIMIT 1;
                 """,
-                new { ModsRootPath = normalizedRoot });
-            cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult(count > 0);
+                new
+                {
+                    ModsRootPath = normalizedRoot,
+                    InventoryVersion = inventoryVersion
+                });
+            if (row is null)
+            {
+                return Task.FromResult<PackageIndexSnapshot?>(null);
+            }
+
+            var persisted = JsonSerializer.Deserialize<PersistedSnapshot>(row.SnapshotJson, JsonOptions);
+            if (persisted is null)
+            {
+                return Task.FromResult<PackageIndexSnapshot?>(null);
+            }
+
+            var snapshot = FromPersistedSnapshot(persisted);
+            lock (_sync)
+            {
+                _states[BuildCacheKey(normalizedRoot, inventoryVersion)] = new CacheState(snapshot);
+            }
+
+            return Task.FromResult<PackageIndexSnapshot?>(snapshot);
         }
         catch
         {
-            return Task.FromResult(false);
+            return Task.FromResult<PackageIndexSnapshot?>(null);
         }
     }
 
-    public async Task<PackageIndexSnapshot> GetSnapshotAsync(
-        string modsRootPath,
+    public async Task<PackageIndexSnapshot> BuildSnapshotAsync(
+        PackageIndexBuildRequest request,
         IProgress<TrayDependencyExportProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(modsRootPath))
+        ArgumentNullException.ThrowIfNull(request);
+        if (string.IsNullOrWhiteSpace(request.ModsRootPath))
         {
-            throw new ArgumentException("Mods root path is required.", nameof(modsRootPath));
+            throw new ArgumentException("Mods root path is required.", nameof(request));
         }
 
-        var normalizedRoot = Path.GetFullPath(modsRootPath.Trim());
-        var currentPackages = Directory.Exists(normalizedRoot)
-            ? Directory.EnumerateFiles(normalizedRoot, "*.package", SearchOption.AllDirectories)
-                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-                .Select(path =>
-                {
-                    var info = new FileInfo(path);
-                    return new PackageStamp(path, info.Length, info.LastWriteTimeUtc);
-                })
-                .ToArray()
-            : Array.Empty<PackageStamp>();
-
-        CacheState? existingState;
-        lock (_sync)
-        {
-            _states.TryGetValue(normalizedRoot, out existingState);
-        }
-
-        if (existingState is not null && HasSameStamps(existingState.PackageStamps, currentPackages))
-        {
-            progress?.Report(new TrayDependencyExportProgress
-            {
-                Stage = TrayDependencyExportStage.IndexingPackages,
-                Percent = 35,
-                Detail = $"Indexing packages... {currentPackages.Length}/{currentPackages.Length}"
-            });
-            return existingState.Snapshot;
-        }
-
-        var persistedState = TryLoadPersistedState(normalizedRoot);
-        if (persistedState is not null && HasSameStamps(persistedState.PackageStamps, currentPackages))
-        {
-            lock (_sync)
-            {
-                _states[normalizedRoot] = persistedState;
-            }
-
-            progress?.Report(new TrayDependencyExportProgress
-            {
-                Stage = TrayDependencyExportStage.IndexingPackages,
-                Percent = 35,
-                Detail = $"Indexing packages... {currentPackages.Length}/{currentPackages.Length}"
-            });
-            return persistedState.Snapshot;
-        }
+        var normalizedRoot = Path.GetFullPath(request.ModsRootPath.Trim());
+        var timing = Stopwatch.StartNew();
+        var buildFiles = request.PackageFiles
+            .Where(file => !string.IsNullOrWhiteSpace(file.FilePath))
+            .OrderBy(file => file.FilePath, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
         progress?.Report(new TrayDependencyExportProgress
         {
@@ -439,6 +479,11 @@ public sealed class PackageIndexCache : IPackageIndexCache
             Percent = 5,
             Detail = "Indexing packages..."
         });
+        _logger.LogInformation(
+            "Tray package index cache build start modsPath={ModsPath} inventoryVersion={InventoryVersion} packages={PackageCount}",
+            normalizedRoot,
+            request.InventoryVersion,
+            buildFiles.Length);
 
         var buildOptions = new DbpfCatalogBuildOptions
         {
@@ -462,8 +507,9 @@ public sealed class PackageIndexCache : IPackageIndexCache
 
         var catalog = await _packageCatalog.BuildSnapshotAsync(
             normalizedRoot,
+            buildFiles.Select(file => new DbpfCatalogPackageFile(file.FilePath, file.Length, file.LastWriteUtcTicks)).ToArray(),
             buildOptions,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
 
         var packages = catalog.Packages
             .OrderBy(package => package.FilePath, StringComparer.OrdinalIgnoreCase)
@@ -481,6 +527,7 @@ public sealed class PackageIndexCache : IPackageIndexCache
         var snapshot = new PackageIndexSnapshot
         {
             ModsRootPath = normalizedRoot,
+            InventoryVersion = request.InventoryVersion,
             Packages = packages,
             ExactIndex = MapIndex(catalog.ExactIndex, packageMap),
             TypeInstanceIndex = MapIndex(catalog.TypeInstanceIndex, packageMap),
@@ -489,10 +536,16 @@ public sealed class PackageIndexCache : IPackageIndexCache
 
         lock (_sync)
         {
-            _states[normalizedRoot] = new CacheState(snapshot, currentPackages);
+            _states[BuildCacheKey(normalizedRoot, request.InventoryVersion)] = new CacheState(snapshot);
         }
 
-        PersistState(normalizedRoot, snapshot, currentPackages);
+        PersistState(snapshot);
+        _logger.LogInformation(
+            "Tray package index cache build completed modsPath={ModsPath} inventoryVersion={InventoryVersion} packages={PackageCount} elapsedMs={ElapsedMs}",
+            normalizedRoot,
+            request.InventoryVersion,
+            packages.Length,
+            timing.ElapsedMilliseconds);
         return snapshot;
     }
 
@@ -591,91 +644,33 @@ public sealed class PackageIndexCache : IPackageIndexCache
         };
     }
 
-    private static bool HasSameStamps(
-        IReadOnlyList<PackageStamp> previous,
-        IReadOnlyList<PackageStamp> current)
-    {
-        if (previous.Count != current.Count)
-        {
-            return false;
-        }
-
-        for (var i = 0; i < current.Count; i++)
-        {
-            if (!string.Equals(previous[i].FilePath, current[i].FilePath, StringComparison.OrdinalIgnoreCase) ||
-                previous[i].Length != current[i].Length ||
-                previous[i].LastWriteTimeUtc != current[i].LastWriteTimeUtc)
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private CacheState? TryLoadPersistedState(string normalizedRoot)
-    {
-        try
-        {
-            using var connection = OpenConnection();
-            var row = connection.QuerySingleOrDefault<PersistedCacheRow>(
-                """
-                SELECT
-                    ModsRootPath,
-                    PackageStampsJson,
-                    SnapshotJson
-                FROM PackageIndexCache
-                WHERE ModsRootPath = @ModsRootPath;
-                """,
-                new { ModsRootPath = normalizedRoot });
-            if (row is null)
-            {
-                return null;
-            }
-
-            var stamps = JsonSerializer.Deserialize<List<PackageStamp>>(row.PackageStampsJson, JsonOptions);
-            var persisted = JsonSerializer.Deserialize<PersistedSnapshot>(row.SnapshotJson, JsonOptions);
-            if (stamps is null || persisted is null)
-            {
-                return null;
-            }
-
-            return new CacheState(FromPersistedSnapshot(persisted), stamps);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private void PersistState(string normalizedRoot, PackageIndexSnapshot snapshot, IReadOnlyList<PackageStamp> stamps)
+    private void PersistState(PackageIndexSnapshot snapshot)
     {
         try
         {
             using var connection = OpenConnection();
             connection.Execute(
                 """
-                INSERT INTO PackageIndexCache (
+                INSERT INTO PackageIndexSnapshots (
                     ModsRootPath,
-                    PackageStampsJson,
+                    InventoryVersion,
                     SnapshotJson,
                     UpdatedUtcTicks
                 )
                 VALUES (
                     @ModsRootPath,
-                    @PackageStampsJson,
+                    @InventoryVersion,
                     @SnapshotJson,
                     @UpdatedUtcTicks
                 )
-                ON CONFLICT(ModsRootPath) DO UPDATE SET
-                    PackageStampsJson = excluded.PackageStampsJson,
+                ON CONFLICT(ModsRootPath, InventoryVersion) DO UPDATE SET
                     SnapshotJson = excluded.SnapshotJson,
                     UpdatedUtcTicks = excluded.UpdatedUtcTicks;
                 """,
                 new PersistedCacheRow
                 {
-                    ModsRootPath = normalizedRoot,
-                    PackageStampsJson = JsonSerializer.Serialize(stamps, JsonOptions),
+                    ModsRootPath = snapshot.ModsRootPath,
+                    InventoryVersion = snapshot.InventoryVersion,
                     SnapshotJson = JsonSerializer.Serialize(ToPersistedSnapshot(snapshot), JsonOptions),
                     UpdatedUtcTicks = DateTime.UtcNow.Ticks
                 });
@@ -690,14 +685,20 @@ public sealed class PackageIndexCache : IPackageIndexCache
         var connection = _database.OpenConnection();
         connection.Execute(
             """
-            CREATE TABLE IF NOT EXISTS PackageIndexCache (
-                ModsRootPath TEXT PRIMARY KEY,
-                PackageStampsJson TEXT NOT NULL,
+            CREATE TABLE IF NOT EXISTS PackageIndexSnapshots (
+                ModsRootPath TEXT NOT NULL,
+                InventoryVersion INTEGER NOT NULL,
                 SnapshotJson TEXT NOT NULL,
-                UpdatedUtcTicks INTEGER NOT NULL
+                UpdatedUtcTicks INTEGER NOT NULL,
+                PRIMARY KEY (ModsRootPath, InventoryVersion)
             );
             """);
         return connection;
+    }
+
+    private static string BuildCacheKey(string normalizedRoot, long inventoryVersion)
+    {
+        return normalizedRoot + "|" + inventoryVersion.ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private static PersistedSnapshot ToPersistedSnapshot(PackageIndexSnapshot snapshot)
@@ -705,6 +706,7 @@ public sealed class PackageIndexCache : IPackageIndexCache
         return new PersistedSnapshot
         {
             ModsRootPath = snapshot.ModsRootPath,
+            InventoryVersion = snapshot.InventoryVersion,
             Packages = snapshot.Packages.Select(package => new PersistedPackage
             {
                 FilePath = package.FilePath,
@@ -785,6 +787,7 @@ public sealed class PackageIndexCache : IPackageIndexCache
         return new PackageIndexSnapshot
         {
             ModsRootPath = persisted.ModsRootPath,
+            InventoryVersion = persisted.InventoryVersion,
             Packages = packages,
             ExactIndex = persisted.ExactIndex.ToDictionary(
                 row => new TrayResourceKey(row.Type, row.Group, row.Instance),
@@ -844,19 +847,12 @@ public sealed class PackageIndexCache : IPackageIndexCache
         };
     }
 
-    private sealed record CacheState(
-        PackageIndexSnapshot Snapshot,
-        IReadOnlyList<PackageStamp> PackageStamps);
-
-    private sealed record PackageStamp(
-        string FilePath,
-        long Length,
-        DateTime LastWriteTimeUtc);
+    private sealed record CacheState(PackageIndexSnapshot Snapshot);
 
     private sealed class PersistedCacheRow
     {
         public string ModsRootPath { get; set; } = string.Empty;
-        public string PackageStampsJson { get; set; } = "[]";
+        public long InventoryVersion { get; set; }
         public string SnapshotJson { get; set; } = "{}";
         public long UpdatedUtcTicks { get; set; }
     }
@@ -864,6 +860,7 @@ public sealed class PackageIndexCache : IPackageIndexCache
     private sealed class PersistedSnapshot
     {
         public string ModsRootPath { get; set; } = string.Empty;
+        public long InventoryVersion { get; set; }
         public List<PersistedPackage> Packages { get; set; } = [];
         public List<PersistedExactIndex> ExactIndex { get; set; } = [];
         public List<PersistedTypeInstanceIndex> TypeInstanceIndex { get; set; } = [];
@@ -1880,13 +1877,15 @@ internal sealed class ModFileExporter
         IReadOnlyList<string> sourceFiles,
         string targetRoot,
         List<TrayDependencyIssue> issues,
+        IProgress<TrayDependencyExportProgress>? progress,
         out int copiedFileCount)
     {
         copiedFileCount = 0;
         Directory.CreateDirectory(targetRoot);
 
-        foreach (var sourcePath in sourceFiles)
+        for (var index = 0; index < sourceFiles.Count; index++)
         {
+            var sourcePath = sourceFiles[index];
             try
             {
                 if (!File.Exists(sourcePath))
@@ -1905,6 +1904,12 @@ internal sealed class ModFileExporter
                 targetPath = FileNameHelpers.GetUniquePath(targetPath);
                 File.Copy(sourcePath, targetPath, overwrite: false);
                 copiedFileCount++;
+                progress?.Report(new TrayDependencyExportProgress
+                {
+                    Stage = TrayDependencyExportStage.CopyingMods,
+                    Percent = ProgressScale.Scale(85, 99, copiedFileCount, sourceFiles.Count),
+                    Detail = $"Copying referenced mods... {copiedFileCount}/{sourceFiles.Count}"
+                });
             }
             catch (Exception ex)
             {

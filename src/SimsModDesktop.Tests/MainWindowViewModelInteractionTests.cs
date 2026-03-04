@@ -496,6 +496,7 @@ public sealed class MainWindowViewModelInteractionTests
 
         await WaitForAsync(() => vm.PreviewItems.Count == 2);
         vm.ApplyTrayPreviewSelection(vm.PreviewItems[1], controlPressed: false, shiftPressed: false);
+        await vm.TrayPreviewWorkspace.EnsureLoadedAsync(forceReload: false);
         fileDialog.NextFolderPaths = [exportRoot.Path];
 
         await InvokePrivateAsync(vm, "ExportSelectedTrayPreviewFilesAsync");
@@ -512,6 +513,11 @@ public sealed class MainWindowViewModelInteractionTests
         Assert.True(vm.TrayExportTasks[0].HasExportRoot);
         Assert.Equal("100%", vm.TrayExportTasks[0].ProgressText);
         Assert.Equal(100d, vm.TrayExportTasks[0].ProgressPercent);
+        Assert.Contains("[timing][start] operation=trayexport.batch", vm.LogText, StringComparison.Ordinal);
+        Assert.Contains("[tray-selection] using-ready-snapshot", vm.LogText, StringComparison.Ordinal);
+        Assert.Contains("[timing][done] operation=trayexport.item", vm.LogText, StringComparison.Ordinal);
+        Assert.Contains("[timing][done] operation=trayexport.batch", vm.LogText, StringComparison.Ordinal);
+        Assert.Contains("[tray-selection][stage] trayKey=0x2 stage=Preparing", vm.LogText, StringComparison.Ordinal);
 
         vm.ClearCompletedTrayExportTasksCommand.Execute(null);
         Assert.Empty(vm.TrayExportTasks);
@@ -557,6 +563,7 @@ public sealed class MainWindowViewModelInteractionTests
 
         await WaitForAsync(() => vm.PreviewItems.Count == 1);
         vm.ApplyTrayPreviewSelection(vm.PreviewItems[0], controlPressed: false, shiftPressed: false);
+        await vm.TrayPreviewWorkspace.EnsureLoadedAsync(forceReload: false);
         fileDialog.NextFolderPaths = [exportRoot.Path];
 
         await InvokePrivateAsync(vm, "ExportSelectedTrayPreviewFilesAsync");
@@ -656,6 +663,7 @@ public sealed class MainWindowViewModelInteractionTests
 
         await WaitForAsync(() => vm.PreviewItems.Count == 1);
         vm.ApplyTrayPreviewSelection(vm.PreviewItems[0], controlPressed: false, shiftPressed: false);
+        await vm.TrayPreviewWorkspace.EnsureLoadedAsync(forceReload: false);
         fileDialog.NextFolderPaths = [exportRoot.Path];
 
         await InvokePrivateAsync(vm, "ExportSelectedTrayPreviewFilesAsync");
@@ -665,11 +673,13 @@ public sealed class MainWindowViewModelInteractionTests
         Assert.Single(vm.TrayExportTasks);
         Assert.True(vm.TrayExportTasks[0].IsCompleted);
         Assert.True(vm.TrayExportTasks[0].IsFailed);
-        Assert.Equal("20%", vm.TrayExportTasks[0].ProgressText);
+        Assert.Equal("99%", vm.TrayExportTasks[0].ProgressText);
         Assert.Equal("Mods export failed: mod export crashed", vm.TrayExportTasks[0].StatusText);
         Assert.True(vm.TrayExportTasks[0].CanShowDetailsToggle);
         Assert.Contains("Access denied while exporting foo.package", vm.TrayExportTasks[0].DetailsText, StringComparison.Ordinal);
         Assert.Contains("mod export crashed", vm.TrayExportTasks[0].DetailsText, StringComparison.Ordinal);
+        Assert.Contains("[timing][fail] operation=trayexport.item", vm.LogText, StringComparison.Ordinal);
+        Assert.Contains("[timing][fail] operation=trayexport.batch", vm.LogText, StringComparison.Ordinal);
 
         vm.ToggleTrayExportTaskDetailsCommand.Execute(vm.TrayExportTasks[0]);
         Assert.True(vm.TrayExportTasks[0].IsDetailsExpanded);
@@ -746,6 +756,7 @@ public sealed class MainWindowViewModelInteractionTests
 
         await WaitForAsync(() => vm.PreviewItems.Count == 1);
         vm.ApplyTrayPreviewSelection(vm.PreviewItems[0], controlPressed: false, shiftPressed: false);
+        await vm.TrayPreviewWorkspace.EnsureLoadedAsync(forceReload: false);
         fileDialog.NextFolderPaths = [exportRoot.Path];
 
         await InvokePrivateAsync(vm, "ExportSelectedTrayPreviewFilesAsync");
@@ -780,6 +791,11 @@ public sealed class MainWindowViewModelInteractionTests
         var modPreview = new ModPreviewPanelViewModel();
         var trayPreview = new TrayPreviewPanelViewModel();
         var sharedFileOps = new SharedFileOpsPanelViewModel();
+        var cacheWarmupController = new MainWindowCacheWarmupController(
+            new NoOpModPackageInventoryService(),
+            new NoOpModItemIndexScheduler(),
+            new FakePackageIndexCache(),
+            NullLogger<MainWindowCacheWarmupController>.Instance);
 
         trayPreviewCoordinator ??= new FakeTrayPreviewCoordinator();
         var trayPreviewWorkspace = new TrayPreviewWorkspaceViewModel(
@@ -788,12 +804,13 @@ public sealed class MainWindowViewModelInteractionTests
             trayThumbnailService ?? new FailingTrayThumbnailService(),
             fileDialogService ?? new FakeFileDialogService(),
             trayDependencyExportService ?? new FakeTrayDependencyExportService(),
+            cacheWarmupController,
             trayDependencies);
         var modPreviewWorkspace = new ModPreviewWorkspaceViewModel(
             modPreview,
             new NoOpModItemCatalogService(),
             new NoOpModItemIndexScheduler(),
-            new NoOpModPackageScanService(),
+            cacheWarmupController,
             new NoOpModItemInspectService(),
             NullModPackageTextureEditService.Instance,
             fileDialogService ?? new FakeFileDialogService());
@@ -824,6 +841,7 @@ public sealed class MainWindowViewModelInteractionTests
                 trayDependencyAnalysisService ?? new FakeTrayDependencyAnalysisService(),
                 toolkitActionPlanner,
                 recoveryController,
+                cacheWarmupController,
                 CreateTextureCompressionService(),
                 new TextureDimensionProbe(),
                 NullLogger<MainWindowExecutionController>.Instance),
@@ -837,7 +855,10 @@ public sealed class MainWindowViewModelInteractionTests
                 trayPreviewStateController,
                 trayPreviewSelectionController,
                 NullLogger<MainWindowTrayPreviewController>.Instance),
-            new MainWindowTrayExportController(effectiveTrayExportService, new FakePackageIndexCache()),
+            new MainWindowTrayExportController(
+                effectiveTrayExportService,
+                cacheWarmupController,
+                NullLogger<MainWindowTrayExportController>.Instance),
             new MainWindowValidationController(toolkitActionPlanner),
             new MainWindowLifecycleController(
                 settingsPersistenceController,
@@ -907,20 +928,34 @@ public sealed class MainWindowViewModelInteractionTests
 
     private sealed class FakePackageIndexCache : IPackageIndexCache
     {
-        public Task<PackageIndexSnapshot> GetSnapshotAsync(
+        public Task<PackageIndexSnapshot?> TryLoadSnapshotAsync(
             string modsRootPath,
-            IProgress<TrayDependencyExportProgress>? progress = null,
+            long inventoryVersion,
             CancellationToken cancellationToken = default)
         {
-            var normalizedRoot = string.IsNullOrWhiteSpace(modsRootPath)
-                ? string.Empty
-                : Path.GetFullPath(modsRootPath.Trim());
-            return Task.FromResult(new PackageIndexSnapshot
+            return Task.FromResult<PackageIndexSnapshot?>(new PackageIndexSnapshot
             {
-                ModsRootPath = normalizedRoot,
+                ModsRootPath = string.IsNullOrWhiteSpace(modsRootPath)
+                    ? string.Empty
+                    : Path.GetFullPath(modsRootPath.Trim()),
+                InventoryVersion = inventoryVersion <= 0 ? 1 : inventoryVersion,
                 Packages = Array.Empty<IndexedPackageFile>()
             });
         }
+
+        public Task<PackageIndexSnapshot> BuildSnapshotAsync(
+            PackageIndexBuildRequest request,
+            IProgress<TrayDependencyExportProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new PackageIndexSnapshot
+            {
+                ModsRootPath = request.ModsRootPath,
+                InventoryVersion = request.InventoryVersion,
+                Packages = Array.Empty<IndexedPackageFile>()
+            });
+        }
+
     }
 
     private sealed class FakeExecutionCoordinator : IExecutionCoordinator
@@ -979,7 +1014,10 @@ public sealed class MainWindowViewModelInteractionTests
         public bool IsFastPassRunning => false;
         public bool IsDeepPassRunning => false;
 
-        public Task QueueRefreshAsync(IReadOnlyList<string> packagePaths, CancellationToken cancellationToken = default)
+        public Task QueueRefreshAsync(
+            ModIndexRefreshRequest request,
+            IProgress<ModIndexRefreshProgress>? progress = null,
+            CancellationToken cancellationToken = default)
             => Task.CompletedTask;
     }
 
@@ -987,6 +1025,26 @@ public sealed class MainWindowViewModelInteractionTests
     {
         public Task<IReadOnlyList<ModPackageScanResult>> ScanAsync(string modsRoot, CancellationToken cancellationToken = default)
             => Task.FromResult<IReadOnlyList<ModPackageScanResult>>(Array.Empty<ModPackageScanResult>());
+    }
+
+    private sealed class NoOpModPackageInventoryService : IModPackageInventoryService
+    {
+        public Task<ModPackageInventoryRefreshResult> RefreshAsync(
+            string modsRoot,
+            IProgress<ModPackageInventoryRefreshProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new ModPackageInventoryRefreshResult
+            {
+                Snapshot = new ModPackageInventorySnapshot
+                {
+                    ModsRootPath = modsRoot,
+                    InventoryVersion = 1,
+                    Entries = Array.Empty<ModPackageInventoryEntry>(),
+                    LastValidatedUtcTicks = DateTime.UtcNow.Ticks
+                }
+            });
+        }
     }
 
     private sealed class NoOpModItemInspectService : IModItemInspectService
