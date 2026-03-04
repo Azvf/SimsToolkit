@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using SimsModDesktop.Application.Configuration;
 using SimsModDesktop.Application.Services;
@@ -37,10 +38,10 @@ internal sealed class MergeTransformationModeHandler : TransformationModeHandler
 
         var failOnOverlap = await GetConfigBoolAsync("Merge.FailOnOverlappingPaths", false, cancellationToken);
         var warnings = new List<string>();
-        var processed = new List<string>();
-        var failed = new List<string>();
-        var skipped = new List<string>();
-        var conflicts = new List<FileConflict>();
+        var processed = new ConcurrentBag<string>();
+        var failed = new ConcurrentBag<string>();
+        var skipped = new ConcurrentBag<string>();
+        var conflicts = new ConcurrentBag<FileConflict>();
 
         var sourcePaths = mergeOptions.SourcePaths
             .Where(path => !string.IsNullOrWhiteSpace(path))
@@ -93,67 +94,99 @@ internal sealed class MergeTransformationModeHandler : TransformationModeHandler
             }
         }
 
+        var workerCount = Math.Clamp(options.WorkerCount ?? Environment.ProcessorCount, 1, 32);
+        var activeWorkers = Math.Min(workerCount, allFiles.Count);
+        var queue = new ConcurrentQueue<(string SourceRoot, FileInfo File)>(allFiles);
+        var destinationLocks = new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.OrdinalIgnoreCase);
         var current = 0;
-        foreach (var item in allFiles)
+
+        async Task RunWorkerAsync()
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            current++;
-
-            try
+            while (queue.TryDequeue(out var item))
             {
-                var relativePath = Path.GetRelativePath(item.SourceRoot, item.File.FullName);
-                var destination = Path.Combine(targetPath, relativePath);
-
-                if (IsSamePath(item.File.FullName, destination))
+                cancellationToken.ThrowIfCancellationRequested();
+                try
                 {
-                    skipped.Add(item.File.FullName);
-                    ReportSimpleProgress(progress, "Merge", current, allFiles.Count, item.File.FullName);
-                    continue;
-                }
+                    var relativePath = Path.GetRelativePath(item.SourceRoot, item.File.FullName);
+                    var destination = Path.Combine(targetPath, relativePath);
 
-                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-
-                if (File.Exists(destination))
-                {
-                    var resolution = await ResolveConflictAsync(item.File.FullName, destination, options, cancellationToken);
-                    if (resolution is null)
+                    if (IsSamePath(item.File.FullName, destination))
                     {
                         skipped.Add(item.File.FullName);
-                        conflicts.Add(new FileConflict
-                        {
-                            Type = ConflictType.NameConflict,
-                            SourcePath = item.File.FullName,
-                            TargetPath = destination,
-                            Description = "Merge conflict skipped"
-                        });
-                        ReportSimpleProgress(progress, "Merge", current, allFiles.Count, item.File.FullName);
                         continue;
                     }
 
-                    destination = resolution;
-                }
+                    var destinationGate = destinationLocks.GetOrAdd(
+                        destination,
+                        static _ => new SemaphoreSlim(1, 1));
+                    await destinationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    try
+                    {
+                        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
 
-                if (!options.WhatIf)
+                        if (File.Exists(destination))
+                        {
+                            var resolution = await ResolveConflictAsync(item.File.FullName, destination, options, cancellationToken).ConfigureAwait(false);
+                            if (resolution is null)
+                            {
+                                skipped.Add(item.File.FullName);
+                                conflicts.Add(new FileConflict
+                                {
+                                    Type = ConflictType.NameConflict,
+                                    SourcePath = item.File.FullName,
+                                    TargetPath = destination,
+                                    Description = "Merge conflict skipped"
+                                });
+                                continue;
+                            }
+
+                            destination = resolution;
+                        }
+
+                        if (!options.WhatIf)
+                        {
+                            if (options.KeepSource)
+                            {
+                                File.Copy(item.File.FullName, destination, overwrite: false);
+                            }
+                            else
+                            {
+                                File.Move(item.File.FullName, destination);
+                            }
+                        }
+
+                        processed.Add(item.File.FullName);
+                    }
+                    finally
+                    {
+                        destinationGate.Release();
+                    }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
-                    if (options.KeepSource)
-                    {
-                        File.Copy(item.File.FullName, destination, overwrite: false);
-                    }
-                    else
-                    {
-                        File.Move(item.File.FullName, destination);
-                    }
+                    throw;
                 }
-
-                processed.Add(item.File.FullName);
+                catch (Exception ex)
+                {
+                    Logger.LogError(ex, "Merge failed for {Path}", item.File.FullName);
+                    failed.Add(item.File.FullName);
+                }
+                finally
+                {
+                    var done = Interlocked.Increment(ref current);
+                    ReportSimpleProgress(progress, "Merge", done, allFiles.Count, item.File.FullName);
+                }
             }
-            catch (Exception ex)
-            {
-                Logger.LogError(ex, "Merge failed for {Path}", item.File.FullName);
-                failed.Add(item.File.FullName);
-            }
+        }
 
-            ReportSimpleProgress(progress, "Merge", current, allFiles.Count, item.File.FullName);
+        var workers = Enumerable.Range(0, activeWorkers)
+            .Select(_ => RunWorkerAsync())
+            .ToArray();
+        await Task.WhenAll(workers).ConfigureAwait(false);
+
+        foreach (var gate in destinationLocks.Values)
+        {
+            gate.Dispose();
         }
 
         return new TransformationResult
@@ -164,10 +197,10 @@ internal sealed class MergeTransformationModeHandler : TransformationModeHandler
             SkippedFiles = skipped.Count,
             FailedFiles = failed.Count,
             TotalFiles = allFiles.Count,
-            ProcessedFileList = processed,
-            SkippedFileList = skipped,
-            FailedFileList = failed,
-            Conflicts = conflicts,
+            ProcessedFileList = processed.ToArray(),
+            SkippedFileList = skipped.ToArray(),
+            FailedFileList = failed.ToArray(),
+            Conflicts = conflicts.ToArray(),
             Warnings = warnings
         };
     }

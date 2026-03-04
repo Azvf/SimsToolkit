@@ -152,6 +152,115 @@ public sealed class UnifiedFileTransformationEngineTests
     }
 
     [Fact]
+    public async Task Merge_WithDifferentWorkerCounts_ProducesEquivalentOutput()
+    {
+        using var root = new TempDirectory("merge-workers-root");
+        var sourceA = Path.Combine(root.Path, "mods-a");
+        var sourceB = Path.Combine(root.Path, "mods-b");
+        var targetA = Path.Combine(root.Path, "target-a");
+        var targetB = Path.Combine(root.Path, "target-b");
+        Directory.CreateDirectory(sourceA);
+        Directory.CreateDirectory(sourceB);
+        Directory.CreateDirectory(Path.Combine(sourceA, "sub1"));
+        Directory.CreateDirectory(Path.Combine(sourceB, "sub2"));
+
+        await File.WriteAllTextAsync(Path.Combine(sourceA, "sub1", "a.package"), "alpha");
+        await File.WriteAllTextAsync(Path.Combine(sourceA, "root-a.package"), "root-a");
+        await File.WriteAllTextAsync(Path.Combine(sourceB, "sub2", "b.package"), "beta");
+        await File.WriteAllTextAsync(Path.Combine(sourceB, "root-b.package"), "root-b");
+
+        var sut = CreateEngine();
+        var mergeModeOptions = new ModeSpecificOptions
+        {
+            Merge = new MergeOptions
+            {
+                SourcePaths = [sourceA, sourceB]
+            }
+        };
+
+        var serialResult = await sut.TransformAsync(
+            new TransformationOptions
+            {
+                SourcePath = sourceA,
+                TargetPath = targetA,
+                Recursive = true,
+                KeepSource = true,
+                WorkerCount = 1,
+                ModeOptions = mergeModeOptions
+            },
+            TransformationMode.Merge);
+        var parallelResult = await sut.TransformAsync(
+            new TransformationOptions
+            {
+                SourcePath = sourceA,
+                TargetPath = targetB,
+                Recursive = true,
+                KeepSource = true,
+                WorkerCount = 8,
+                ModeOptions = mergeModeOptions
+            },
+            TransformationMode.Merge);
+
+        Assert.True(serialResult.Success);
+        Assert.True(parallelResult.Success);
+
+        var serialFiles = Directory.EnumerateFiles(targetA, "*", SearchOption.AllDirectories)
+            .Select(path => Path.GetRelativePath(targetA, path))
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var parallelFiles = Directory.EnumerateFiles(targetB, "*", SearchOption.AllDirectories)
+            .Select(path => Path.GetRelativePath(targetB, path))
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        Assert.Equal(serialFiles, parallelFiles);
+
+        foreach (var relativePath in serialFiles)
+        {
+            var left = await File.ReadAllTextAsync(Path.Combine(targetA, relativePath));
+            var right = await File.ReadAllTextAsync(Path.Combine(targetB, relativePath));
+            Assert.Equal(left, right);
+        }
+    }
+
+    [Fact]
+    public async Task Merge_WhenCancelled_StopsWorkerPool()
+    {
+        using var root = new TempDirectory("merge-cancel-root");
+        var source = Path.Combine(root.Path, "mods");
+        var target = Path.Combine(root.Path, "target");
+        Directory.CreateDirectory(source);
+
+        for (var i = 0; i < 200; i++)
+        {
+            await File.WriteAllTextAsync(Path.Combine(source, $"f{i:D3}.package"), $"fixture-{i}");
+        }
+
+        var sut = CreateEngine();
+        using var cts = new CancellationTokenSource();
+        cts.CancelAfter(1);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(async () =>
+            await sut.TransformAsync(
+                new TransformationOptions
+                {
+                    SourcePath = source,
+                    TargetPath = target,
+                    Recursive = true,
+                    KeepSource = true,
+                    WorkerCount = 8,
+                    ModeOptions = new ModeSpecificOptions
+                    {
+                        Merge = new MergeOptions
+                        {
+                            SourcePaths = [source]
+                        }
+                    }
+                },
+                TransformationMode.Merge,
+                cancellationToken: cts.Token));
+    }
+
+    [Fact]
     public async Task Organize_ExtractsZip_AndDeletesZip_WhenKeepZipFalse()
     {
         using var root = new TempDirectory("organize-root");

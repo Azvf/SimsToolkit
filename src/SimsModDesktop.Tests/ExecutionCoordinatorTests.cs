@@ -118,6 +118,40 @@ public sealed class ExecutionCoordinatorTests
         Assert.Contains(duplicate, fileOperations.DeletedFiles);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_FindDuplicates_ForwardsHashWorkerCountToBatchRequest()
+    {
+        using var tempDir = new TempDirectory();
+        var root = Path.Combine(tempDir.Path, "mods");
+        Directory.CreateDirectory(root);
+        await File.WriteAllTextAsync(Path.Combine(root, "a.package"), "same");
+        await File.WriteAllTextAsync(Path.Combine(root, "b.package"), "same");
+
+        var hashService = new FakeHashComputationService();
+        var coordinator = new ExecutionCoordinator(
+            new FakeTransformationEngine(),
+            hashService,
+            new FakeFileOperationService(),
+            new FindDupInputValidator(new SharedFileOpsInputValidator()),
+            NullLogger<ExecutionCoordinator>.Instance);
+
+        _ = await coordinator.ExecuteAsync(
+            new FindDupInput
+            {
+                FindDupRootPath = root,
+                FindDupRecurse = true,
+                FindDupCleanup = false,
+                Shared = new SharedFileOpsInput
+                {
+                    HashWorkerCount = 7
+                }
+            },
+            _ => { });
+
+        Assert.NotNull(hashService.LastBatchRequest);
+        Assert.Equal(7, hashService.LastBatchRequest!.WorkerCount);
+    }
+
     private sealed class FakeTransformationEngine : IFileTransformationEngine
     {
         public int Calls { get; private set; }
@@ -148,6 +182,8 @@ public sealed class ExecutionCoordinatorTests
 
     private sealed class FakeHashComputationService : IHashComputationService
     {
+        public HashBatchRequest? LastBatchRequest { get; private set; }
+
         public IReadOnlyList<HashAlgorithm> SupportedAlgorithms => [HashAlgorithm.MD5];
 
         public Task<string> ComputeFileHashAsync(string filePath, CancellationToken cancellationToken = default)
@@ -206,8 +242,17 @@ public sealed class ExecutionCoordinatorTests
             return results;
         }
 
+        public Task<IReadOnlyList<FileHashResult>> ComputeFileHashesAsync(HashBatchRequest request, IProgress<HashProgress>? progress = null, CancellationToken cancellationToken = default)
+        {
+            LastBatchRequest = request;
+            return ComputeFileHashesAsync(request.FilePaths, progress, cancellationToken);
+        }
+
         public Task<IReadOnlyList<FileHashResult>> ComputeFilePrefixHashesAsync(IReadOnlyList<string> filePaths, int prefixBytes, IProgress<HashProgress>? progress = null, CancellationToken cancellationToken = default)
             => ComputeFileHashesAsync(filePaths, progress, cancellationToken);
+
+        public Task<IReadOnlyList<FileHashResult>> ComputeFilePrefixHashesAsync(HashBatchRequest request, int prefixBytes, IProgress<HashProgress>? progress = null, CancellationToken cancellationToken = default)
+            => ComputeFileHashesAsync(request.FilePaths, progress, cancellationToken);
     }
 
     private sealed class FakeFileOperationService : IFileOperationService

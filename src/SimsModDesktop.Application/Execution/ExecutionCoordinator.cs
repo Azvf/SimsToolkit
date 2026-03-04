@@ -164,7 +164,11 @@ public sealed class ExecutionCoordinator : IExecutionCoordinator
             });
 
         var hashResults = await _hashComputationService.ComputeFileHashesAsync(
-            candidates.Select(info => info.FullName).ToArray(),
+            new HashBatchRequest
+            {
+                FilePaths = candidates.Select(info => info.FullName).ToArray(),
+                WorkerCount = input.Shared.HashWorkerCount
+            },
             hashProgress,
             cancellationToken);
 

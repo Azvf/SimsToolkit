@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using Microsoft.Extensions.Logging;
 using SimsModDesktop.Application.Services;
@@ -5,9 +6,6 @@ using HashAlgorithmEnum = SimsModDesktop.Application.Services.HashAlgorithm;
 
 namespace SimsModDesktop.Infrastructure.Services;
 
-/// <summary>
-/// 跨平台文件哈希计算服务实现
-/// </summary>
 public sealed class CrossPlatformHashComputationService : IHashComputationService
 {
     private readonly ILogger<CrossPlatformHashComputationService> _logger;
@@ -17,18 +15,18 @@ public sealed class CrossPlatformHashComputationService : IHashComputationServic
         _logger = logger;
     }
 
-    /// <inheritdoc />
-    public IReadOnlyList<HashAlgorithmEnum> SupportedAlgorithms => 
-        new[] { HashAlgorithmEnum.MD5, HashAlgorithmEnum.SHA1, HashAlgorithmEnum.SHA256, HashAlgorithmEnum.SHA512 };
+    public IReadOnlyList<HashAlgorithmEnum> SupportedAlgorithms =>
+        [HashAlgorithmEnum.MD5, HashAlgorithmEnum.SHA1, HashAlgorithmEnum.SHA256, HashAlgorithmEnum.SHA512];
 
-    /// <inheritdoc />
-    public async Task<string> ComputeFileHashAsync(string filePath, CancellationToken cancellationToken = default)
+    public Task<string> ComputeFileHashAsync(string filePath, CancellationToken cancellationToken = default)
     {
-        return await ComputeFileHashAsync(filePath, HashAlgorithmEnum.MD5, cancellationToken);
+        return ComputeFileHashAsync(filePath, HashAlgorithmEnum.MD5, cancellationToken);
     }
 
-    /// <inheritdoc />
-    public async Task<string> ComputeFileHashAsync(string filePath, HashAlgorithmEnum algorithm, CancellationToken cancellationToken = default)
+    public async Task<string> ComputeFileHashAsync(
+        string filePath,
+        HashAlgorithmEnum algorithm,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(filePath))
         {
@@ -42,8 +40,14 @@ public sealed class CrossPlatformHashComputationService : IHashComputationServic
 
         try
         {
-            using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 4096, useAsync: true);
-            return await ComputeStreamHashAsync(stream, algorithm, cancellationToken);
+            await using var stream = new FileStream(
+                filePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 4096,
+                useAsync: true);
+            return await ComputeStreamHashAsync(stream, algorithm, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -52,8 +56,10 @@ public sealed class CrossPlatformHashComputationService : IHashComputationServic
         }
     }
 
-    /// <inheritdoc />
-    public async Task<string> ComputeFilePrefixHashAsync(string filePath, int prefixBytes, CancellationToken cancellationToken = default)
+    public async Task<string> ComputeFilePrefixHashAsync(
+        string filePath,
+        int prefixBytes,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(filePath))
         {
@@ -72,20 +78,22 @@ public sealed class CrossPlatformHashComputationService : IHashComputationServic
 
         try
         {
-            using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 4096, useAsync: true);
-            
-            // 读取前缀字节
-            var prefixBuffer = new byte[Math.Min(prefixBytes, stream.Length)];
-            var bytesRead = await stream.ReadAsync(prefixBuffer, 0, prefixBuffer.Length, cancellationToken);
-            
+            await using var stream = new FileStream(
+                filePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 4096,
+                useAsync: true);
+            var buffer = new byte[Math.Min(prefixBytes, (int)Math.Max(0, stream.Length))];
+            var bytesRead = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken).ConfigureAwait(false);
             if (bytesRead == 0)
             {
                 throw new InvalidOperationException($"Failed to read prefix from file: {filePath}");
             }
 
-            // 计算前缀哈希
             using var hashAlgorithm = CreateHashAlgorithm(HashAlgorithmEnum.MD5);
-            var hashBytes = hashAlgorithm.ComputeHash(prefixBuffer, 0, bytesRead);
+            var hashBytes = hashAlgorithm.ComputeHash(buffer, 0, bytesRead);
             return ConvertToHexString(hashBytes);
         }
         catch (Exception ex)
@@ -95,8 +103,10 @@ public sealed class CrossPlatformHashComputationService : IHashComputationServic
         }
     }
 
-    /// <inheritdoc />
-    public async Task<bool> AreFilesIdenticalAsync(string path1, string path2, CancellationToken cancellationToken = default)
+    public async Task<bool> AreFilesIdenticalAsync(
+        string path1,
+        string path2,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(path1))
         {
@@ -108,13 +118,11 @@ public sealed class CrossPlatformHashComputationService : IHashComputationServic
             throw new ArgumentException("Second file path cannot be null or empty", nameof(path2));
         }
 
-        // 如果路径相同，直接返回true
         if (string.Equals(path1, path2, StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
 
-        // 检查文件是否存在
         if (!File.Exists(path1) || !File.Exists(path2))
         {
             return false;
@@ -122,25 +130,20 @@ public sealed class CrossPlatformHashComputationService : IHashComputationServic
 
         try
         {
-            var fileInfo1 = new FileInfo(path1);
-            var fileInfo2 = new FileInfo(path2);
-
-            // 首先比较文件大小，如果不相同则直接返回false
-            if (fileInfo1.Length != fileInfo2.Length)
+            var file1 = new FileInfo(path1);
+            var file2 = new FileInfo(path2);
+            if (file1.Length != file2.Length)
             {
                 return false;
             }
 
-            // 比较最后修改时间，如果相同则很可能相同（优化策略）
-            if (fileInfo1.LastWriteTimeUtc == fileInfo2.LastWriteTimeUtc)
+            if (file1.LastWriteTimeUtc == file2.LastWriteTimeUtc)
             {
                 return true;
             }
 
-            // 计算并比较哈希值
-            var hash1 = await ComputeFileHashAsync(path1, cancellationToken);
-            var hash2 = await ComputeFileHashAsync(path2, cancellationToken);
-
+            var hash1 = await ComputeFileHashAsync(path1, cancellationToken).ConfigureAwait(false);
+            var hash2 = await ComputeFileHashAsync(path2, cancellationToken).ConfigureAwait(false);
             return string.Equals(hash1, hash2, StringComparison.OrdinalIgnoreCase);
         }
         catch (Exception ex)
@@ -150,8 +153,11 @@ public sealed class CrossPlatformHashComputationService : IHashComputationServic
         }
     }
 
-    /// <inheritdoc />
-    public async Task<bool> AreFilePrefixesIdenticalAsync(string path1, string path2, int prefixBytes, CancellationToken cancellationToken = default)
+    public async Task<bool> AreFilePrefixesIdenticalAsync(
+        string path1,
+        string path2,
+        int prefixBytes,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(path1))
         {
@@ -168,13 +174,11 @@ public sealed class CrossPlatformHashComputationService : IHashComputationServic
             throw new ArgumentException("Prefix bytes must be greater than 0", nameof(prefixBytes));
         }
 
-        // 如果路径相同，直接返回true
         if (string.Equals(path1, path2, StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
 
-        // 检查文件是否存在
         if (!File.Exists(path1) || !File.Exists(path2))
         {
             return false;
@@ -182,10 +186,8 @@ public sealed class CrossPlatformHashComputationService : IHashComputationServic
 
         try
         {
-            // 计算并比较前缀哈希值
-            var hash1 = await ComputeFilePrefixHashAsync(path1, prefixBytes, cancellationToken);
-            var hash2 = await ComputeFilePrefixHashAsync(path2, prefixBytes, cancellationToken);
-
+            var hash1 = await ComputeFilePrefixHashAsync(path1, prefixBytes, cancellationToken).ConfigureAwait(false);
+            var hash2 = await ComputeFilePrefixHashAsync(path2, prefixBytes, cancellationToken).ConfigureAwait(false);
             return string.Equals(hash1, hash2, StringComparison.OrdinalIgnoreCase);
         }
         catch (Exception ex)
@@ -195,206 +197,242 @@ public sealed class CrossPlatformHashComputationService : IHashComputationServic
         }
     }
 
-    /// <inheritdoc />
-    public async Task<IReadOnlyList<FileHashResult>> ComputeFileHashesAsync(
-        IReadOnlyList<string> filePaths, 
+    public Task<IReadOnlyList<FileHashResult>> ComputeFileHashesAsync(
+        IReadOnlyList<string> filePaths,
         IProgress<HashProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        if (filePaths == null || filePaths.Count == 0)
-        {
-            return Array.Empty<FileHashResult>();
-        }
-
-        var results = new List<FileHashResult>(filePaths.Count);
-        var totalBytes = 0L;
-
-        // 首先计算总字节数
-        foreach (var filePath in filePaths)
-        {
-            if (File.Exists(filePath))
+        return ComputeFileHashesAsync(
+            new HashBatchRequest
             {
-                var fileInfo = new FileInfo(filePath);
-                totalBytes += fileInfo.Length;
-            }
-        }
-
-        var processedBytes = 0L;
-        var processedCount = 0;
-
-        // 并行处理文件哈希计算
-        var tasks = filePaths.Select(async filePath =>
-        {
-            try
-            {
-                var startTime = DateTimeOffset.UtcNow;
-                var fileInfo = new FileInfo(filePath);
-
-                if (!fileInfo.Exists)
-                {
-                    return new FileHashResult
-                    {
-                        FilePath = filePath,
-                        Hash = string.Empty,
-                        Exception = new FileNotFoundException($"File not found: {filePath}", filePath)
-                    };
-                }
-
-                var hash = await ComputeFileHashAsync(filePath, cancellationToken);
-                var elapsed = (DateTimeOffset.UtcNow - startTime).TotalMilliseconds;
-
-                Interlocked.Add(ref processedBytes, fileInfo.Length);
-                Interlocked.Increment(ref processedCount);
-
-                progress?.Report(new HashProgress
-                {
-                    ProcessedCount = processedCount,
-                    TotalCount = filePaths.Count,
-                    CurrentFile = filePath,
-                    ProcessedBytes = processedBytes,
-                    TotalBytes = totalBytes
-                });
-
-                return new FileHashResult
-                {
-                    FilePath = filePath,
-                    Hash = hash,
-                    FileSize = fileInfo.Length,
-                    LastModified = fileInfo.LastWriteTimeUtc,
-                    ElapsedMilliseconds = (long)elapsed
-                };
-            }
-            catch (Exception ex)
-            {
-                Interlocked.Increment(ref processedCount);
-                
-                progress?.Report(new HashProgress
-                {
-                    ProcessedCount = processedCount,
-                    TotalCount = filePaths.Count,
-                    CurrentFile = filePath
-                });
-
-                return new FileHashResult
-                {
-                    FilePath = filePath,
-                    Hash = string.Empty,
-                    Exception = ex
-                };
-            }
-        });
-
-        var taskResults = await Task.WhenAll(tasks);
-        results.AddRange(taskResults);
-
-        return results.AsReadOnly();
+                FilePaths = filePaths
+            },
+            progress,
+            cancellationToken);
     }
 
-    /// <inheritdoc />
-    public async Task<IReadOnlyList<FileHashResult>> ComputeFilePrefixHashesAsync(
+    public Task<IReadOnlyList<FileHashResult>> ComputeFilePrefixHashesAsync(
         IReadOnlyList<string> filePaths,
         int prefixBytes,
         IProgress<HashProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        if (filePaths == null || filePaths.Count == 0)
-        {
-            return Array.Empty<FileHashResult>();
-        }
+        return ComputeFilePrefixHashesAsync(
+            new HashBatchRequest
+            {
+                FilePaths = filePaths
+            },
+            prefixBytes,
+            progress,
+            cancellationToken);
+    }
 
+    public Task<IReadOnlyList<FileHashResult>> ComputeFileHashesAsync(
+        HashBatchRequest request,
+        IProgress<HashProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        return ComputeBatchHashesAsync(request, prefixBytes: null, progress, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<FileHashResult>> ComputeFilePrefixHashesAsync(
+        HashBatchRequest request,
+        int prefixBytes,
+        IProgress<HashProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
         if (prefixBytes <= 0)
         {
             throw new ArgumentException("Prefix bytes must be greater than 0", nameof(prefixBytes));
         }
 
-        var results = new List<FileHashResult>(filePaths.Count);
-        var processedCount = 0;
+        return ComputeBatchHashesAsync(request, prefixBytes, progress, cancellationToken);
+    }
 
-        // 并行处理文件前缀哈希计算
-        var tasks = filePaths.Select(async filePath =>
+    private async Task<IReadOnlyList<FileHashResult>> ComputeBatchHashesAsync(
+        HashBatchRequest request,
+        int? prefixBytes,
+        IProgress<HashProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var filePaths = request.FilePaths ?? Array.Empty<string>();
+        if (filePaths.Count == 0)
         {
-            try
-            {
-                var startTime = DateTimeOffset.UtcNow;
-                var fileInfo = new FileInfo(filePath);
+            return Array.Empty<FileHashResult>();
+        }
 
-                if (!fileInfo.Exists)
+        var workerCount = Math.Clamp(request.WorkerCount ?? Environment.ProcessorCount, 1, 64);
+        var activeWorkers = Math.Min(workerCount, filePaths.Count);
+        var totalBytes = ComputeTotalBytes(filePaths);
+        var processedCount = 0;
+        long processedBytes = 0;
+        var queue = new ConcurrentQueue<(int Index, string Path)>(
+            filePaths.Select((path, index) => (index, path)));
+        var results = new FileHashResult[filePaths.Count];
+        var kind = prefixBytes.HasValue ? "prefix" : "full";
+        var startedAt = DateTimeOffset.UtcNow;
+
+        _logger.LogInformation(
+            "hash.batch.start kind={Kind} fileCount={FileCount} workerCount={WorkerCount} prefixBytes={PrefixBytes}",
+            kind,
+            filePaths.Count,
+            activeWorkers,
+            prefixBytes ?? 0);
+
+        var workers = Enumerable.Range(0, activeWorkers)
+            .Select(_ => Task.Run(async () =>
+            {
+                while (queue.TryDequeue(out var item))
                 {
-                    return new FileHashResult
-                    {
-                        FilePath = filePath,
-                        Hash = string.Empty,
-                        Exception = new FileNotFoundException($"File not found: {filePath}", filePath)
-                    };
+                    cancellationToken.ThrowIfCancellationRequested();
+                    results[item.Index] = await ComputeBatchItemAsync(
+                        item.Path,
+                        prefixBytes,
+                        filePaths.Count,
+                        totalBytes,
+                        progress,
+                        cancellationToken,
+                        () => Interlocked.Increment(ref processedCount),
+                        delta => Interlocked.Add(ref processedBytes, delta),
+                        () => Interlocked.Read(ref processedBytes)).ConfigureAwait(false);
                 }
+            }, cancellationToken))
+            .ToArray();
 
-                var hash = await ComputeFilePrefixHashAsync(filePath, prefixBytes, cancellationToken);
-                var elapsed = (DateTimeOffset.UtcNow - startTime).TotalMilliseconds;
+        await Task.WhenAll(workers).ConfigureAwait(false);
 
-                Interlocked.Increment(ref processedCount);
+        var successCount = results.Count(result => result.IsSuccess);
+        var failureCount = results.Length - successCount;
+        var elapsedMs = (long)(DateTimeOffset.UtcNow - startedAt).TotalMilliseconds;
+        _logger.LogInformation(
+            "hash.batch.done kind={Kind} fileCount={FileCount} workerCount={WorkerCount} successCount={SuccessCount} failureCount={FailureCount} elapsedMs={ElapsedMs}",
+            kind,
+            filePaths.Count,
+            activeWorkers,
+            successCount,
+            failureCount,
+            elapsedMs);
 
-                progress?.Report(new HashProgress
-                {
-                    ProcessedCount = processedCount,
-                    TotalCount = filePaths.Count,
-                    CurrentFile = filePath
-                });
+        return Array.AsReadOnly(results);
+    }
 
-                return new FileHashResult
-                {
-                    FilePath = filePath,
-                    Hash = hash,
-                    FileSize = fileInfo.Length,
-                    LastModified = fileInfo.LastWriteTimeUtc,
-                    ElapsedMilliseconds = (long)elapsed
-                };
-            }
-            catch (Exception ex)
+    private async Task<FileHashResult> ComputeBatchItemAsync(
+        string filePath,
+        int? prefixBytes,
+        int totalCount,
+        long totalBytes,
+        IProgress<HashProgress>? progress,
+        CancellationToken cancellationToken,
+        Func<int> incrementProcessedCount,
+        Func<long, long> addProcessedBytes,
+        Func<long> readProcessedBytes)
+    {
+        var startedAt = DateTimeOffset.UtcNow;
+
+        try
+        {
+            var fileInfo = new FileInfo(filePath);
+            if (!fileInfo.Exists)
             {
-                Interlocked.Increment(ref processedCount);
-                
+                var missingCurrent = incrementProcessedCount();
                 progress?.Report(new HashProgress
                 {
-                    ProcessedCount = processedCount,
-                    TotalCount = filePaths.Count,
-                    CurrentFile = filePath
+                    ProcessedCount = missingCurrent,
+                    TotalCount = totalCount,
+                    CurrentFile = filePath,
+                    ProcessedBytes = readProcessedBytes(),
+                    TotalBytes = totalBytes
                 });
-
                 return new FileHashResult
                 {
                     FilePath = filePath,
                     Hash = string.Empty,
-                    Exception = ex
+                    Exception = new FileNotFoundException($"File not found: {filePath}", filePath)
                 };
             }
-        });
 
-        var taskResults = await Task.WhenAll(tasks);
-        results.AddRange(taskResults);
+            var hash = prefixBytes.HasValue
+                ? await ComputeFilePrefixHashAsync(filePath, prefixBytes.Value, cancellationToken).ConfigureAwait(false)
+                : await ComputeFileHashAsync(filePath, cancellationToken).ConfigureAwait(false);
+            var current = incrementProcessedCount();
+            var bytes = addProcessedBytes(fileInfo.Length);
+            progress?.Report(new HashProgress
+            {
+                ProcessedCount = current,
+                TotalCount = totalCount,
+                CurrentFile = filePath,
+                ProcessedBytes = bytes,
+                TotalBytes = totalBytes
+            });
 
-        return results.AsReadOnly();
+            return new FileHashResult
+            {
+                FilePath = filePath,
+                Hash = hash,
+                FileSize = fileInfo.Length,
+                LastModified = fileInfo.LastWriteTimeUtc,
+                ElapsedMilliseconds = (long)(DateTimeOffset.UtcNow - startedAt).TotalMilliseconds
+            };
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            var current = incrementProcessedCount();
+            progress?.Report(new HashProgress
+            {
+                ProcessedCount = current,
+                TotalCount = totalCount,
+                CurrentFile = filePath,
+                ProcessedBytes = readProcessedBytes(),
+                TotalBytes = totalBytes
+            });
+            return new FileHashResult
+            {
+                FilePath = filePath,
+                Hash = string.Empty,
+                Exception = ex
+            };
+        }
     }
 
-    #region 私有方法
+    private static long ComputeTotalBytes(IReadOnlyList<string> filePaths)
+    {
+        long total = 0;
+        foreach (var filePath in filePaths)
+        {
+            if (!File.Exists(filePath))
+            {
+                continue;
+            }
 
-    private async Task<string> ComputeStreamHashAsync(Stream stream, HashAlgorithmEnum algorithm, CancellationToken cancellationToken)
+            total += new FileInfo(filePath).Length;
+        }
+
+        return total;
+    }
+
+    private async Task<string> ComputeStreamHashAsync(
+        Stream stream,
+        HashAlgorithmEnum algorithm,
+        CancellationToken cancellationToken)
     {
         using var hashAlgorithm = CreateHashAlgorithm(algorithm);
-        
-        // 使用异步方式读取流并计算哈希
-        var buffer = new byte[8192]; // 8KB缓冲区
+        var buffer = new byte[8192];
         int bytesRead;
-        
-        while ((bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length, cancellationToken)) > 0)
+        while ((bytesRead = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken).ConfigureAwait(false)) > 0)
         {
             hashAlgorithm.TransformBlock(buffer, 0, bytesRead, null, 0);
         }
-        
+
         hashAlgorithm.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
         return ConvertToHexString(hashAlgorithm.Hash ?? Array.Empty<byte>());
     }
 
-    private System.Security.Cryptography.HashAlgorithm CreateHashAlgorithm(HashAlgorithmEnum algorithm)
+    private static System.Security.Cryptography.HashAlgorithm CreateHashAlgorithm(HashAlgorithmEnum algorithm)
     {
         return algorithm switch
         {
@@ -406,10 +444,8 @@ public sealed class CrossPlatformHashComputationService : IHashComputationServic
         };
     }
 
-    private string ConvertToHexString(byte[] bytes)
+    private static string ConvertToHexString(byte[] bytes)
     {
-        return BitConverter.ToString(bytes).Replace("-", "").ToLowerInvariant();
+        return Convert.ToHexString(bytes).ToLowerInvariant();
     }
-
-    #endregion
 }
