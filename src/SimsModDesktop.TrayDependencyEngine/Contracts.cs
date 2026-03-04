@@ -203,12 +203,59 @@ public sealed record PackageIndexSnapshot
     public required string ModsRootPath { get; init; }
     public long InventoryVersion { get; init; }
     public required IReadOnlyList<IndexedPackageFile> Packages { get; init; }
-    internal IReadOnlyDictionary<TrayResourceKey, ResolvedResourceRef[]> ExactIndex { get; init; } =
-        new Dictionary<TrayResourceKey, ResolvedResourceRef[]>();
-    internal IReadOnlyDictionary<TypeInstanceKey, ResolvedResourceRef[]> TypeInstanceIndex { get; init; } =
-        new Dictionary<TypeInstanceKey, ResolvedResourceRef[]>();
-    internal IReadOnlyDictionary<ulong, ResolvedResourceRef[]> SupportedInstanceIndex { get; init; } =
-        new Dictionary<ulong, ResolvedResourceRef[]>();
+    internal ITrayDependencyLookup Lookup { get; init; } = EmptyTrayDependencyLookup.Instance;
+}
+
+internal interface ITrayDependencyLookup
+{
+    ITrayDependencyLookupSession OpenSession();
+}
+
+internal interface ITrayDependencyLookupSession : IDisposable
+{
+    bool TryGetExact(TrayResourceKey key, out ResolvedResourceRef[] matches);
+
+    bool TryGetTypeInstance(TypeInstanceKey key, out ResolvedResourceRef[] matches);
+
+    bool HasSupportedInstance(ulong instance);
+}
+
+internal sealed class EmptyTrayDependencyLookup : ITrayDependencyLookup
+{
+    public static EmptyTrayDependencyLookup Instance { get; } = new();
+
+    private EmptyTrayDependencyLookup()
+    {
+    }
+
+    public ITrayDependencyLookupSession OpenSession() => EmptyTrayDependencyLookupSession.Instance;
+}
+
+internal sealed class EmptyTrayDependencyLookupSession : ITrayDependencyLookupSession
+{
+    public static EmptyTrayDependencyLookupSession Instance { get; } = new();
+
+    private EmptyTrayDependencyLookupSession()
+    {
+    }
+
+    public bool TryGetExact(TrayResourceKey key, out ResolvedResourceRef[] matches)
+    {
+        matches = Array.Empty<ResolvedResourceRef>();
+        return false;
+    }
+
+    public bool TryGetTypeInstance(TypeInstanceKey key, out ResolvedResourceRef[] matches)
+    {
+        matches = Array.Empty<ResolvedResourceRef>();
+        return false;
+    }
+
+    public bool HasSupportedInstance(ulong instance) => false;
+
+    public void Dispose()
+    {
+    }
 }
 
 public sealed record PackageIndexBuildRequest

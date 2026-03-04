@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using Microsoft.Data.Sqlite;
 using SimsModDesktop.PackageCore;
 using SimsModDesktop.TrayDependencyEngine;
 
@@ -8,6 +9,7 @@ public sealed class TrayDependencyEngineCoreTests
 {
     private const ulong FirstInstance = 0x1111111111111111;
     private const ulong SecondInstance = 0x2222222222222222;
+    private const ulong HighBitInstance = 0xF123456789ABCDEF;
     private const uint SupportedResourceType = 55242443u;
 
     [Fact]
@@ -22,6 +24,115 @@ public sealed class TrayDependencyEngineCoreTests
         var second = await cache.TryLoadSnapshotAsync(fixture.Path, first.InventoryVersion);
 
         Assert.Same(first, second);
+    }
+
+    [Fact]
+    public async Task PackageIndexCache_SmallChange_ReusesUnchangedPackageRows()
+    {
+        using var modsRoot = new TempDirectory("tray-smallchange-mods");
+        using var cacheRoot = new TempDirectory("tray-smallchange-cache");
+
+        var changedPackagePath = Path.Combine(modsRoot.Path, "changed.package");
+        var untouchedPackagePath = Path.Combine(modsRoot.Path, "untouched.package");
+        WritePackage(changedPackagePath, [new PackageSpec(SupportedResourceType, 0, FirstInstance, [1, 2, 3, 4])]);
+        WritePackage(untouchedPackagePath, [new PackageSpec(SupportedResourceType, 0, SecondInstance, [5, 6, 7, 8])]);
+
+        var cache = new PackageIndexCache(cacheRoot.Path);
+        var firstRequest = CreateBuildRequest(modsRoot.Path);
+        _ = await cache.BuildSnapshotAsync(firstRequest);
+        var firstTicks = await LoadPackageUpdatedTicksAsync(Path.Combine(cacheRoot.Path, "cache.db"));
+
+        await Task.Delay(20);
+        WritePackage(changedPackagePath, [new PackageSpec(SupportedResourceType, 0, FirstInstance, [9, 10, 11, 12])]);
+        File.SetLastWriteTimeUtc(changedPackagePath, DateTime.UtcNow.AddSeconds(1));
+
+        var secondRequest = CreateBuildRequest(modsRoot.Path);
+        var changedBuildFile = secondRequest.PackageFiles.Single(file =>
+            string.Equals(Path.GetFullPath(file.FilePath), Path.GetFullPath(changedPackagePath), StringComparison.OrdinalIgnoreCase));
+        _ = await cache.BuildSnapshotAsync(secondRequest with
+        {
+            ChangedPackageFiles = [changedBuildFile]
+        });
+        var secondTicks = await LoadPackageUpdatedTicksAsync(Path.Combine(cacheRoot.Path, "cache.db"));
+
+        Assert.True(secondTicks.TryGetValue(Path.GetFullPath(changedPackagePath), out var changedUpdated));
+        Assert.True(firstTicks.TryGetValue(Path.GetFullPath(changedPackagePath), out var changedBefore));
+        Assert.True(changedUpdated > changedBefore);
+
+        Assert.True(secondTicks.TryGetValue(Path.GetFullPath(untouchedPackagePath), out var untouchedUpdated));
+        Assert.True(firstTicks.TryGetValue(Path.GetFullPath(untouchedPackagePath), out var untouchedBefore));
+        Assert.Equal(untouchedBefore, untouchedUpdated);
+
+        SqliteConnection.ClearAllPools();
+    }
+
+    [Fact]
+    public async Task PackageIndexCache_RemovedPackagePaths_ExcludesPackageFromManifest()
+    {
+        using var modsRoot = new TempDirectory("tray-removed-mods");
+        using var cacheRoot = new TempDirectory("tray-removed-cache");
+
+        var keepPath = Path.Combine(modsRoot.Path, "keep.package");
+        var removePath = Path.Combine(modsRoot.Path, "remove.package");
+        WritePackage(keepPath, [new PackageSpec(SupportedResourceType, 0, FirstInstance, [1, 2, 3, 4])]);
+        WritePackage(removePath, [new PackageSpec(SupportedResourceType, 0, SecondInstance, [5, 6, 7, 8])]);
+
+        var cache = new PackageIndexCache(cacheRoot.Path);
+        var buildRequest = CreateBuildRequest(modsRoot.Path);
+        var snapshot = await cache.BuildSnapshotAsync(buildRequest with
+        {
+            RemovedPackagePaths = [removePath]
+        });
+
+        Assert.Single(snapshot.Packages);
+        Assert.Equal(Path.GetFullPath(keepPath), snapshot.Packages[0].FilePath);
+
+        var reloaded = await new PackageIndexCache(cacheRoot.Path).TryLoadSnapshotAsync(modsRoot.Path, buildRequest.InventoryVersion);
+        Assert.NotNull(reloaded);
+        Assert.Single(reloaded!.Packages);
+        Assert.Equal(Path.GetFullPath(keepPath), reloaded.Packages[0].FilePath);
+
+        SqliteConnection.ClearAllPools();
+    }
+
+    [Fact]
+    public async Task PackageIndexCache_TryLoadSnapshot_IgnoresLegacyPackageIndexSnapshotsTable()
+    {
+        using var modsRoot = new TempDirectory("tray-legacy-mods");
+        using var cacheRoot = new TempDirectory("tray-legacy-cache");
+        var cacheDbPath = Path.Combine(cacheRoot.Path, "cache.db");
+
+        await using (var connection = new SqliteConnection($"Data Source={cacheDbPath};Mode=ReadWriteCreate;"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                """
+                CREATE TABLE IF NOT EXISTS PackageIndexSnapshots(
+                    ModsRootPath TEXT NOT NULL,
+                    InventoryVersion INTEGER NOT NULL,
+                    SnapshotJson TEXT NOT NULL
+                );
+                INSERT INTO PackageIndexSnapshots(ModsRootPath, InventoryVersion, SnapshotJson)
+                VALUES (@ModsRootPath, 1, 'not-json');
+                """;
+            command.Parameters.AddWithValue("@ModsRootPath", Path.GetFullPath(modsRoot.Path));
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var cache = new PackageIndexCache(cacheRoot.Path);
+        var loaded = await cache.TryLoadSnapshotAsync(modsRoot.Path, 1);
+
+        Assert.Null(loaded);
+
+        await using var verifyConnection = new SqliteConnection($"Data Source={cacheDbPath};Mode=ReadWrite;");
+        await verifyConnection.OpenAsync();
+        await using var verifyCommand = verifyConnection.CreateCommand();
+        verifyCommand.CommandText = "SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = 'PackageIndexSnapshots';";
+        var legacyTableCount = Convert.ToInt64(await verifyCommand.ExecuteScalarAsync());
+        Assert.Equal(0L, legacyTableCount);
+
+        SqliteConnection.ClearAllPools();
     }
 
     [Fact]
@@ -62,6 +173,136 @@ public sealed class TrayDependencyEngineCoreTests
         Assert.True(result.Success);
         Assert.Equal(1, countingReader.OpenCount);
         Assert.Equal(1, result.CopiedModFileCount);
+    }
+
+    [Fact]
+    public async Task TrayDependencyExportService_MatchesEntries_WhenInstanceUsesHighBit()
+    {
+        using var trayRoot = new TempDirectory("tray-highbit-tray");
+        using var modsRoot = new TempDirectory("tray-highbit-mods");
+        using var exportRoot = new TempDirectory("tray-highbit-out");
+
+        var trayItemPath = Path.Combine(trayRoot.Path, "0xhighbit.trayitem");
+        WriteTrayItem(trayItemPath, HighBitInstance);
+
+        WritePackage(
+            Path.Combine(modsRoot.Path, "highbit.package"),
+            [new PackageSpec(SupportedResourceType, 0, HighBitInstance, [7, 8, 9, 10])]);
+
+        var packageIndexCache = new PackageIndexCache();
+        var preloadedSnapshot = await BuildSnapshotAsync(packageIndexCache, modsRoot.Path);
+        var service = new TrayDependencyExportService(packageIndexCache);
+        var request = new TrayDependencyExportRequest
+        {
+            ItemTitle = "HighBit",
+            TrayItemKey = "0xhighbit",
+            TrayRootPath = trayRoot.Path,
+            TraySourceFiles = [trayItemPath],
+            ModsRootPath = modsRoot.Path,
+            TrayExportRoot = Path.Combine(exportRoot.Path, "HighBit_0xhighbit", "Tray"),
+            ModsExportRoot = Path.Combine(exportRoot.Path, "HighBit_0xhighbit", "Mods"),
+            PreloadedSnapshot = preloadedSnapshot
+        };
+
+        var result = await service.ExportAsync(request);
+
+        Assert.True(result.Success);
+        Assert.Equal(1, result.CopiedModFileCount);
+    }
+
+    [Fact]
+    public async Task TrayDependencyExportService_LoadsCompanionTrayFilesByTrayKey()
+    {
+        using var trayRoot = new TempDirectory("tray-companion-tray");
+        using var modsRoot = new TempDirectory("tray-companion-mods");
+        using var exportRoot = new TempDirectory("tray-companion-out");
+
+        var trayItemPath = Path.Combine(trayRoot.Path, "0x123abc.trayitem");
+        File.WriteAllBytes(trayItemPath, [0x00, 0x01, 0x02, 0x03]);
+
+        var hhiPath = Path.Combine(trayRoot.Path, "0x00000000!0x123abc.hhi");
+        WriteTrayItem(hhiPath, FirstInstance);
+
+        WritePackage(
+            Path.Combine(modsRoot.Path, "companion.package"),
+            [new PackageSpec(SupportedResourceType, 0, FirstInstance, [3, 4, 5, 6])]);
+
+        var packageIndexCache = new PackageIndexCache();
+        var preloadedSnapshot = await BuildSnapshotAsync(packageIndexCache, modsRoot.Path);
+        var service = new TrayDependencyExportService(packageIndexCache);
+        var request = new TrayDependencyExportRequest
+        {
+            ItemTitle = "Companion",
+            TrayItemKey = "0x123abc",
+            TrayRootPath = trayRoot.Path,
+            TraySourceFiles = [trayItemPath],
+            ModsRootPath = modsRoot.Path,
+            TrayExportRoot = Path.Combine(exportRoot.Path, "Companion_0x123abc", "Tray"),
+            ModsExportRoot = Path.Combine(exportRoot.Path, "Companion_0x123abc", "Mods"),
+            PreloadedSnapshot = preloadedSnapshot
+        };
+
+        var result = await service.ExportAsync(request);
+
+        Assert.True(result.Success);
+        Assert.Equal(1, result.CopiedModFileCount);
+    }
+
+    [Fact]
+    public async Task TrayDependencyExportService_FailsFastWithoutPreloadedSnapshot_AndDoesNotCallCache()
+    {
+        using var trayRoot = new TempDirectory("tray-nosnapshot-tray");
+        using var modsRoot = new TempDirectory("tray-nosnapshot-mods");
+        using var exportRoot = new TempDirectory("tray-nosnapshot-out");
+
+        var trayItemPath = Path.Combine(trayRoot.Path, "0x1234.trayitem");
+        WriteTrayItem(trayItemPath, FirstInstance);
+        WritePackage(
+            Path.Combine(modsRoot.Path, "sample.package"),
+            [new PackageSpec(SupportedResourceType, 0, FirstInstance, [1, 2, 3, 4])]);
+
+        var cache = new ForbiddenPackageIndexCache();
+        var service = new TrayDependencyExportService(cache);
+        var request = new TrayDependencyExportRequest
+        {
+            ItemTitle = "NoSnapshot",
+            TrayItemKey = "0x1234",
+            TrayRootPath = trayRoot.Path,
+            TraySourceFiles = [trayItemPath],
+            ModsRootPath = modsRoot.Path,
+            TrayExportRoot = Path.Combine(exportRoot.Path, "NoSnapshot_0x1234", "Tray"),
+            ModsExportRoot = Path.Combine(exportRoot.Path, "NoSnapshot_0x1234", "Mods")
+        };
+
+        var result = await service.ExportAsync(request);
+
+        Assert.False(result.Success);
+        Assert.Contains(result.Issues, issue => issue.Kind == TrayDependencyIssueKind.CacheBuildError);
+        Assert.Equal(0, cache.TryLoadCalls);
+        Assert.Equal(0, cache.BuildCalls);
+    }
+
+    [Fact]
+    public async Task TrayDependencyAnalysisService_FailsFastWithoutPreloadedSnapshot()
+    {
+        using var trayRoot = new TempDirectory("analysis-nosnapshot-tray");
+        using var modsRoot = new TempDirectory("analysis-nosnapshot-mods");
+
+        var trayItemPath = Path.Combine(trayRoot.Path, "0x2222.trayitem");
+        WriteTrayItem(trayItemPath, FirstInstance);
+
+        var service = new TrayDependencyAnalysisService();
+        var request = new TrayDependencyAnalysisRequest
+        {
+            TrayPath = trayRoot.Path,
+            ModsRootPath = modsRoot.Path,
+            TrayItemKey = "0x2222"
+        };
+
+        var result = await service.AnalyzeAsync(request);
+
+        Assert.False(result.Success);
+        Assert.Contains(result.Issues, issue => issue.Kind == TrayDependencyIssueKind.CacheBuildError);
     }
 
     private static void WriteTrayItem(string path, params ulong[] instances)
@@ -151,6 +392,24 @@ public sealed class TrayDependencyEngineCoreTests
         return await cache.BuildSnapshotAsync(CreateBuildRequest(modsRootPath));
     }
 
+    private static async Task<Dictionary<string, long>> LoadPackageUpdatedTicksAsync(string cacheDbPath)
+    {
+        var result = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        await using var connection = new SqliteConnection($"Data Source={cacheDbPath};Mode=ReadWrite;");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT PackagePath, UpdatedUtcTicks FROM TrayCachePackage;";
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var path = Path.GetFullPath(reader.GetString(0));
+            var ticks = reader.GetInt64(1);
+            result[path] = ticks;
+        }
+
+        return result;
+    }
+
     private static long ComputeInventoryVersion(IReadOnlyList<PackageIndexBuildFile> packageFiles)
     {
         unchecked
@@ -181,6 +440,30 @@ public sealed class TrayDependencyEngineCoreTests
         {
             OpenCount++;
             return _inner.OpenSession(packagePath);
+        }
+    }
+
+    private sealed class ForbiddenPackageIndexCache : IPackageIndexCache
+    {
+        public int TryLoadCalls { get; private set; }
+        public int BuildCalls { get; private set; }
+
+        public Task<PackageIndexSnapshot?> TryLoadSnapshotAsync(
+            string modsRootPath,
+            long inventoryVersion,
+            CancellationToken cancellationToken = default)
+        {
+            TryLoadCalls++;
+            return Task.FromResult<PackageIndexSnapshot?>(null);
+        }
+
+        public Task<PackageIndexSnapshot> BuildSnapshotAsync(
+            PackageIndexBuildRequest request,
+            IProgress<TrayDependencyExportProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            BuildCalls++;
+            throw new InvalidOperationException("BuildSnapshotAsync should not be called in strict snapshot mode.");
         }
     }
 

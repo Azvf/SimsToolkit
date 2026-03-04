@@ -14,12 +14,35 @@ internal sealed class SqliteCacheDatabase
 
     public SqliteConnection OpenConnection()
     {
+        EnsureParentDirectory();
+        var connection = new SqliteConnection(BuildConnectionString());
+        connection.Open();
+        ConfigureConnection(connection);
+        return connection;
+    }
+
+    public async Task<SqliteConnection> OpenConnectionAsync(CancellationToken cancellationToken = default)
+    {
+        EnsureParentDirectory();
+        var connection = new SqliteConnection(BuildConnectionString());
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        ConfigureConnection(connection);
+        return connection;
+    }
+
+    public string DatabasePath => _databasePath;
+
+    private void EnsureParentDirectory()
+    {
         var directory = Path.GetDirectoryName(_databasePath);
         if (!string.IsNullOrWhiteSpace(directory))
         {
             Directory.CreateDirectory(directory);
         }
+    }
 
+    private string BuildConnectionString()
+    {
         var builder = new SqliteConnectionStringBuilder
         {
             DataSource = _databasePath,
@@ -28,16 +51,16 @@ internal sealed class SqliteCacheDatabase
             Pooling = false
         };
 
-        var connection = new SqliteConnection(builder.ToString());
-        connection.Open();
+        return builder.ToString();
+    }
 
+    private static void ConfigureConnection(SqliteConnection connection)
+    {
         using var command = connection.CreateCommand();
         command.CommandText = """
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
             """;
         command.ExecuteNonQuery();
-
-        return connection;
     }
 }

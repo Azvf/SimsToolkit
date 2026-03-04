@@ -1,7 +1,6 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Diagnostics;
-using System.Text.Json;
-using Dapper;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.PackageCore;
@@ -154,19 +153,41 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
             cancellationToken.ThrowIfCancellationRequested();
             Report(progress, TrayDependencyExportStage.MatchingDirectReferences, 45, "Matching direct references...");
 
-            var directMatch = _directMatchEngine.Match(searchKeys, snapshot);
+            using var lookupSession = snapshot.Lookup.OpenSession();
+
+            var directMatch = _directMatchEngine.Match(searchKeys, lookupSession);
             issues.AddRange(directMatch.Issues);
             directMatchCount = directMatch.DirectMatches.Count;
+            if (directMatchCount == 0)
+            {
+                _logger.LogWarning(
+                    "trayexport.directmatch.none trayKey={TrayItemKey} title={ItemTitle} candidateIds={CandidateIdCount} resourceKeys={ResourceKeyCount} snapshotPackages={SnapshotPackageCount}",
+                    request.TrayItemKey,
+                    request.ItemTitle,
+                    candidateIdCount,
+                    candidateResourceKeyCount,
+                    snapshotPackageCount);
+            }
 
             cancellationToken.ThrowIfCancellationRequested();
             Report(progress, TrayDependencyExportStage.ExpandingDependencies, 65, "Expanding second-level references...");
 
             var expansion = _dependencyExpandEngine.Expand(
                 directMatch,
-                snapshot,
+                lookupSession,
                 cancellationToken);
             issues.AddRange(expansion.Issues);
             expandedMatchCount = expansion.ExpandedMatches.Count;
+            if (directMatchCount == 0 && expandedMatchCount == 0)
+            {
+                _logger.LogWarning(
+                    "trayexport.nomodmatches trayKey={TrayItemKey} title={ItemTitle} candidateIds={CandidateIdCount} resourceKeys={ResourceKeyCount} snapshotPackages={SnapshotPackageCount}",
+                    request.TrayItemKey,
+                    request.ItemTitle,
+                    candidateIdCount,
+                    candidateResourceKeyCount,
+                    snapshotPackageCount);
+            }
 
             var filePaths = directMatch.DirectMatches
                 .Concat(expansion.ExpandedMatches)
@@ -355,581 +376,6 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
     }
 }
 
-public sealed class PackageIndexCache : IPackageIndexCache
-{
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
-    private readonly object _sync = new();
-    private readonly Dictionary<string, CacheState> _states = new(StringComparer.OrdinalIgnoreCase);
-    private readonly IDbpfPackageCatalog _packageCatalog;
-    private readonly SqliteCacheDatabase _database;
-    private readonly ILogger<PackageIndexCache> _logger;
-
-    public PackageIndexCache(IDbpfPackageCatalog? packageCatalog = null, ILogger<PackageIndexCache>? logger = null)
-        : this(
-            Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "SimsModDesktop",
-                "Cache",
-                "TrayDependencyPackageIndex"),
-            packageCatalog,
-            logger)
-    {
-    }
-
-    public PackageIndexCache(string cacheRootPath, IDbpfPackageCatalog? packageCatalog = null, ILogger<PackageIndexCache>? logger = null)
-    {
-        _packageCatalog = packageCatalog ?? new DbpfPackageCatalog();
-        _database = new SqliteCacheDatabase(Path.Combine(cacheRootPath, "cache.db"));
-        _logger = logger ?? NullLogger<PackageIndexCache>.Instance;
-    }
-
-    public Task<PackageIndexSnapshot?> TryLoadSnapshotAsync(
-        string modsRootPath,
-        long inventoryVersion,
-        CancellationToken cancellationToken = default)
-    {
-        if (string.IsNullOrWhiteSpace(modsRootPath) || inventoryVersion <= 0)
-        {
-            return Task.FromResult<PackageIndexSnapshot?>(null);
-        }
-
-        cancellationToken.ThrowIfCancellationRequested();
-        var normalizedRoot = Path.GetFullPath(modsRootPath.Trim());
-
-        CacheState? existingState;
-        lock (_sync)
-        {
-            _states.TryGetValue(BuildCacheKey(normalizedRoot, inventoryVersion), out existingState);
-        }
-
-        if (existingState is not null)
-        {
-            return Task.FromResult<PackageIndexSnapshot?>(existingState.Snapshot);
-        }
-
-        try
-        {
-            using var connection = OpenConnection();
-            var row = connection.QuerySingleOrDefault<PersistedCacheRow>(
-                """
-                SELECT
-                    ModsRootPath,
-                    InventoryVersion,
-                    SnapshotJson
-                FROM PackageIndexSnapshots
-                WHERE ModsRootPath = @ModsRootPath
-                  AND InventoryVersion = @InventoryVersion
-                LIMIT 1;
-                """,
-                new
-                {
-                    ModsRootPath = normalizedRoot,
-                    InventoryVersion = inventoryVersion
-                });
-            if (row is null)
-            {
-                return Task.FromResult<PackageIndexSnapshot?>(null);
-            }
-
-            var persisted = JsonSerializer.Deserialize<PersistedSnapshot>(row.SnapshotJson, JsonOptions);
-            if (persisted is null)
-            {
-                return Task.FromResult<PackageIndexSnapshot?>(null);
-            }
-
-            var snapshot = FromPersistedSnapshot(persisted);
-            lock (_sync)
-            {
-                _states[BuildCacheKey(normalizedRoot, inventoryVersion)] = new CacheState(snapshot);
-            }
-
-            return Task.FromResult<PackageIndexSnapshot?>(snapshot);
-        }
-        catch
-        {
-            return Task.FromResult<PackageIndexSnapshot?>(null);
-        }
-    }
-
-    public async Task<PackageIndexSnapshot> BuildSnapshotAsync(
-        PackageIndexBuildRequest request,
-        IProgress<TrayDependencyExportProgress>? progress = null,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-        if (string.IsNullOrWhiteSpace(request.ModsRootPath))
-        {
-            throw new ArgumentException("Mods root path is required.", nameof(request));
-        }
-
-        var normalizedRoot = Path.GetFullPath(request.ModsRootPath.Trim());
-        var timing = Stopwatch.StartNew();
-        var buildFiles = request.PackageFiles
-            .Where(file => !string.IsNullOrWhiteSpace(file.FilePath))
-            .OrderBy(file => file.FilePath, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
-        progress?.Report(new TrayDependencyExportProgress
-        {
-            Stage = TrayDependencyExportStage.IndexingPackages,
-            Percent = 5,
-            Detail = "Indexing packages..."
-        });
-        _logger.LogInformation(
-            "Tray package index cache build start modsPath={ModsPath} inventoryVersion={InventoryVersion} packages={PackageCount}",
-            normalizedRoot,
-            request.InventoryVersion,
-            buildFiles.Length);
-
-        var buildOptions = new DbpfCatalogBuildOptions
-        {
-            SupportedInstanceTypes = KnownResourceTypes.Supported,
-            Progress = progress is null
-                ? null
-                : new Progress<DbpfCatalogBuildProgress>(update =>
-                {
-                    var total = Math.Max(update.TotalPackages, 0);
-                    var completed = total == 0
-                        ? 0
-                        : Math.Clamp(update.CompletedPackages, 0, total);
-                    progress.Report(new TrayDependencyExportProgress
-                    {
-                        Stage = TrayDependencyExportStage.IndexingPackages,
-                        Percent = ProgressScale.Scale(5, 35, completed, total),
-                        Detail = $"Indexing packages... {completed}/{total}"
-                    });
-                })
-        };
-
-        var catalog = await _packageCatalog.BuildSnapshotAsync(
-            normalizedRoot,
-            buildFiles.Select(file => new DbpfCatalogPackageFile(file.FilePath, file.Length, file.LastWriteUtcTicks)).ToArray(),
-            buildOptions,
-            cancellationToken).ConfigureAwait(false);
-
-        var packages = catalog.Packages
-            .OrderBy(package => package.FilePath, StringComparer.OrdinalIgnoreCase)
-            .Select(MapPackage)
-            .ToArray();
-        var packageMap = packages.ToDictionary(package => package.FilePath, StringComparer.OrdinalIgnoreCase);
-
-        progress?.Report(new TrayDependencyExportProgress
-        {
-            Stage = TrayDependencyExportStage.IndexingPackages,
-            Percent = 35,
-            Detail = $"Indexing packages... {packages.Length}/{packages.Length}"
-        });
-
-        var snapshot = new PackageIndexSnapshot
-        {
-            ModsRootPath = normalizedRoot,
-            InventoryVersion = request.InventoryVersion,
-            Packages = packages,
-            ExactIndex = MapIndex(catalog.ExactIndex, packageMap),
-            TypeInstanceIndex = MapIndex(catalog.TypeInstanceIndex, packageMap),
-            SupportedInstanceIndex = MapIndex(catalog.SupportedInstanceIndex, packageMap)
-        };
-
-        lock (_sync)
-        {
-            _states[BuildCacheKey(normalizedRoot, request.InventoryVersion)] = new CacheState(snapshot);
-        }
-
-        PersistState(snapshot);
-        _logger.LogInformation(
-            "Tray package index cache build completed modsPath={ModsPath} inventoryVersion={InventoryVersion} packages={PackageCount} elapsedMs={ElapsedMs}",
-            normalizedRoot,
-            request.InventoryVersion,
-            packages.Length,
-            timing.ElapsedMilliseconds);
-        return snapshot;
-    }
-
-    private static IndexedPackageFile MapPackage(DbpfPackageIndex package)
-    {
-        var entries = new PackageIndexEntry[package.Entries.Length];
-        for (var i = 0; i < package.Entries.Length; i++)
-        {
-            entries[i] = MapEntry(package.Entries[i]);
-        }
-
-        var typeIndexes = new Dictionary<uint, PackageTypeIndex>(package.TypeBuckets.Count);
-        foreach (var pair in package.TypeBuckets)
-        {
-            typeIndexes[pair.Key] = new PackageTypeIndex
-            {
-                InstanceToEntryIndexes = pair.Value.InstanceToEntryIndexes
-            };
-        }
-
-        return new IndexedPackageFile
-        {
-            FilePath = package.FilePath,
-            Length = package.Fingerprint.Length,
-            LastWriteTimeUtc = new DateTime(package.Fingerprint.LastWriteUtcTicks, DateTimeKind.Utc),
-            Entries = entries,
-            TypeIndexes = typeIndexes
-        };
-    }
-
-    private static PackageIndexEntry MapEntry(DbpfIndexEntry entry)
-    {
-        return new PackageIndexEntry
-        {
-            Type = entry.Type,
-            Group = entry.Group,
-            Instance = entry.Instance,
-            IsDeleted = entry.IsDeleted,
-            DataOffset = entry.DataOffset,
-            CompressedSize = entry.CompressedSize,
-            UncompressedSize = entry.UncompressedSize,
-            CompressionType = entry.CompressionType
-        };
-    }
-
-    private static Dictionary<TrayResourceKey, ResolvedResourceRef[]> MapIndex(
-        IReadOnlyDictionary<DbpfResourceKey, ResourceLocation[]> source,
-        IReadOnlyDictionary<string, IndexedPackageFile> packageMap)
-    {
-        var result = new Dictionary<TrayResourceKey, ResolvedResourceRef[]>(source.Count);
-        foreach (var pair in source)
-        {
-            result[new TrayResourceKey(pair.Key.Type, pair.Key.Group, pair.Key.Instance)] =
-                pair.Value.Select(location => MapLocation(location, packageMap)).ToArray();
-        }
-
-        return result;
-    }
-
-    private static Dictionary<TypeInstanceKey, ResolvedResourceRef[]> MapIndex(
-        IReadOnlyDictionary<TypeInstanceKey, ResourceLocation[]> source,
-        IReadOnlyDictionary<string, IndexedPackageFile> packageMap)
-    {
-        var result = new Dictionary<TypeInstanceKey, ResolvedResourceRef[]>(source.Count);
-        foreach (var pair in source)
-        {
-            result[pair.Key] = pair.Value.Select(location => MapLocation(location, packageMap)).ToArray();
-        }
-
-        return result;
-    }
-
-    private static Dictionary<ulong, ResolvedResourceRef[]> MapIndex(
-        IReadOnlyDictionary<ulong, ResourceLocation[]> source,
-        IReadOnlyDictionary<string, IndexedPackageFile> packageMap)
-    {
-        var result = new Dictionary<ulong, ResolvedResourceRef[]>(source.Count);
-        foreach (var pair in source)
-        {
-            result[pair.Key] = pair.Value.Select(location => MapLocation(location, packageMap)).ToArray();
-        }
-
-        return result;
-    }
-
-    private static ResolvedResourceRef MapLocation(
-        ResourceLocation location,
-        IReadOnlyDictionary<string, IndexedPackageFile> packageMap)
-    {
-        var package = packageMap[location.FilePath];
-        return new ResolvedResourceRef
-        {
-            Key = new TrayResourceKey(location.Entry.Type, location.Entry.Group, location.Entry.Instance),
-            FilePath = location.FilePath,
-            Entry = package.Entries[location.EntryIndex]
-        };
-    }
-
-    private void PersistState(PackageIndexSnapshot snapshot)
-    {
-        try
-        {
-            using var connection = OpenConnection();
-            connection.Execute(
-                """
-                INSERT INTO PackageIndexSnapshots (
-                    ModsRootPath,
-                    InventoryVersion,
-                    SnapshotJson,
-                    UpdatedUtcTicks
-                )
-                VALUES (
-                    @ModsRootPath,
-                    @InventoryVersion,
-                    @SnapshotJson,
-                    @UpdatedUtcTicks
-                )
-                ON CONFLICT(ModsRootPath, InventoryVersion) DO UPDATE SET
-                    SnapshotJson = excluded.SnapshotJson,
-                    UpdatedUtcTicks = excluded.UpdatedUtcTicks;
-                """,
-                new PersistedCacheRow
-                {
-                    ModsRootPath = snapshot.ModsRootPath,
-                    InventoryVersion = snapshot.InventoryVersion,
-                    SnapshotJson = JsonSerializer.Serialize(ToPersistedSnapshot(snapshot), JsonOptions),
-                    UpdatedUtcTicks = DateTime.UtcNow.Ticks
-                });
-        }
-        catch
-        {
-        }
-    }
-
-    private System.Data.IDbConnection OpenConnection()
-    {
-        var connection = _database.OpenConnection();
-        connection.Execute(
-            """
-            CREATE TABLE IF NOT EXISTS PackageIndexSnapshots (
-                ModsRootPath TEXT NOT NULL,
-                InventoryVersion INTEGER NOT NULL,
-                SnapshotJson TEXT NOT NULL,
-                UpdatedUtcTicks INTEGER NOT NULL,
-                PRIMARY KEY (ModsRootPath, InventoryVersion)
-            );
-            """);
-        return connection;
-    }
-
-    private static string BuildCacheKey(string normalizedRoot, long inventoryVersion)
-    {
-        return normalizedRoot + "|" + inventoryVersion.ToString(System.Globalization.CultureInfo.InvariantCulture);
-    }
-
-    private static PersistedSnapshot ToPersistedSnapshot(PackageIndexSnapshot snapshot)
-    {
-        return new PersistedSnapshot
-        {
-            ModsRootPath = snapshot.ModsRootPath,
-            InventoryVersion = snapshot.InventoryVersion,
-            Packages = snapshot.Packages.Select(package => new PersistedPackage
-            {
-                FilePath = package.FilePath,
-                Length = package.Length,
-                LastWriteUtcTicks = package.LastWriteTimeUtc.ToUniversalTime().Ticks,
-                Entries = package.Entries.Select(entry => new PersistedPackageEntry
-                {
-                    Type = entry.Type,
-                    Group = entry.Group,
-                    Instance = entry.Instance,
-                    IsDeleted = entry.IsDeleted,
-                    DataOffset = entry.DataOffset,
-                    CompressedSize = entry.CompressedSize,
-                    UncompressedSize = entry.UncompressedSize,
-                    CompressionType = entry.CompressionType
-                }).ToList(),
-                TypeIndexes = package.TypeIndexes.Select(pair => new PersistedPackageTypeIndex
-                {
-                    Type = pair.Key,
-                    InstanceToEntryIndexes = pair.Value.InstanceToEntryIndexes
-                        .Select(indexPair => new PersistedInstanceEntryIndexes
-                        {
-                            Instance = indexPair.Key,
-                            EntryIndexes = indexPair.Value
-                        })
-                        .ToList()
-                }).ToList()
-            }).ToList(),
-            ExactIndex = snapshot.ExactIndex.Select(pair => new PersistedExactIndex
-            {
-                Type = pair.Key.Type,
-                Group = pair.Key.Group,
-                Instance = pair.Key.Instance,
-                Refs = pair.Value.Select(ToPersistedResolvedRef).ToList()
-            }).ToList(),
-            TypeInstanceIndex = snapshot.TypeInstanceIndex.Select(pair => new PersistedTypeInstanceIndex
-            {
-                Type = pair.Key.Type,
-                Instance = pair.Key.Instance,
-                Refs = pair.Value.Select(ToPersistedResolvedRef).ToList()
-            }).ToList(),
-            SupportedInstanceIndex = snapshot.SupportedInstanceIndex.Select(pair => new PersistedSupportedInstanceIndex
-            {
-                Instance = pair.Key,
-                Refs = pair.Value.Select(ToPersistedResolvedRef).ToList()
-            }).ToList()
-        };
-    }
-
-    private static PackageIndexSnapshot FromPersistedSnapshot(PersistedSnapshot persisted)
-    {
-        var packages = persisted.Packages.Select(package => new IndexedPackageFile
-        {
-            FilePath = package.FilePath,
-            Length = package.Length,
-            LastWriteTimeUtc = new DateTime(package.LastWriteUtcTicks, DateTimeKind.Utc),
-            Entries = package.Entries.Select(entry => new PackageIndexEntry
-            {
-                Type = entry.Type,
-                Group = entry.Group,
-                Instance = entry.Instance,
-                IsDeleted = entry.IsDeleted,
-                DataOffset = entry.DataOffset,
-                CompressedSize = entry.CompressedSize,
-                UncompressedSize = entry.UncompressedSize,
-                CompressionType = entry.CompressionType
-            }).ToArray(),
-            TypeIndexes = package.TypeIndexes.ToDictionary(
-                pair => pair.Type,
-                pair => new PackageTypeIndex
-                {
-                    InstanceToEntryIndexes = pair.InstanceToEntryIndexes.ToDictionary(
-                        indexPair => indexPair.Instance,
-                        indexPair => indexPair.EntryIndexes)
-                })
-        }).ToArray();
-
-        return new PackageIndexSnapshot
-        {
-            ModsRootPath = persisted.ModsRootPath,
-            InventoryVersion = persisted.InventoryVersion,
-            Packages = packages,
-            ExactIndex = persisted.ExactIndex.ToDictionary(
-                row => new TrayResourceKey(row.Type, row.Group, row.Instance),
-                row => row.Refs.Select(FromPersistedResolvedRef).ToArray()),
-            TypeInstanceIndex = persisted.TypeInstanceIndex.ToDictionary(
-                row => new TypeInstanceKey(row.Type, row.Instance),
-                row => row.Refs.Select(FromPersistedResolvedRef).ToArray()),
-            SupportedInstanceIndex = persisted.SupportedInstanceIndex.ToDictionary(
-                row => row.Instance,
-                row => row.Refs.Select(FromPersistedResolvedRef).ToArray())
-        };
-    }
-
-    private static PersistedResolvedRef ToPersistedResolvedRef(ResolvedResourceRef item)
-    {
-        return new PersistedResolvedRef
-        {
-            KeyType = item.Key.Type,
-            KeyGroup = item.Key.Group,
-            KeyInstance = item.Key.Instance,
-            FilePath = item.FilePath,
-            Entry = item.Entry is null
-                ? null
-                : new PersistedPackageEntry
-                {
-                    Type = item.Entry.Type,
-                    Group = item.Entry.Group,
-                    Instance = item.Entry.Instance,
-                    IsDeleted = item.Entry.IsDeleted,
-                    DataOffset = item.Entry.DataOffset,
-                    CompressedSize = item.Entry.CompressedSize,
-                    UncompressedSize = item.Entry.UncompressedSize,
-                    CompressionType = item.Entry.CompressionType
-                }
-        };
-    }
-
-    private static ResolvedResourceRef FromPersistedResolvedRef(PersistedResolvedRef item)
-    {
-        return new ResolvedResourceRef
-        {
-            Key = new TrayResourceKey(item.KeyType, item.KeyGroup, item.KeyInstance),
-            FilePath = item.FilePath,
-            Entry = item.Entry is null
-                ? null
-                : new PackageIndexEntry
-                {
-                    Type = item.Entry.Type,
-                    Group = item.Entry.Group,
-                    Instance = item.Entry.Instance,
-                    IsDeleted = item.Entry.IsDeleted,
-                    DataOffset = item.Entry.DataOffset,
-                    CompressedSize = item.Entry.CompressedSize,
-                    UncompressedSize = item.Entry.UncompressedSize,
-                    CompressionType = item.Entry.CompressionType
-                }
-        };
-    }
-
-    private sealed record CacheState(PackageIndexSnapshot Snapshot);
-
-    private sealed class PersistedCacheRow
-    {
-        public string ModsRootPath { get; set; } = string.Empty;
-        public long InventoryVersion { get; set; }
-        public string SnapshotJson { get; set; } = "{}";
-        public long UpdatedUtcTicks { get; set; }
-    }
-
-    private sealed class PersistedSnapshot
-    {
-        public string ModsRootPath { get; set; } = string.Empty;
-        public long InventoryVersion { get; set; }
-        public List<PersistedPackage> Packages { get; set; } = [];
-        public List<PersistedExactIndex> ExactIndex { get; set; } = [];
-        public List<PersistedTypeInstanceIndex> TypeInstanceIndex { get; set; } = [];
-        public List<PersistedSupportedInstanceIndex> SupportedInstanceIndex { get; set; } = [];
-    }
-
-    private sealed class PersistedPackage
-    {
-        public string FilePath { get; set; } = string.Empty;
-        public long Length { get; set; }
-        public long LastWriteUtcTicks { get; set; }
-        public List<PersistedPackageEntry> Entries { get; set; } = [];
-        public List<PersistedPackageTypeIndex> TypeIndexes { get; set; } = [];
-    }
-
-    private sealed class PersistedPackageEntry
-    {
-        public uint Type { get; set; }
-        public uint Group { get; set; }
-        public ulong Instance { get; set; }
-        public bool IsDeleted { get; set; }
-        public long DataOffset { get; set; }
-        public int CompressedSize { get; set; }
-        public int UncompressedSize { get; set; }
-        public ushort CompressionType { get; set; }
-    }
-
-    private sealed class PersistedPackageTypeIndex
-    {
-        public uint Type { get; set; }
-        public List<PersistedInstanceEntryIndexes> InstanceToEntryIndexes { get; set; } = [];
-    }
-
-    private sealed class PersistedInstanceEntryIndexes
-    {
-        public ulong Instance { get; set; }
-        public int[] EntryIndexes { get; set; } = Array.Empty<int>();
-    }
-
-    private sealed class PersistedExactIndex
-    {
-        public uint Type { get; set; }
-        public uint Group { get; set; }
-        public ulong Instance { get; set; }
-        public List<PersistedResolvedRef> Refs { get; set; } = [];
-    }
-
-    private sealed class PersistedTypeInstanceIndex
-    {
-        public uint Type { get; set; }
-        public ulong Instance { get; set; }
-        public List<PersistedResolvedRef> Refs { get; set; } = [];
-    }
-
-    private sealed class PersistedSupportedInstanceIndex
-    {
-        public ulong Instance { get; set; }
-        public List<PersistedResolvedRef> Refs { get; set; } = [];
-    }
-
-    private sealed class PersistedResolvedRef
-    {
-        public uint KeyType { get; set; }
-        public uint KeyGroup { get; set; }
-        public ulong KeyInstance { get; set; }
-        public string FilePath { get; set; } = string.Empty;
-        public PersistedPackageEntry? Entry { get; set; }
-    }
-}
 
 internal static class ProgressScale
 {
@@ -948,15 +394,28 @@ internal static class ProgressScale
 
 internal sealed class TrayBundleLoader
 {
+    private static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".trayitem",
+        ".hhi",
+        ".sgi",
+        ".householdbinary",
+        ".blueprint",
+        ".bpi",
+        ".room",
+        ".rmi"
+    };
+
+    private static readonly System.Text.RegularExpressions.Regex TrayIdentityRegex = new(
+        "^0x([0-9a-fA-F]{1,8})!0x([0-9a-fA-F]{1,16})$",
+        System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
     public bool TryLoad(
         IReadOnlyList<string> sourceFilePaths,
         List<TrayDependencyIssue> issues,
         out TrayFileBundle bundle)
     {
-        var normalizedSourcePaths = sourceFilePaths
-            .Where(path => !string.IsNullOrWhiteSpace(path))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        var normalizedSourcePaths = ExpandCompanionPaths(sourceFilePaths);
         if (normalizedSourcePaths.Length == 0)
         {
             issues.Add(new TrayDependencyIssue
@@ -998,6 +457,55 @@ internal sealed class TrayBundleLoader
         return true;
     }
 
+    private static string[] ExpandCompanionPaths(IReadOnlyList<string> sourceFilePaths)
+    {
+        var normalizedPaths = sourceFilePaths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(path => Path.GetFullPath(path.Trim()))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (normalizedPaths.Length == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        var result = new HashSet<string>(normalizedPaths, StringComparer.OrdinalIgnoreCase);
+        var trayKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var directories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        for (var i = 0; i < normalizedPaths.Length; i++)
+        {
+            var path = normalizedPaths[i];
+            trayKeys.Add(NormalizeTrayStem(Path.GetFileNameWithoutExtension(path)));
+            var directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory))
+            {
+                directories.Add(directory);
+            }
+        }
+
+        foreach (var directory in directories)
+        {
+            foreach (var candidate in Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly))
+            {
+                if (!IsSupportedTraySource(candidate))
+                {
+                    continue;
+                }
+
+                var stem = NormalizeTrayStem(Path.GetFileNameWithoutExtension(candidate));
+                if (!trayKeys.Contains(stem))
+                {
+                    continue;
+                }
+
+                result.Add(candidate);
+            }
+        }
+
+        return result.OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
     private static string[] FilterByExtension(
         IReadOnlyList<string> sourceFilePaths,
         params string[] extensions)
@@ -1018,6 +526,34 @@ internal sealed class TrayBundleLoader
             })
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    private static bool IsSupportedTraySource(string path)
+    {
+        var extension = Path.GetExtension(path);
+        return SupportedExtensions.Contains(extension);
+    }
+
+    private static string NormalizeTrayStem(string? rawValue)
+    {
+        var value = (rawValue ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var match = TrayIdentityRegex.Match(value);
+        if (match.Success)
+        {
+            return "0x" + match.Groups[2].Value.ToLowerInvariant();
+        }
+
+        if (value.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+        {
+            return "0x" + value[2..].ToLowerInvariant();
+        }
+
+        return "0x" + value.ToLowerInvariant();
     }
 }
 
@@ -1488,7 +1024,7 @@ internal static class StructuredDependencyReaderUtilities
 
 internal sealed class DirectMatchEngine
 {
-    public DirectMatchResult Match(TraySearchKeys keys, PackageIndexSnapshot snapshot)
+    public DirectMatchResult Match(TraySearchKeys keys, ITrayDependencyLookupSession lookup)
     {
         var issues = new List<TrayDependencyIssue>();
         var results = new Dictionary<TrayResourceKey, ResolvedResourceRef>();
@@ -1498,7 +1034,7 @@ internal sealed class DirectMatchEngine
 
         foreach (var resourceKey in keys.ResourceKeys)
         {
-            if (!snapshot.ExactIndex.TryGetValue(resourceKey, out var matches) || matches.Length == 0)
+            if (!lookup.TryGetExact(resourceKey, out var matches) || matches.Length == 0)
             {
                 continue;
             }
@@ -1512,7 +1048,7 @@ internal sealed class DirectMatchEngine
         {
             foreach (var supportedType in KnownResourceTypes.Supported)
             {
-                if (!snapshot.TypeInstanceIndex.TryGetValue(new TypeInstanceKey(supportedType, instance), out var candidates))
+                if (!lookup.TryGetTypeInstance(new TypeInstanceKey(supportedType, instance), out var candidates))
                 {
                     continue;
                 }
@@ -1643,12 +1179,14 @@ internal sealed class DependencyExpandEngine
 
     public DependencyExpandResult Expand(
         DirectMatchResult directMatch,
-        PackageIndexSnapshot snapshot,
+        ITrayDependencyLookupSession lookup,
         CancellationToken cancellationToken)
     {
         var issues = new List<TrayDependencyIssue>();
         var results = new Dictionary<TrayResourceKey, ResolvedResourceRef>();
         var sessions = new Dictionary<string, DbpfPackageReadSession>(StringComparer.OrdinalIgnoreCase);
+        var payload = new ArrayBufferWriter<byte>();
+        var siblingPayload = new ArrayBufferWriter<byte>();
 
         try
         {
@@ -1661,7 +1199,7 @@ internal sealed class DependencyExpandEngine
                     continue;
                 }
 
-                if (!TryReadBytes(match, sessions, out var bytes, out var readError))
+                if (!TryReadPayload(match, sessions, payload, out var readError))
                 {
                     if (!string.IsNullOrWhiteSpace(readError))
                     {
@@ -1678,30 +1216,30 @@ internal sealed class DependencyExpandEngine
                     continue;
                 }
 
-                var extraction = StructuredDependencyReaders.Read(match.Key, bytes);
+                var extraction = StructuredDependencyReaders.Read(match.Key, payload.WrittenSpan);
 
                 if (match.Key.Type == KnownResourceTypes.ObjectCatalog &&
                     TryResolveExact(
-                        snapshot,
+                        lookup,
                         new TrayResourceKey(KnownResourceTypes.ObjectDefinition, match.Key.Group, match.Key.Instance),
                         out var siblingObjectDefinition))
                 {
                     Register(results, siblingObjectDefinition with { Parent = match });
 
-                    if (TryReadBytes(siblingObjectDefinition, sessions, out var objectDefinitionBytes, out _))
+                    if (TryReadPayload(siblingObjectDefinition, sessions, siblingPayload, out _))
                     {
-                        ObjectDefinitionDependencyReader.Read(objectDefinitionBytes, extraction);
+                        ObjectDefinitionDependencyReader.Read(siblingPayload.WrittenSpan, extraction);
                     }
                 }
 
                 if (!extraction.HasAny)
                 {
-                    BinaryReferenceScanner.Scan(bytes, extraction.FallbackIds, extraction.ExactKeys);
+                    BinaryReferenceScanner.Scan(payload.WrittenSpan, extraction.FallbackIds, extraction.ExactKeys);
                 }
 
                 foreach (var exactKey in extraction.ExactKeys)
                 {
-                    if (TryResolveExact(snapshot, exactKey, out var resolved))
+                    if (TryResolveExact(lookup, exactKey, out var resolved))
                     {
                         Register(results, resolved with { Parent = match });
                     }
@@ -1709,7 +1247,7 @@ internal sealed class DependencyExpandEngine
 
                 foreach (var typedInstance in extraction.TypedInstances)
                 {
-                    if (TryResolveByTypes(snapshot, typedInstance.Instance, typedInstance.AllowedTypes, out var resolved))
+                    if (TryResolveByTypes(lookup, typedInstance.Instance, typedInstance.AllowedTypes, out var resolved))
                     {
                         Register(results, resolved with { Parent = match });
                     }
@@ -1717,7 +1255,7 @@ internal sealed class DependencyExpandEngine
 
                 foreach (var id in extraction.FallbackIds)
                 {
-                    if (!TryResolveAny(snapshot, id, out var resolved))
+                    if (!TryResolveAny(lookup, id, out var resolved))
                     {
                         continue;
                     }
@@ -1737,9 +1275,9 @@ internal sealed class DependencyExpandEngine
         return new DependencyExpandResult(results.Values.OrderBy(item => item.FilePath, StringComparer.OrdinalIgnoreCase).ToArray(), issues.ToArray());
     }
 
-    private static bool TryResolveExact(PackageIndexSnapshot snapshot, TrayResourceKey key, out ResolvedResourceRef resolved)
+    private static bool TryResolveExact(ITrayDependencyLookupSession lookup, TrayResourceKey key, out ResolvedResourceRef resolved)
     {
-        if (snapshot.ExactIndex.TryGetValue(key, out var matches) && matches.Length > 0)
+        if (lookup.TryGetExact(key, out var matches) && matches.Length > 0)
         {
             resolved = matches[0];
             return true;
@@ -1750,14 +1288,14 @@ internal sealed class DependencyExpandEngine
     }
 
     private static bool TryResolveByTypes(
-        PackageIndexSnapshot snapshot,
+        ITrayDependencyLookupSession lookup,
         ulong instance,
         IReadOnlyList<uint> allowedTypes,
         out ResolvedResourceRef resolved)
     {
         for (var typeIndex = 0; typeIndex < allowedTypes.Count; typeIndex++)
         {
-            if (!snapshot.TypeInstanceIndex.TryGetValue(new TypeInstanceKey(allowedTypes[typeIndex], instance), out var matches))
+            if (!lookup.TryGetTypeInstance(new TypeInstanceKey(allowedTypes[typeIndex], instance), out var matches))
             {
                 continue;
             }
@@ -1772,9 +1310,9 @@ internal sealed class DependencyExpandEngine
         return false;
     }
 
-    private static bool TryResolveAny(PackageIndexSnapshot snapshot, ulong instance, out ResolvedResourceRef resolved)
+    private static bool TryResolveAny(ITrayDependencyLookupSession lookup, ulong instance, out ResolvedResourceRef resolved)
     {
-        if (!snapshot.SupportedInstanceIndex.ContainsKey(instance))
+        if (!lookup.HasSupportedInstance(instance))
         {
             resolved = null!;
             return false;
@@ -1782,7 +1320,7 @@ internal sealed class DependencyExpandEngine
 
         foreach (var supportedType in KnownResourceTypes.Supported)
         {
-            if (!snapshot.TypeInstanceIndex.TryGetValue(new TypeInstanceKey(supportedType, instance), out var matches))
+            if (!lookup.TryGetTypeInstance(new TypeInstanceKey(supportedType, instance), out var matches))
             {
                 continue;
             }
@@ -1797,13 +1335,13 @@ internal sealed class DependencyExpandEngine
         return false;
     }
 
-    private bool TryReadBytes(
+    private bool TryReadPayload(
         ResolvedResourceRef resource,
         IDictionary<string, DbpfPackageReadSession> sessions,
-        out byte[] bytes,
+        ArrayBufferWriter<byte> payload,
         out string? error)
     {
-        bytes = Array.Empty<byte>();
+        payload.Clear();
         error = null;
 
         if (resource.Entry is null)
@@ -1818,7 +1356,7 @@ internal sealed class DependencyExpandEngine
             sessions[resource.FilePath] = session;
         }
 
-        return session.TryReadBytes(
+        if (!session.TryReadInto(
             new DbpfIndexEntry(
                 resource.Entry.Type,
                 resource.Entry.Group,
@@ -1828,8 +1366,13 @@ internal sealed class DependencyExpandEngine
                 resource.Entry.UncompressedSize,
                 resource.Entry.CompressionType,
                 resource.Entry.IsDeleted),
-            out bytes,
-            out error);
+            payload,
+            out error))
+        {
+            return false;
+        }
+
+        return true;
     }
 
     private static bool TryChooseFirst(ResolvedResourceRef[] matches, out ResolvedResourceRef resolved)

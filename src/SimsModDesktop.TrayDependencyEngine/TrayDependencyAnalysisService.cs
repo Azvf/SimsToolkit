@@ -69,13 +69,14 @@ public sealed class TrayDependencyAnalysisService : ITrayDependencyAnalysisServi
             cancellationToken.ThrowIfCancellationRequested();
             Report(progress, TrayDependencyAnalysisStage.MatchingDirectReferences, 55, "Matching direct references...");
 
-            var directMatch = _directMatchEngine.Match(searchKeys, snapshot);
+            using var lookupSession = snapshot.Lookup.OpenSession();
+            var directMatch = _directMatchEngine.Match(searchKeys, lookupSession);
             issues.AddRange(directMatch.Issues);
 
             cancellationToken.ThrowIfCancellationRequested();
             Report(progress, TrayDependencyAnalysisStage.ExpandingDependencies, 75, "Expanding second-level references...");
 
-            var expansion = _dependencyExpandEngine.Expand(directMatch, snapshot, cancellationToken);
+            var expansion = _dependencyExpandEngine.Expand(directMatch, lookupSession, cancellationToken);
             issues.AddRange(expansion.Issues);
 
             var matchedRows = BuildMatchedRows(searchKeys, directMatch, expansion, snapshot);
