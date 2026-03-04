@@ -35,15 +35,15 @@ public sealed class IniDebugConfigStoreTests
             var store = new IniDebugConfigStore(iniPath);
             var expected = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                ["startup.tray_cache_warmup.enabled"] = "false",
-                ["startup.tray_cache_warmup.verbose_log"] = "true"
+                ["mods.catalog.fast_mode"] = "false",
+                ["tray.preview.trace_progress"] = "true"
             };
 
             await store.SaveAsync(expected);
             var loaded = await store.LoadAsync();
 
-            Assert.Equal("false", loaded["startup.tray_cache_warmup.enabled"]);
-            Assert.Equal("true", loaded["startup.tray_cache_warmup.verbose_log"]);
+            Assert.Equal("false", loaded["mods.catalog.fast_mode"]);
+            Assert.Equal("true", loaded["tray.preview.trace_progress"]);
         }
         finally
         {
@@ -63,13 +63,13 @@ public sealed class IniDebugConfigStoreTests
             var template = new[]
             {
                 new DebugConfigTemplateEntry(
-                    "startup.tray_cache_warmup.enabled",
+                    "mods.catalog.fast_mode",
                     "true",
-                    "Build tray dependency package index on startup when no local cache exists."),
+                    "Use the fast Mod catalog path for local experiments."),
                 new DebugConfigTemplateEntry(
-                    "startup.tray_cache_warmup.verbose_log",
+                    "tray.preview.trace_progress",
                     "true",
-                    "Write warmup progress checkpoints into the toolkit log.")
+                    "Write extra progress checkpoints while loading tray previews.")
             };
 
             await store.EnsureTemplateAsync(template);
@@ -77,12 +77,12 @@ public sealed class IniDebugConfigStoreTests
             Assert.True(File.Exists(iniPath));
             var text = await File.ReadAllTextAsync(iniPath);
             Assert.Contains("[debug]", text, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("startup.tray_cache_warmup.enabled", text, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("Build tray dependency package index on startup when no local cache exists.", text, StringComparison.Ordinal);
+            Assert.Contains("mods.catalog.fast_mode", text, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Use the fast Mod catalog path for local experiments.", text, StringComparison.Ordinal);
 
             var loaded = await store.LoadAsync();
-            Assert.Equal("true", loaded["startup.tray_cache_warmup.enabled"]);
-            Assert.Equal("true", loaded["startup.tray_cache_warmup.verbose_log"]);
+            Assert.Equal("true", loaded["mods.catalog.fast_mode"]);
+            Assert.Equal("true", loaded["tray.preview.trace_progress"]);
         }
         finally
         {
@@ -101,24 +101,24 @@ public sealed class IniDebugConfigStoreTests
             var store = new IniDebugConfigStore(iniPath);
             await store.SaveAsync(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                ["startup.tray_cache_warmup.enabled"] = "false"
+                ["mods.catalog.fast_mode"] = "false"
             });
 
             await store.EnsureTemplateAsync(
             [
                 new DebugConfigTemplateEntry(
-                    "startup.tray_cache_warmup.enabled",
+                    "mods.catalog.fast_mode",
                     "true",
-                    "Build tray dependency package index on startup when no local cache exists."),
+                    "Use the fast Mod catalog path for local experiments."),
                 new DebugConfigTemplateEntry(
-                    "startup.tray_cache_warmup.show_banner",
+                    "tray.preview.show_trace",
                     "true",
-                    "Show startup warmup progress panel and status text in Shell.")
+                    "Show verbose tray preview trace output.")
             ]);
 
             var loaded = await store.LoadAsync();
-            Assert.Equal("false", loaded["startup.tray_cache_warmup.enabled"]);
-            Assert.Equal("true", loaded["startup.tray_cache_warmup.show_banner"]);
+            Assert.Equal("false", loaded["mods.catalog.fast_mode"]);
+            Assert.Equal("true", loaded["tray.preview.show_trace"]);
         }
         finally
         {

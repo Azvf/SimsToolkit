@@ -103,6 +103,7 @@ Dependency injection is layered through:
 * Multiple `NoOp*UseCase` registrations exist as migration seams for future use-case extraction
 * Engineering conventions for layer boundaries and placement rules: `src/SimsModDesktop/docs/EngineeringConventions.md`
 * Pull request review checklist for structural changes: `src/SimsModDesktop/docs/PullRequestChecklist.md`
+* Current page-level cache warmup sequence and timing diagrams: `src/SimsModDesktop/docs/CacheWarmupSequence.md`
 
 ---
 

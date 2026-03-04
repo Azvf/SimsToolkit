@@ -179,6 +179,17 @@ public sealed class EngineeringConventionsGuardTests
     }
 
     [Fact]
+    public void ApplicationCaching_Files_Use_DirectoryDerived_Namespace()
+    {
+        var repoRoot = FindRepoRoot();
+        AssertRecursiveNamespaceDeclarations(
+            repoRoot,
+            Path.Combine("src", "SimsModDesktop.Application", "Caching"),
+            "SimsModDesktop.Application.Caching",
+            "Every file in Application/Caching must use the namespace derived from its folder:");
+    }
+
+    [Fact]
     public void InfrastructureTray_Files_Use_DirectoryDerived_Namespace()
     {
         var repoRoot = FindRepoRoot();
@@ -209,6 +220,17 @@ public sealed class EngineeringConventionsGuardTests
             Path.Combine("src", "SimsModDesktop.Infrastructure", "Settings"),
             "SimsModDesktop.Infrastructure.Settings",
             "Every file in Infrastructure/Settings must use the namespace derived from its folder:");
+    }
+
+    [Fact]
+    public void InfrastructureMods_Files_Use_DirectoryDerived_Namespace()
+    {
+        var repoRoot = FindRepoRoot();
+        AssertRecursiveNamespaceDeclarations(
+            repoRoot,
+            Path.Combine("src", "SimsModDesktop.Infrastructure", "Mods"),
+            "SimsModDesktop.Infrastructure.Mods",
+            "Every file in Infrastructure/Mods must use the namespace derived from its folder:");
     }
 
     [Fact]
@@ -297,6 +319,18 @@ public sealed class EngineeringConventionsGuardTests
             "Desktop host diagnostics should not expose public types:" +
             Environment.NewLine +
             string.Join(Environment.NewLine, invalidTypes));
+    }
+
+    [Fact]
+    public void InfrastructureMods_Do_Not_Expose_Public_Inventory_Implementation()
+    {
+        var assembly = typeof(SimsModDesktop.Infrastructure.ServiceRegistration.InfrastructureServiceRegistration).Assembly;
+        var inventoryType = assembly.GetType("SimsModDesktop.Infrastructure.Mods.SqliteModPackageInventoryService");
+
+        Assert.NotNull(inventoryType);
+        Assert.False(
+            inventoryType!.IsPublic,
+            "SqliteModPackageInventoryService should remain internal and be consumed via IModPackageInventoryService.");
     }
 
     private static void AssertNamespaceDeclaration(
