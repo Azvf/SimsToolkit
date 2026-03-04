@@ -1,20 +1,30 @@
+using System.Collections.Concurrent;
+using System.Threading;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+
 namespace SimsModDesktop.Application.Mods;
 
 public sealed class ModItemIndexScheduler : IModItemIndexScheduler
 {
+    private const int FastBatchSize = 8;
+    private const int DeepBatchSize = 4;
     private readonly IModItemIndexStore _store;
     private readonly IFastModItemIndexService _fastIndexService;
     private readonly IDeepModItemEnrichmentService _deepEnrichmentService;
+    private readonly ILogger<ModItemIndexScheduler> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     public ModItemIndexScheduler(
         IModItemIndexStore store,
         IFastModItemIndexService fastIndexService,
-        IDeepModItemEnrichmentService deepEnrichmentService)
+        IDeepModItemEnrichmentService deepEnrichmentService,
+        ILogger<ModItemIndexScheduler>? logger = null)
     {
         _store = store;
         _fastIndexService = fastIndexService;
         _deepEnrichmentService = deepEnrichmentService;
+        _logger = logger ?? NullLogger<ModItemIndexScheduler>.Instance;
     }
 
     public event EventHandler<ModFastBatchAppliedEventArgs>? FastBatchApplied;
@@ -35,6 +45,7 @@ public sealed class ModItemIndexScheduler : IModItemIndexScheduler
 
         try
         {
+            var parseContextCache = new ConcurrentDictionary<string, Lazy<Task<ModPackageParseContext>>>(StringComparer.OrdinalIgnoreCase);
             var changedCandidates = NormalizePaths(request.ChangedPackages);
             var priorityCandidates = NormalizePaths(request.PriorityPackages);
             var removedCandidates = NormalizePaths(request.RemovedPackages);
@@ -104,29 +115,26 @@ public sealed class ModItemIndexScheduler : IModItemIndexScheduler
             if (fastPassPackages.Count > 0)
             {
                 IsFastPassRunning = true;
-                for (var index = 0; index < fastPassPackages.Count; index++)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var fullPath = fastPassPackages[index];
-                    var fast = await _fastIndexService.BuildFastPackageAsync(fullPath, cancellationToken).ConfigureAwait(false);
-                    await _store.ReplacePackageFastAsync(fast, cancellationToken).ConfigureAwait(false);
-                    progress?.Report(new ModIndexRefreshProgress
-                    {
-                        Stage = "fast",
-                        Percent = request.AllowDeepEnrichment
-                            ? ScaleProgress(10, 55, index + 1, fastPassPackages.Count)
-                            : ScaleProgress(10, 100, index + 1, fastPassPackages.Count),
-                        Current = index + 1,
-                        Total = fastPassPackages.Count,
-                        Detail = $"Fast indexing {index + 1}/{fastPassPackages.Count}"
-                    });
-                }
+                var fastWorkerCount = ResolveFastWorkerCount();
+                var fastStartedAt = DateTime.UtcNow;
+                var fastResults = await ParsePackagesAsync(
+                    fastPassPackages,
+                    fastWorkerCount,
+                    (packagePath, token) => BuildFastPackageAsync(packagePath, parseContextCache, token),
+                    cancellationToken).ConfigureAwait(false);
+                _logger.LogInformation(
+                    "modcache.fastindex.batch PackageCount={PackageCount} WorkerCount={WorkerCount} ElapsedMs={ElapsedMs}",
+                    fastResults.Count,
+                    fastWorkerCount,
+                    (DateTime.UtcNow - fastStartedAt).TotalMilliseconds);
+
+                await PersistFastBatchesAsync(
+                    fastResults,
+                    request.AllowDeepEnrichment,
+                    progress,
+                    cancellationToken).ConfigureAwait(false);
 
                 IsFastPassRunning = false;
-                FastBatchApplied?.Invoke(this, new ModFastBatchAppliedEventArgs
-                {
-                    PackagePaths = fastPassPackages.ToArray()
-                });
             }
 
             if (!request.AllowDeepEnrichment)
@@ -145,26 +153,23 @@ public sealed class ModItemIndexScheduler : IModItemIndexScheduler
             }
 
             IsDeepPassRunning = true;
-            for (var index = 0; index < deepPassPackages.Length; index++)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var fullPath = deepPassPackages[index];
-                var batch = await _deepEnrichmentService.EnrichPackageAsync(fullPath, cancellationToken).ConfigureAwait(false);
-                await _store.ApplyItemEnrichmentBatchAsync(batch, cancellationToken).ConfigureAwait(false);
-                EnrichmentApplied?.Invoke(this, new ModEnrichmentAppliedEventArgs
-                {
-                    PackagePaths = [fullPath],
-                    AffectedItemKeys = batch.AffectedItemKeys
-                });
-                progress?.Report(new ModIndexRefreshProgress
-                {
-                    Stage = "deep",
-                    Percent = ScaleProgress(55, 100, index + 1, deepPassPackages.Length),
-                    Current = index + 1,
-                    Total = deepPassPackages.Length,
-                    Detail = $"Deep enriching {index + 1}/{deepPassPackages.Length}"
-                });
-            }
+            var deepWorkerCount = ResolveDeepWorkerCount();
+            var deepStartedAt = DateTime.UtcNow;
+            var deepResults = await ParsePackagesAsync(
+                deepPassPackages,
+                deepWorkerCount,
+                (packagePath, token) => EnrichPackageAsync(packagePath, parseContextCache, token),
+                cancellationToken).ConfigureAwait(false);
+            _logger.LogInformation(
+                "modcache.deepindex.batch PackageCount={PackageCount} WorkerCount={WorkerCount} ElapsedMs={ElapsedMs}",
+                deepResults.Count,
+                deepWorkerCount,
+                (DateTime.UtcNow - deepStartedAt).TotalMilliseconds);
+
+            await PersistDeepBatchesAsync(
+                deepResults,
+                progress,
+                cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -199,4 +204,189 @@ public sealed class ModItemIndexScheduler : IModItemIndexScheduler
         var safeCurrent = Math.Clamp(current, 0, total);
         return start + (int)Math.Round((end - start) * (safeCurrent / (double)total), MidpointRounding.AwayFromZero);
     }
+
+    private async Task<ModItemFastIndexBuildResult> BuildFastPackageAsync(
+        string packagePath,
+        ConcurrentDictionary<string, Lazy<Task<ModPackageParseContext>>> parseContextCache,
+        CancellationToken cancellationToken)
+    {
+        if (_fastIndexService is IContextAwareFastModItemIndexService contextAwareFast)
+        {
+            var parseContext = await GetOrCreateParseContextAsync(packagePath, parseContextCache).ConfigureAwait(false);
+            return await contextAwareFast.BuildFastPackageAsync(parseContext, cancellationToken).ConfigureAwait(false);
+        }
+
+        return await _fastIndexService.BuildFastPackageAsync(packagePath, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<ModItemEnrichmentBatch> EnrichPackageAsync(
+        string packagePath,
+        ConcurrentDictionary<string, Lazy<Task<ModPackageParseContext>>> parseContextCache,
+        CancellationToken cancellationToken)
+    {
+        if (_deepEnrichmentService is IContextAwareDeepModItemEnrichmentService contextAwareDeep)
+        {
+            var parseContext = await GetOrCreateParseContextAsync(packagePath, parseContextCache).ConfigureAwait(false);
+            return await contextAwareDeep.EnrichPackageAsync(parseContext, cancellationToken).ConfigureAwait(false);
+        }
+
+        return await _deepEnrichmentService.EnrichPackageAsync(packagePath, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task PersistFastBatchesAsync(
+        IReadOnlyList<ModItemFastIndexBuildResult> fastResults,
+        bool allowDeepEnrichment,
+        IProgress<ModIndexRefreshProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        var processed = 0;
+        foreach (var batch in Chunk(fastResults, FastBatchSize))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var startedAt = DateTime.UtcNow;
+            await _store.ReplacePackagesFastAsync(batch, cancellationToken).ConfigureAwait(false);
+            processed += batch.Count;
+            _logger.LogInformation(
+                "modcache.storewriter.batch Stage={Stage} BatchSize={BatchSize} Current={Current} Total={Total} ElapsedMs={ElapsedMs}",
+                "fast",
+                batch.Count,
+                processed,
+                fastResults.Count,
+                (DateTime.UtcNow - startedAt).TotalMilliseconds);
+            FastBatchApplied?.Invoke(this, new ModFastBatchAppliedEventArgs
+            {
+                PackagePaths = batch.Select(item => item.PackageState.PackagePath).ToArray()
+            });
+            progress?.Report(new ModIndexRefreshProgress
+            {
+                Stage = "fast",
+                Percent = allowDeepEnrichment
+                    ? ScaleProgress(10, 55, processed, fastResults.Count)
+                    : ScaleProgress(10, 100, processed, fastResults.Count),
+                Current = processed,
+                Total = fastResults.Count,
+                Detail = $"Fast indexing {processed}/{fastResults.Count}"
+            });
+        }
+    }
+
+    private async Task PersistDeepBatchesAsync(
+        IReadOnlyList<ModItemEnrichmentBatch> deepResults,
+        IProgress<ModIndexRefreshProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        var processed = 0;
+        foreach (var batch in Chunk(deepResults, DeepBatchSize))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var startedAt = DateTime.UtcNow;
+            await _store.ApplyItemEnrichmentBatchesAsync(batch, cancellationToken).ConfigureAwait(false);
+            processed += batch.Count;
+            _logger.LogInformation(
+                "modcache.storewriter.batch Stage={Stage} BatchSize={BatchSize} Current={Current} Total={Total} ElapsedMs={ElapsedMs}",
+                "deep",
+                batch.Count,
+                processed,
+                deepResults.Count,
+                (DateTime.UtcNow - startedAt).TotalMilliseconds);
+            EnrichmentApplied?.Invoke(this, new ModEnrichmentAppliedEventArgs
+            {
+                PackagePaths = batch.Select(item => item.PackageState.PackagePath).ToArray(),
+                AffectedItemKeys = batch.SelectMany(item => item.AffectedItemKeys).ToArray()
+            });
+            progress?.Report(new ModIndexRefreshProgress
+            {
+                Stage = "deep",
+                Percent = ScaleProgress(55, 100, processed, deepResults.Count),
+                Current = processed,
+                Total = deepResults.Count,
+                Detail = $"Deep enriching {processed}/{deepResults.Count}"
+            });
+        }
+    }
+
+    private static async Task<IReadOnlyList<T>> ParsePackagesAsync<T>(
+        IReadOnlyList<string> packagePaths,
+        int workerCount,
+        Func<string, CancellationToken, Task<T>> factory,
+        CancellationToken cancellationToken)
+    {
+        if (packagePaths.Count == 0)
+        {
+            return Array.Empty<T>();
+        }
+
+        var indexedPackages = packagePaths
+            .Select((path, index) => new IndexedPackagePath(index, path))
+            .ToArray();
+        var results = new ConcurrentBag<IndexedPackageResult<T>>();
+
+        await Parallel.ForEachAsync(
+            indexedPackages,
+            new ParallelOptions
+            {
+                MaxDegreeOfParallelism = workerCount,
+                CancellationToken = cancellationToken
+            },
+            async (indexedPackage, token) =>
+            {
+                var result = await factory(indexedPackage.PackagePath, token).ConfigureAwait(false);
+                results.Add(new IndexedPackageResult<T>(indexedPackage.Index, result));
+            }).ConfigureAwait(false);
+
+        return results
+            .OrderBy(item => item.Index)
+            .Select(item => item.Result)
+            .ToArray();
+    }
+
+    private static Task<ModPackageParseContext> GetOrCreateParseContextAsync(
+        string packagePath,
+        ConcurrentDictionary<string, Lazy<Task<ModPackageParseContext>>> parseContextCache)
+    {
+        var lazy = parseContextCache.GetOrAdd(
+            Path.GetFullPath(packagePath),
+            normalizedPath => new Lazy<Task<ModPackageParseContext>>(
+                () => Task.Run(() => ModPackageParseContext.Create(normalizedPath)),
+                LazyThreadSafetyMode.ExecutionAndPublication));
+
+        return lazy.Value;
+    }
+
+    private static IReadOnlyList<IReadOnlyList<T>> Chunk<T>(IReadOnlyList<T> items, int batchSize)
+    {
+        if (items.Count == 0)
+        {
+            return Array.Empty<IReadOnlyList<T>>();
+        }
+
+        var chunks = new List<IReadOnlyList<T>>((items.Count + batchSize - 1) / batchSize);
+        for (var index = 0; index < items.Count; index += batchSize)
+        {
+            var count = Math.Min(batchSize, items.Count - index);
+            var chunk = new T[count];
+            for (var inner = 0; inner < count; inner++)
+            {
+                chunk[inner] = items[index + inner];
+            }
+
+            chunks.Add(chunk);
+        }
+
+        return chunks;
+    }
+
+    private static int ResolveFastWorkerCount()
+    {
+        return Math.Min(8, Math.Max(2, Environment.ProcessorCount / 2));
+    }
+
+    private static int ResolveDeepWorkerCount()
+    {
+        return Math.Min(4, Math.Max(2, Environment.ProcessorCount / 4));
+    }
+
+    private sealed record IndexedPackagePath(int Index, string PackagePath);
+
+    private sealed record IndexedPackageResult<T>(int Index, T Result);
 }

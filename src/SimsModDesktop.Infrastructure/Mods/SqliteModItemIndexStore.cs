@@ -34,26 +34,65 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
         return Task.FromResult(row is null ? null : ToPackageState(row));
     }
 
-    public Task ReplacePackageFastAsync(ModItemFastIndexBuildResult buildResult, CancellationToken cancellationToken = default)
-    {
-        return ReplacePackageCoreAsync(buildResult.PackageState, buildResult.Items, cancellationToken);
-    }
-
-    public Task ApplyItemEnrichmentBatchAsync(ModItemEnrichmentBatch batch, CancellationToken cancellationToken = default)
+    public Task ReplacePackagesFastAsync(IReadOnlyList<ModItemFastIndexBuildResult> buildResults, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (buildResults.Count == 0)
+        {
+            return Task.CompletedTask;
+        }
+
         using var connection = OpenConnection();
         using var transaction = connection.BeginTransaction();
 
-        UpsertPackageState(connection, transaction, batch.PackageState);
-        foreach (var item in batch.Items)
+        foreach (var buildResult in buildResults)
         {
-            UpsertItem(connection, transaction, item);
-            ReplaceTextures(connection, transaction, item);
+            DeletePackageRows(connection, transaction, buildResult.PackageState.PackagePath);
+            UpsertPackageState(connection, transaction, buildResult.PackageState);
+            foreach (var item in buildResult.Items)
+            {
+                InsertItem(connection, transaction, item);
+                ReplaceTextures(connection, transaction, item);
+            }
         }
 
         transaction.Commit();
         return Task.CompletedTask;
+    }
+
+    public Task ReplacePackageFastAsync(ModItemFastIndexBuildResult buildResult, CancellationToken cancellationToken = default)
+    {
+        return ReplacePackagesFastAsync([buildResult], cancellationToken);
+    }
+
+    public Task ApplyItemEnrichmentBatchesAsync(IReadOnlyList<ModItemEnrichmentBatch> batches, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (batches.Count == 0)
+        {
+            return Task.CompletedTask;
+        }
+
+        using var connection = OpenConnection();
+        using var transaction = connection.BeginTransaction();
+
+        foreach (var batch in batches)
+        {
+            UpsertPackageState(connection, transaction, batch.PackageState);
+            foreach (var item in batch.Items)
+            {
+                UpsertItem(connection, transaction, item);
+                ReplaceTextures(connection, transaction, item);
+            }
+        }
+
+        transaction.Commit();
+        return Task.CompletedTask;
+    }
+
+    public Task ApplyItemEnrichmentBatchAsync(ModItemEnrichmentBatch batch, CancellationToken cancellationToken = default)
+    {
+        return ApplyItemEnrichmentBatchesAsync([batch], cancellationToken);
     }
 
     public Task ReplacePackageAsync(ModItemIndexBuildResult buildResult, CancellationToken cancellationToken = default)

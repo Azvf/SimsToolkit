@@ -3,7 +3,7 @@ using SimsModDesktop.PackageCore;
 
 namespace SimsModDesktop.Application.Mods;
 
-public sealed class DeepModItemEnrichmentService : IDeepModItemEnrichmentService
+public sealed class DeepModItemEnrichmentService : IDeepModItemEnrichmentService, IContextAwareDeepModItemEnrichmentService
 {
     private readonly IModPackageTextureAnalysisService _textureAnalysisService;
     private readonly ICasItemDescriptorService _casDescriptorService;
@@ -19,28 +19,29 @@ public sealed class DeepModItemEnrichmentService : IDeepModItemEnrichmentService
         _buildBuyDescriptorService = buildBuyDescriptorService ?? new BuildBuyPlaceholderDescriptorService();
     }
 
-    public async Task<ModItemEnrichmentBatch> EnrichPackageAsync(
+    public Task<ModItemEnrichmentBatch> EnrichPackageAsync(
         string packagePath,
         CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        var fullPath = Path.GetFullPath(packagePath.Trim());
-        var fileInfo = new FileInfo(fullPath);
-        if (!fileInfo.Exists)
-        {
-            throw new FileNotFoundException("Package file was not found.", fullPath);
-        }
+        var parseContext = ModPackageParseContext.Create(packagePath);
+        return ((IContextAwareDeepModItemEnrichmentService)this).EnrichPackageAsync(parseContext, cancellationToken);
+    }
 
-        var index = DbpfPackageIndexReader.ReadPackageIndex(fullPath);
-        var entries = index.Entries
+    async Task<ModItemEnrichmentBatch> IContextAwareDeepModItemEnrichmentService.EnrichPackageAsync(
+        ModPackageParseContext parseContext,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var entries = parseContext.PackageIndex.Entries
             .Where(entry => !entry.IsDeleted && Sims4ResourceTypeRegistry.IsSupportedGameItemType(entry.Type))
             .ToArray();
-        var textureResult = await _textureAnalysisService.AnalyzeResultAsync(fullPath, cancellationToken).ConfigureAwait(false);
+        var textureResult = await _textureAnalysisService.AnalyzeResultAsync(parseContext.PackagePath, cancellationToken).ConfigureAwait(false);
         var packageCandidates = textureResult.Candidates.Where(candidate => candidate.Editable).ToArray();
         var now = DateTime.UtcNow.Ticks;
         var items = new List<ModIndexedItemRecord>(entries.Length);
-        items.AddRange(_casDescriptorService.BuildCasItems(fullPath, index, packageCandidates, fileInfo, now));
-        items.AddRange(_buildBuyDescriptorService.BuildItems(fullPath, index, packageCandidates, fileInfo, now));
+        items.AddRange(_casDescriptorService.BuildCasItems(parseContext.PackagePath, parseContext.PackageIndex, packageCandidates, new FileInfo(parseContext.PackagePath), now));
+        items.AddRange(_buildBuyDescriptorService.BuildItems(parseContext.PackagePath, parseContext.PackageIndex, packageCandidates, new FileInfo(parseContext.PackagePath), now));
 
         var enrichedItems = items.Select(item => new ModIndexedItemRecord
         {
@@ -95,10 +96,10 @@ public sealed class DeepModItemEnrichmentService : IDeepModItemEnrichmentService
         {
             PackageState = new ModPackageIndexState
             {
-                PackagePath = fullPath,
-                FileLength = fileInfo.Length,
-                LastWriteUtcTicks = fileInfo.LastWriteTimeUtc.Ticks,
-                PackageType = Path.GetFileName(fullPath).Contains("override", StringComparison.OrdinalIgnoreCase) ? "Override" : ".package",
+                PackagePath = parseContext.PackagePath,
+                FileLength = parseContext.FileLength,
+                LastWriteUtcTicks = parseContext.LastWriteUtcTicks,
+                PackageType = parseContext.FileName.Contains("override", StringComparison.OrdinalIgnoreCase) ? "Override" : ".package",
                 ScopeHint = ResolveScopeHint(enrichedItems),
                 IndexedUtcTicks = now,
                 ItemCount = enrichedItems.Length,

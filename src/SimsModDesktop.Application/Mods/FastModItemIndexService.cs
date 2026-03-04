@@ -2,7 +2,7 @@ using SimsModDesktop.PackageCore;
 
 namespace SimsModDesktop.Application.Mods;
 
-public sealed class FastModItemIndexService : IFastModItemIndexService
+public sealed class FastModItemIndexService : IFastModItemIndexService, IContextAwareFastModItemIndexService
 {
     private readonly IDbpfResourceReader _resourceReader;
 
@@ -11,26 +11,27 @@ public sealed class FastModItemIndexService : IFastModItemIndexService
         _resourceReader = resourceReader ?? new DbpfResourceReader();
     }
 
-    public async Task<ModItemFastIndexBuildResult> BuildFastPackageAsync(
+    public Task<ModItemFastIndexBuildResult> BuildFastPackageAsync(
         string packagePath,
         CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        var fullPath = Path.GetFullPath(packagePath.Trim());
-        var fileInfo = new FileInfo(fullPath);
-        if (!fileInfo.Exists)
-        {
-            throw new FileNotFoundException("Package file was not found.", fullPath);
-        }
+        var parseContext = ModPackageParseContext.Create(packagePath);
+        return ((IContextAwareFastModItemIndexService)this).BuildFastPackageAsync(parseContext, cancellationToken);
+    }
 
-        var index = DbpfPackageIndexReader.ReadPackageIndex(fullPath);
-        var entries = index.Entries
+    Task<ModItemFastIndexBuildResult> IContextAwareFastModItemIndexService.BuildFastPackageAsync(
+        ModPackageParseContext parseContext,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var entries = parseContext.PackageIndex.Entries
             .Where(entry => !entry.IsDeleted && Sims4ResourceTypeRegistry.IsSupportedGameItemType(entry.Type))
             .ToArray();
         var now = DateTime.UtcNow.Ticks;
         var items = new List<ModIndexedItemRecord>(entries.Length);
 
-        using var session = _resourceReader.OpenSession(fullPath);
+        using var session = _resourceReader.OpenSession(parseContext.PackagePath);
 
         foreach (var entry in entries)
         {
@@ -45,15 +46,15 @@ public sealed class FastModItemIndexService : IFastModItemIndexService
                 var displayName = $"{bodyTypeText} 0x{entry.Instance:X8}";
                 items.Add(new ModIndexedItemRecord
                 {
-                    ItemKey = $"{fullPath}|{sourceResourceKey}",
-                    PackagePath = fullPath,
-                    PackageFingerprintLength = fileInfo.Length,
-                    PackageFingerprintLastWriteUtcTicks = fileInfo.LastWriteTimeUtc.Ticks,
+                    ItemKey = $"{parseContext.PackagePath}|{sourceResourceKey}",
+                    PackagePath = parseContext.PackagePath,
+                    PackageFingerprintLength = parseContext.FileLength,
+                    PackageFingerprintLastWriteUtcTicks = parseContext.LastWriteUtcTicks,
                     EntityKind = "Cas",
                     EntitySubType = entitySubType,
                     DisplayName = displayName,
                     SortName = displayName,
-                    SearchText = BuildSearchText(displayName, bodyTypeText, fullPath),
+                    SearchText = BuildSearchText(displayName, bodyTypeText, parseContext.PackagePath),
                     ScopeText = "Cas",
                     ThumbnailStatus = "Placeholder",
                     PrimaryTextureResourceKey = null,
@@ -95,15 +96,15 @@ public sealed class FastModItemIndexService : IFastModItemIndexService
             var buildBuyDisplay = $"Build/Buy 0x{entry.Instance:X8}";
             items.Add(new ModIndexedItemRecord
             {
-                ItemKey = $"{fullPath}|{sourceResourceKey}",
-                PackagePath = fullPath,
-                PackageFingerprintLength = fileInfo.Length,
-                PackageFingerprintLastWriteUtcTicks = fileInfo.LastWriteTimeUtc.Ticks,
+                ItemKey = $"{parseContext.PackagePath}|{sourceResourceKey}",
+                PackagePath = parseContext.PackagePath,
+                PackageFingerprintLength = parseContext.FileLength,
+                PackageFingerprintLastWriteUtcTicks = parseContext.LastWriteUtcTicks,
                 EntityKind = "BuildBuy",
                 EntitySubType = "Object",
                 DisplayName = buildBuyDisplay,
                 SortName = buildBuyDisplay,
-                SearchText = $"{buildBuyDisplay} {Path.GetFileNameWithoutExtension(fullPath)} BuildBuy Object",
+                SearchText = $"{buildBuyDisplay} {Path.GetFileNameWithoutExtension(parseContext.PackagePath)} BuildBuy Object",
                 ScopeText = "BuildBuy",
                 ThumbnailStatus = "Placeholder",
                 PrimaryTextureResourceKey = null,
@@ -130,14 +131,14 @@ public sealed class FastModItemIndexService : IFastModItemIndexService
             });
         }
 
-        return await Task.FromResult(new ModItemFastIndexBuildResult
+        return Task.FromResult(new ModItemFastIndexBuildResult
         {
             PackageState = new ModPackageIndexState
             {
-                PackagePath = fullPath,
-                FileLength = fileInfo.Length,
-                LastWriteUtcTicks = fileInfo.LastWriteTimeUtc.Ticks,
-                PackageType = Path.GetFileName(fullPath).Contains("override", StringComparison.OrdinalIgnoreCase) ? "Override" : ".package",
+                PackagePath = parseContext.PackagePath,
+                FileLength = parseContext.FileLength,
+                LastWriteUtcTicks = parseContext.LastWriteUtcTicks,
+                PackageType = parseContext.FileName.Contains("override", StringComparison.OrdinalIgnoreCase) ? "Override" : ".package",
                 ScopeHint = ResolveScopeHint(items),
                 IndexedUtcTicks = now,
                 ItemCount = items.Count,
@@ -150,7 +151,7 @@ public sealed class FastModItemIndexService : IFastModItemIndexService
                 FailureMessage = null
             },
             Items = items
-        }).ConfigureAwait(false);
+        });
     }
 
     private static string BuildSearchText(string displayName, string bodyTypeText, string packagePath)

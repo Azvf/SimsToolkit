@@ -40,26 +40,26 @@ Acceptance:
 
 Implementation:
 
-- [ ] Introduce bounded parse worker pool for fast pass
-- [ ] Introduce bounded parse worker pool for deep pass
-- [ ] Introduce single writer batch persistence
-- [ ] Reuse package parse context per package
+- [x] Introduce bounded parse worker pool for fast pass
+- [x] Introduce bounded parse worker pool for deep pass
+- [x] Introduce single writer batch persistence
+- [x] Reuse package parse context per package
 
 Tests:
 
-- [ ] Parallel fast pass produces the same final rows as the old logic
-- [ ] Deep pass still prioritizes current page packages
-- [ ] Cancellation does not leave the writer in an invalid state
+- [x] Parallel fast pass produces the same final rows as the old logic
+- [x] Deep pass still prioritizes current page packages
+- [x] Cancellation does not leave the writer in an invalid state
 
 Logging:
 
-- [ ] `modcache.fastindex.batch` log added
-- [ ] `modcache.deepindex.batch` log added
-- [ ] `modcache.storewriter.batch` log added
+- [x] `modcache.fastindex.batch` log added
+- [x] `modcache.deepindex.batch` log added
+- [x] `modcache.storewriter.batch` log added
 
 Acceptance:
 
-- [ ] Scheduler no longer processes all packages strictly one by one
+- [x] Scheduler no longer processes all packages strictly one by one
 
 ### WS3: Mod Search FTS5
 
