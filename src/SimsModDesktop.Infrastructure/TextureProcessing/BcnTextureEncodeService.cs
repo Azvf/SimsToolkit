@@ -27,7 +27,7 @@ public sealed class BcnTextureEncodeService : ITextureEncodeService
         try
         {
             using var image = Image.LoadPixelData<Rgba32>(pixelBuffer.PixelBytes, pixelBuffer.Width, pixelBuffer.Height);
-            using var stream = new MemoryStream();
+            using var stream = new MemoryStream(EstimateEncodedCapacity(pixelBuffer.Width, pixelBuffer.Height, generateMipMaps, targetFormat));
 
             var encoder = new BcEncoder
             {
@@ -79,5 +79,30 @@ public sealed class BcnTextureEncodeService : ITextureEncodeService
         }
 
         return levels;
+    }
+
+    private static int EstimateEncodedCapacity(int width, int height, bool generateMipMaps, TextureTargetFormat targetFormat)
+    {
+        var bytesPerBlock = targetFormat == TextureTargetFormat.Bc1 ? 8 : 16;
+        var total = 128; // DDS header
+        var currentWidth = Math.Max(1, width);
+        var currentHeight = Math.Max(1, height);
+
+        while (true)
+        {
+            var blockWidth = Math.Max(1, (currentWidth + 3) / 4);
+            var blockHeight = Math.Max(1, (currentHeight + 3) / 4);
+            total += blockWidth * blockHeight * bytesPerBlock;
+
+            if (!generateMipMaps || (currentWidth == 1 && currentHeight == 1))
+            {
+                break;
+            }
+
+            currentWidth = Math.Max(1, currentWidth / 2);
+            currentHeight = Math.Max(1, currentHeight / 2);
+        }
+
+        return Math.Max(256, total);
     }
 }

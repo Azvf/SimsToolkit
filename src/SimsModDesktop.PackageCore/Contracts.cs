@@ -108,6 +108,7 @@ public sealed class DbpfResourceReadResult
 
 public sealed class DbpfPackageReadSession : IDisposable
 {
+    private const int StreamCopyBufferSize = 81920;
     private readonly FileStream _stream;
 
     internal DbpfPackageReadSession(string packagePath)
@@ -167,15 +168,67 @@ public sealed class DbpfPackageReadSession : IDisposable
         IBufferWriter<byte> destination,
         out string? error)
     {
-        if (!TryReadBytes(entry, out var bytes, out error))
+        error = null;
+
+        if (entry.IsDeleted)
         {
+            error = "Deleted package entry.";
             return false;
         }
 
-        var span = destination.GetSpan(bytes.Length);
-        bytes.CopyTo(span);
-        destination.Advance(bytes.Length);
-        return true;
+        if (entry.CompressedSize < 0)
+        {
+            error = "Invalid package entry size.";
+            return false;
+        }
+
+        try
+        {
+            _stream.Seek(entry.DataOffset, SeekOrigin.Begin);
+            if (entry.CompressionType == CompressionCodecs.None)
+            {
+                var remaining = entry.CompressedSize;
+                while (remaining > 0)
+                {
+                    var chunkSize = Math.Min(remaining, StreamCopyBufferSize);
+                    var chunk = destination.GetSpan(chunkSize).Slice(0, chunkSize);
+                    FillExactly(_stream, chunk);
+                    destination.Advance(chunkSize);
+                    remaining -= chunkSize;
+                }
+
+                return true;
+            }
+
+            if (entry.CompressionType == CompressionCodecs.Zlib)
+            {
+                var rented = ArrayPool<byte>.Shared.Rent(entry.CompressedSize);
+                try
+                {
+                    FillExactly(_stream, rented.AsSpan(0, entry.CompressedSize));
+                    using var input = new MemoryStream(rented, 0, entry.CompressedSize, writable: false, publiclyVisible: true);
+                    using var zlib = new System.IO.Compression.ZLibStream(
+                        input,
+                        System.IO.Compression.CompressionMode.Decompress,
+                        leaveOpen: false);
+                    using var output = new BufferWriterStream(destination);
+                    zlib.CopyTo(output, StreamCopyBufferSize);
+                    return true;
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(rented);
+                }
+            }
+
+            error = $"Unsupported compression type: {entry.CompressionType}.";
+            return false;
+        }
+        catch (Exception ex)
+        {
+            error = $"Failed to read package resource: {ex.Message}";
+            return false;
+        }
     }
 
     public void Dispose()
@@ -195,6 +248,63 @@ public sealed class DbpfPackageReadSession : IDisposable
             }
 
             total += read;
+        }
+    }
+
+    private static void FillExactly(Stream stream, Span<byte> buffer)
+    {
+        var total = 0;
+        while (total < buffer.Length)
+        {
+            var read = stream.Read(buffer.Slice(total));
+            if (read <= 0)
+            {
+                throw new EndOfStreamException("Unexpected end of stream.");
+            }
+
+            total += read;
+        }
+    }
+
+    private sealed class BufferWriterStream : Stream
+    {
+        private readonly IBufferWriter<byte> _writer;
+
+        public BufferWriterStream(IBufferWriter<byte> writer)
+        {
+            _writer = writer;
+        }
+
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            Write(buffer.AsSpan(offset, count));
+        }
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            var span = _writer.GetSpan(buffer.Length).Slice(0, buffer.Length);
+            buffer.CopyTo(span);
+            _writer.Advance(buffer.Length);
         }
     }
 }

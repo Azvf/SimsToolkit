@@ -39,6 +39,17 @@ public sealed class TextureProcessingPipelineTests
     }
 
     [Fact]
+    public void ImageSharpResizeService_ReturnsSameBuffer_WhenTargetSizeUnchanged()
+    {
+        var source = CreateSolidPixelBuffer(8, 8, 255);
+        var resizeService = new ImageSharpResizeService();
+
+        var resized = resizeService.Resize(source, 8, 8);
+
+        Assert.Same(source, resized);
+    }
+
+    [Fact]
     public void BcnTextureEncodeService_EncodesBc3Dds()
     {
         var encoder = new BcnTextureEncodeService();
@@ -80,6 +91,33 @@ public sealed class TextureProcessingPipelineTests
         Assert.Equal(4, decoded.Width);
         Assert.Equal(4, decoded.Height);
         Assert.Equal(4 * 4 * 4, decoded.PixelBytes.Length);
+    }
+
+    [Fact]
+    public void PfimDdsDecoder_DecodesFromSlicedReadOnlyMemory()
+    {
+        var encoder = new BcnTextureEncodeService();
+        var ddsDecoder = new PfimDdsDecoder();
+        var pixelBuffer = CreateSolidPixelBuffer(4, 4, 255);
+        Assert.True(
+            encoder.TryEncode(
+                pixelBuffer,
+                TextureTargetFormat.Bc3,
+                generateMipMaps: false,
+                out var ddsBytes,
+                out _,
+                out var encodeError),
+            encodeError);
+
+        var prefixed = new byte[ddsBytes.Length + 5];
+        Buffer.BlockCopy(ddsBytes, 0, prefixed, 5, ddsBytes.Length);
+        var sliced = new ReadOnlyMemory<byte>(prefixed, 5, ddsBytes.Length);
+
+        var success = ddsDecoder.TryDecode(sliced, out var decoded, out var decodeError);
+
+        Assert.True(success, decodeError);
+        Assert.Equal(4, decoded.Width);
+        Assert.Equal(4, decoded.Height);
     }
 
     [Fact]

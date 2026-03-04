@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Buffers;
 using System.IO;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
@@ -384,12 +385,14 @@ public sealed class ModPackageTextureEditService : IModPackageTextureEditService
         }
 
         using var session = _resourceReader.OpenSession(packagePath);
-        if (!session.TryReadBytes(matchedEntry, out bytes, out var readError))
+        var payload = new ArrayBufferWriter<byte>();
+        if (!session.TryReadInto(matchedEntry, payload, out var readError))
         {
             error = readError ?? "Texture resource could not be read.";
             return false;
         }
 
+        bytes = payload.WrittenSpan.ToArray();
         entry = matchedEntry;
         return true;
     }

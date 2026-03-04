@@ -1,5 +1,6 @@
 using SimsModDesktop.PackageCore;
 using System.Buffers.Binary;
+using System.Buffers;
 
 namespace SimsModDesktop.Application.TextureCompression;
 
@@ -74,6 +75,7 @@ public sealed class ModPackageTextureAnalysisService : IModPackageTextureAnalysi
         var unsupportedTextureCount = 0;
         long totalTextureBytes = 0;
         var candidates = new List<ModPackageTextureCandidate>();
+        var payload = new ArrayBufferWriter<byte>();
 
         using var session = _resourceReader.OpenSession(fullPath);
 
@@ -90,7 +92,7 @@ public sealed class ModPackageTextureAnalysisService : IModPackageTextureAnalysi
                 case DdsTypeId:
                     ddsCount++;
                     totalTextureBytes += entry.CompressedSize;
-                    if (TryBuildDdsCandidate(session, entry, out var ddsCandidate))
+                    if (TryBuildDdsCandidate(session, entry, payload, out var ddsCandidate))
                     {
                         candidates.Add(ddsCandidate);
                     }
@@ -98,7 +100,7 @@ public sealed class ModPackageTextureAnalysisService : IModPackageTextureAnalysi
                 case PngTypeId:
                     pngCount++;
                     totalTextureBytes += entry.CompressedSize;
-                    if (TryBuildPngCandidate(session, entry, out var pngCandidate))
+                    if (TryBuildPngCandidate(session, entry, payload, out var pngCandidate))
                     {
                         candidates.Add(pngCandidate);
                     }
@@ -154,14 +156,17 @@ public sealed class ModPackageTextureAnalysisService : IModPackageTextureAnalysi
     private static bool TryBuildPngCandidate(
         DbpfPackageReadSession session,
         DbpfIndexEntry entry,
+        ArrayBufferWriter<byte> payload,
         out ModPackageTextureCandidate candidate)
     {
         candidate = null!;
-        if (!session.TryReadBytes(entry, out var bytes, out _))
+        payload.Clear();
+        if (!session.TryReadInto(entry, payload, out _))
         {
             return false;
         }
 
+        var bytes = payload.WrittenSpan;
         if (bytes.Length < 24 ||
             bytes[0] != 0x89 ||
             bytes[1] != 0x50 ||
@@ -171,8 +176,8 @@ public sealed class ModPackageTextureAnalysisService : IModPackageTextureAnalysi
             return false;
         }
 
-        var width = BinaryPrimitives.ReadInt32BigEndian(bytes.AsSpan(16, 4));
-        var height = BinaryPrimitives.ReadInt32BigEndian(bytes.AsSpan(20, 4));
+        var width = BinaryPrimitives.ReadInt32BigEndian(bytes.Slice(16, 4));
+        var height = BinaryPrimitives.ReadInt32BigEndian(bytes.Slice(20, 4));
         var colorType = bytes.Length > 25 ? bytes[25] : (byte)6;
         var hasAlpha = colorType is 4 or 6;
         var suggestedAction = MaxDimension(width, height) >= 4096
@@ -198,25 +203,28 @@ public sealed class ModPackageTextureAnalysisService : IModPackageTextureAnalysi
     private static bool TryBuildDdsCandidate(
         DbpfPackageReadSession session,
         DbpfIndexEntry entry,
+        ArrayBufferWriter<byte> payload,
         out ModPackageTextureCandidate candidate)
     {
         candidate = null!;
-        if (!session.TryReadBytes(entry, out var bytes, out _))
+        payload.Clear();
+        if (!session.TryReadInto(entry, payload, out _))
         {
             return false;
         }
 
-        if (bytes.Length < 128 || BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(0, 4)) != DdsMagic)
+        var bytes = payload.WrittenSpan;
+        if (bytes.Length < 128 || BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(0, 4)) != DdsMagic)
         {
             return false;
         }
 
-        var height = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(12, 4));
-        var width = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(16, 4));
-        var mipMapCount = Math.Max(1, BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(28, 4)));
-        var pixelFormatFlags = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(80, 4));
-        var fourCc = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(84, 4));
-        var rgbBitCount = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(88, 4));
+        var height = BinaryPrimitives.ReadInt32LittleEndian(bytes.Slice(12, 4));
+        var width = BinaryPrimitives.ReadInt32LittleEndian(bytes.Slice(16, 4));
+        var mipMapCount = Math.Max(1, BinaryPrimitives.ReadInt32LittleEndian(bytes.Slice(28, 4)));
+        var pixelFormatFlags = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(80, 4));
+        var fourCc = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(84, 4));
+        var rgbBitCount = BinaryPrimitives.ReadInt32LittleEndian(bytes.Slice(88, 4));
         var (format, editable, suggestedAction, notes) = ResolveDdsClassification(
             bytes,
             width,
@@ -242,7 +250,7 @@ public sealed class ModPackageTextureAnalysisService : IModPackageTextureAnalysi
     }
 
     private static (string Format, bool Editable, string SuggestedAction, string Notes) ResolveDdsClassification(
-        byte[] bytes,
+        ReadOnlySpan<byte> bytes,
         int width,
         int height,
         uint pixelFormatFlags,
@@ -267,7 +275,7 @@ public sealed class ModPackageTextureAnalysisService : IModPackageTextureAnalysi
 
             if (fourCc == Dx10FourCc && bytes.Length >= 132)
             {
-                var dxgiFormat = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(128, 4));
+                var dxgiFormat = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(128, 4));
                 if (dxgiFormat is 98 or 99)
                 {
                     return ("BC7", false, "Skip", "BC7 detected; keep as-is for the first safe edit pass.");

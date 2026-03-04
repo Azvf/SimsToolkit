@@ -23,13 +23,7 @@ public sealed class ImageSharpResizeService : ITextureResizeService
 
         if (source.Width == targetWidth && source.Height == targetHeight)
         {
-            return new TexturePixelBuffer
-            {
-                Width = source.Width,
-                Height = source.Height,
-                Layout = source.Layout,
-                PixelBytes = source.PixelBytes.ToArray()
-            };
+            return source;
         }
 
         using var image = Image.LoadPixelData<Rgba32>(source.PixelBytes, source.Width, source.Height);

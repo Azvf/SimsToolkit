@@ -1,3 +1,4 @@
+using System.Buffers;
 using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.PackageCore;
 
@@ -33,11 +34,13 @@ public sealed class CasItemDescriptorService : ICasItemDescriptorService
         var items = new List<ModIndexedItemRecord>(entries.Length);
 
         using var session = _resourceReader.OpenSession(packagePath);
+        var payload = new ArrayBufferWriter<byte>();
 
         foreach (var entry in entries)
         {
-            if (!session.TryReadBytes(entry, out var bytes, out _) ||
-                !Sims4CasPartParser.TryParse(new DbpfResourceKey(entry.Type, entry.Group, entry.Instance), bytes, out var casPart, out _))
+            payload.Clear();
+            if (!session.TryReadInto(entry, payload, out _) ||
+                !Sims4CasPartParser.TryParse(new DbpfResourceKey(entry.Type, entry.Group, entry.Instance), payload.WrittenSpan, out var casPart, out _))
             {
                 continue;
             }

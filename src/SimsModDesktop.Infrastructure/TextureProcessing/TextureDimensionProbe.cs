@@ -43,7 +43,7 @@ public sealed class TextureDimensionProbe : ITextureDimensionProbe
                 case TextureContainerKind.Dds:
                 case TextureContainerKind.Tga:
                 {
-                    using var stream = new MemoryStream(sourceBytes.ToArray(), writable: false);
+                    using var stream = OpenReadOnlyMemoryStream(sourceBytes);
                     using var image = Pfimage.FromStream(stream);
                     width = image.Width;
                     height = image.Height;
@@ -59,5 +59,16 @@ public sealed class TextureDimensionProbe : ITextureDimensionProbe
             error = $"Failed to probe texture dimensions: {ex.Message}";
             return false;
         }
+    }
+
+    private static MemoryStream OpenReadOnlyMemoryStream(ReadOnlyMemory<byte> sourceBytes)
+    {
+        if (System.Runtime.InteropServices.MemoryMarshal.TryGetArray(sourceBytes, out var segment) &&
+            segment.Array is not null)
+        {
+            return new MemoryStream(segment.Array, segment.Offset, segment.Count, writable: false, publiclyVisible: true);
+        }
+
+        return new MemoryStream(sourceBytes.ToArray(), writable: false);
     }
 }

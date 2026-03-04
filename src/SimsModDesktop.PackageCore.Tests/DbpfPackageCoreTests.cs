@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Buffers;
 using System.IO.Compression;
 using SimsModDesktop.PackageCore;
 
@@ -54,6 +55,36 @@ public sealed class DbpfPackageCoreTests
         Assert.True(session.TryReadBytes(package.Entries[1], out var zlib, out var zlibError));
         Assert.Null(zlibError);
         Assert.Equal(zlibSource, zlib);
+    }
+
+    [Fact]
+    public void DbpfResourceReader_TryReadInto_ReadsRawAndZlibResources()
+    {
+        using var fixture = new TempDirectory("dbpf-read-into");
+        var packagePath = Path.Combine(fixture.Path, "resources.package");
+        var rawBytes = new byte[] { 1, 2, 3, 4, 5 };
+        var zlibSource = new byte[] { 9, 8, 7, 6, 5, 4, 3 };
+
+        WritePackage(
+            packagePath,
+            [
+                new PackageSpec(0x10, 0, 0x2000000000000011, rawBytes),
+                new PackageSpec(0x20, 0, 0x2000000000000012, CompressZlib(zlibSource), zlibSource.Length, 23106)
+            ]);
+
+        var package = DbpfPackageIndexReader.ReadPackageIndex(packagePath);
+        var reader = new DbpfResourceReader();
+        using var session = reader.OpenSession(packagePath);
+        var payload = new ArrayBufferWriter<byte>();
+
+        Assert.True(session.TryReadInto(package.Entries[0], payload, out var rawError));
+        Assert.Null(rawError);
+        Assert.Equal(rawBytes, payload.WrittenSpan.ToArray());
+
+        payload.Clear();
+        Assert.True(session.TryReadInto(package.Entries[1], payload, out var zlibError));
+        Assert.Null(zlibError);
+        Assert.Equal(zlibSource, payload.WrittenSpan.ToArray());
     }
 
     [Fact]

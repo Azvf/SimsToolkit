@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Buffers;
 
 namespace SimsModDesktop.PackageCore;
 
@@ -37,6 +38,7 @@ public sealed class Sims4StblLookup : ISims4StblLookup
         DbpfPackageIndex index)
     {
         var result = new Dictionary<uint, string>();
+        var payload = new ArrayBufferWriter<byte>();
 
         foreach (var entry in index.Entries)
         {
@@ -45,8 +47,9 @@ public sealed class Sims4StblLookup : ISims4StblLookup
                 continue;
             }
 
-            if (!session.TryReadBytes(entry, out var bytes, out _) ||
-                !Sims4StblParser.TryParse(bytes, out var table, out _))
+            payload.Clear();
+            if (!session.TryReadInto(entry, payload, out _) ||
+                !Sims4StblParser.TryParse(payload.WrittenSpan, out var table, out _))
             {
                 continue;
             }

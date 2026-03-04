@@ -1,3 +1,4 @@
+using System.Buffers;
 using SimsModDesktop.PackageCore;
 
 namespace SimsModDesktop.Application.Mods;
@@ -32,14 +33,16 @@ public sealed class FastModItemIndexService : IFastModItemIndexService, IContext
         var items = new List<ModIndexedItemRecord>(entries.Length);
 
         using var session = _resourceReader.OpenSession(parseContext.PackagePath);
+        var payload = new ArrayBufferWriter<byte>();
 
         foreach (var entry in entries)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var sourceResourceKey = $"{entry.Type:X8}:{entry.Group:X8}:{entry.Instance:X16}";
+            payload.Clear();
             if (entry.Type == Sims4ResourceTypeRegistry.CasPart &&
-                session.TryReadBytes(entry, out var bytes, out _) &&
-                Sims4CasPartParser.TryParse(new DbpfResourceKey(entry.Type, entry.Group, entry.Instance), bytes, out var casPart, out _))
+                session.TryReadInto(entry, payload, out _) &&
+                Sims4CasPartParser.TryParse(new DbpfResourceKey(entry.Type, entry.Group, entry.Instance), payload.WrittenSpan, out var casPart, out _))
             {
                 var bodyTypeText = Sims4BodyTypeCatalog.ResolveDisplayName(casPart.BodyTypeNumeric);
                 var entitySubType = Sims4BodyTypeCatalog.ResolveSubTypeCode(casPart.BodyTypeNumeric);

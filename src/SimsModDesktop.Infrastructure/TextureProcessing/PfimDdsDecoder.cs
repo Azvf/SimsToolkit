@@ -17,7 +17,7 @@ public sealed class PfimDdsDecoder
 
         try
         {
-            using var stream = new MemoryStream(sourceBytes.ToArray(), writable: false);
+            using var stream = OpenReadOnlyMemoryStream(sourceBytes);
             using var image = Pfimage.FromStream(stream);
 
             if (image.Width < 1 || image.Height < 1)
@@ -93,5 +93,16 @@ public sealed class PfimDdsDecoder
         }
 
         return destination;
+    }
+
+    private static MemoryStream OpenReadOnlyMemoryStream(ReadOnlyMemory<byte> sourceBytes)
+    {
+        if (System.Runtime.InteropServices.MemoryMarshal.TryGetArray(sourceBytes, out var segment) &&
+            segment.Array is not null)
+        {
+            return new MemoryStream(segment.Array, segment.Offset, segment.Count, writable: false, publiclyVisible: true);
+        }
+
+        return new MemoryStream(sourceBytes.ToArray(), writable: false);
     }
 }
