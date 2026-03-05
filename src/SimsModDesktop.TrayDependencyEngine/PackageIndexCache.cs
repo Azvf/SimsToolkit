@@ -1,17 +1,20 @@
 using System.Diagnostics;
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading.Channels;
 using Dapper;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.PackageCore;
+using SimsModDesktop.PackageCore.Performance;
 
 namespace SimsModDesktop.TrayDependencyEngine;
 
 public sealed class PackageIndexCache : IPackageIndexCache
 {
-    private const int SchemaVersion = 2;
+    private const int SchemaVersion = 3;
     private static readonly HashSet<uint> StructuredTypes = KnownResourceTypes.StructuredReferenceTypes.ToHashSet();
     private static readonly PackageIndexEntry[] EmptyEntries = Array.Empty<PackageIndexEntry>();
     private static readonly IReadOnlyDictionary<uint, PackageTypeIndex> EmptyTypeIndexes = new Dictionary<uint, PackageTypeIndex>();
@@ -139,6 +142,8 @@ public sealed class PackageIndexCache : IPackageIndexCache
             .Where(file => !removedSet.Contains(file.Path))
             .OrderBy(file => file.Path, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        var parseWorkerCount = PerformanceWorkerSizer.ResolveTrayCacheParseWorkers(request.ParseWorkerCount);
+        var writeBatchSize = PerformanceWorkerSizer.ResolveWriteBatchSize(request.WriteBatchSize, defaultBatchSize: 512, min: 64, max: 4096);
         _logger.LogInformation(
             "path.resolve component={Component} rawPath={RawPath} canonicalPath={CanonicalPath} exists={Exists} isReparse={IsReparse} linkTarget={LinkTarget}",
             "traycache.snapshot",
@@ -151,12 +156,14 @@ public sealed class PackageIndexCache : IPackageIndexCache
         Report(progress, 5, "Preparing package cache...");
         var timer = Stopwatch.StartNew();
         _logger.LogInformation(
-            "traycache.snapshot.build.start modsRoot={ModsRoot} inventoryVersion={InventoryVersion} packageCount={PackageCount} changedCount={ChangedCount} removedCount={RemovedCount}",
+            "traycache.snapshot.build.start modsRoot={ModsRoot} inventoryVersion={InventoryVersion} packageCount={PackageCount} changedCount={ChangedCount} removedCount={RemovedCount} parseWorkerCount={ParseWorkerCount} writeBatchSize={WriteBatchSize}",
             normalizedRoot,
             request.InventoryVersion,
             files.Length,
             changedSet.Count,
-            removedSet.Count);
+            removedSet.Count,
+            parseWorkerCount,
+            writeBatchSize);
 
         var snapshot = await ExecuteWithCorruptionRecoveryAsync(async ct =>
         {
@@ -169,32 +176,26 @@ public sealed class PackageIndexCache : IPackageIndexCache
             var hitCount = 0;
             var missCount = 0;
             var failCount = 0;
-            var lastHeartbeatMs = 0L;
-
+            var parsePlans = new List<ParsePlan>(files.Length);
+            var fingerprints = files
+                .Select(ComputeFingerprint)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            var cachedFingerprints = await LoadCachedFingerprintsAsync(connection, transaction, fingerprints, ct).ConfigureAwait(false);
             for (var i = 0; i < files.Length; i++)
             {
                 ct.ThrowIfCancellationRequested();
                 var file = files[i];
                 var fingerprint = ComputeFingerprint(file);
                 var forceReparse = changedSet.Contains(file.Path);
-                var hasCache = await connection.ExecuteScalarAsync<long>(new CommandDefinition(
-                    "SELECT COUNT(1) FROM TrayCachePackage WHERE FingerprintKey = @FingerprintKey;",
-                    new { FingerprintKey = fingerprint },
-                    transaction,
-                    cancellationToken: ct)).ConfigureAwait(false) > 0;
-
-                if (hasCache && !forceReparse)
+                if (cachedFingerprints.Contains(fingerprint) && !forceReparse)
                 {
                     hitCount++;
                 }
                 else
                 {
                     missCount++;
-                    var success = await UpsertPackageCacheAsync(connection, transaction, file, fingerprint, ct).ConfigureAwait(false);
-                    if (!success)
-                    {
-                        failCount++;
-                    }
+                    parsePlans.Add(new ParsePlan(file, fingerprint));
                 }
 
                 manifestRows.Add(new ManifestRow
@@ -206,26 +207,133 @@ public sealed class PackageIndexCache : IPackageIndexCache
                     Length = file.Length,
                     LastWriteUtcTicks = file.LastWriteTicks
                 });
+            }
 
-                var processed = i + 1;
-                Report(progress, ProgressScale.Scale(10, 70, processed, files.Length), $"Indexing packages... {processed}/{files.Length}");
-                if (timer.ElapsedMilliseconds - lastHeartbeatMs >= 5000)
+            _logger.LogInformation(
+                "traycache.snapshot.plan modsRoot={ModsRoot} inventoryVersion={InventoryVersion} packageCount={PackageCount} hitCount={HitCount} missCount={MissCount} parseWorkerCount={ParseWorkerCount} writeBatchSize={WriteBatchSize}",
+                normalizedRoot,
+                request.InventoryVersion,
+                files.Length,
+                hitCount,
+                missCount,
+                parseWorkerCount,
+                writeBatchSize);
+
+            if (parsePlans.Count > 0)
+            {
+                var parseQueue = Channel.CreateUnbounded<ParsePlan>(new UnboundedChannelOptions
                 {
-                    lastHeartbeatMs = timer.ElapsedMilliseconds;
-                    _logger.LogInformation(
-                        "traycache.stage.heartbeat modsRoot={ModsRoot} inventoryVersion={InventoryVersion} packageCount={PackageCount} changedCount={ChangedCount} removedCount={RemovedCount} hitCount={HitCount} missCount={MissCount} parseFailCount={ParseFailCount} stage={Stage} processed={Processed} elapsedMs={ElapsedMs}",
-                        normalizedRoot,
-                        request.InventoryVersion,
-                        files.Length,
-                        changedSet.Count,
-                        removedSet.Count,
-                        hitCount,
-                        missCount,
-                        failCount,
-                        "package-cache",
-                        processed,
-                        timer.ElapsedMilliseconds);
+                    SingleWriter = true,
+                    SingleReader = false
+                });
+                foreach (var parsePlan in parsePlans)
+                {
+                    await parseQueue.Writer.WriteAsync(parsePlan, ct).ConfigureAwait(false);
                 }
+
+                parseQueue.Writer.Complete();
+                var parseResultChannel = Channel.CreateBounded<PackageParseResult>(new BoundedChannelOptions(parseWorkerCount * 4)
+                {
+                    SingleReader = true,
+                    SingleWriter = false,
+                    FullMode = BoundedChannelFullMode.Wait
+                });
+
+                var parseCompletedCount = 0L;
+                var allowedWorkers = parseWorkerCount;
+                var baselineWorkingSet = Process.GetCurrentProcess().WorkingSet64;
+                var throttle = new PerformanceAdaptiveThrottle(
+                    targetWorkers: parseWorkerCount,
+                    minWorkers: 4,
+                    startedAtUtc: DateTime.UtcNow);
+
+                using var monitorCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                var monitorTask = Task.Run(async () =>
+                {
+                    while (!monitorCts.IsCancellationRequested)
+                    {
+                        try
+                        {
+                            await Task.Delay(TimeSpan.FromSeconds(5), monitorCts.Token).ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            break;
+                        }
+
+                        var decision = throttle.Update(
+                            totalCompletedCount: Interlocked.Read(ref parseCompletedCount),
+                            nowUtc: DateTime.UtcNow,
+                            workingSetBytes: Process.GetCurrentProcess().WorkingSet64,
+                            baselineWorkingSetBytes: baselineWorkingSet);
+                        if (!decision.Changed)
+                        {
+                            continue;
+                        }
+
+                        Interlocked.Exchange(ref allowedWorkers, decision.RecommendedWorkers);
+                        _logger.LogInformation(
+                            "traycache.dynamic.throttle modsRoot={ModsRoot} inventoryVersion={InventoryVersion} workerCount={WorkerCount} reason={Reason}",
+                            normalizedRoot,
+                            request.InventoryVersion,
+                            decision.RecommendedWorkers,
+                            decision.Reason);
+                    }
+                }, ct);
+
+                var writerTask = WriteParsedPackagesAsync(
+                    connection,
+                    transaction,
+                    parseResultChannel.Reader,
+                    writeBatchSize,
+                    ct);
+
+                var workers = Enumerable.Range(0, parseWorkerCount)
+                    .Select(workerId => Task.Run(async () =>
+                    {
+                        while (!ct.IsCancellationRequested && await parseQueue.Reader.WaitToReadAsync(ct).ConfigureAwait(false))
+                        {
+                            if (workerId >= Volatile.Read(ref allowedWorkers))
+                            {
+                                await Task.Delay(50, ct).ConfigureAwait(false);
+                                continue;
+                            }
+
+                            if (!parseQueue.Reader.TryRead(out var plan))
+                            {
+                                continue;
+                            }
+
+                            var parsed = ParsePackage(plan);
+                            await parseResultChannel.Writer.WriteAsync(parsed, ct).ConfigureAwait(false);
+                            Interlocked.Increment(ref parseCompletedCount);
+                            var processed = hitCount + (int)Interlocked.Read(ref parseCompletedCount);
+                            Report(progress, ProgressScale.Scale(10, 70, processed, files.Length), $"Indexing packages... {processed}/{files.Length}");
+                        }
+                    }, ct))
+                    .ToArray();
+
+                await Task.WhenAll(workers).ConfigureAwait(false);
+                _logger.LogInformation(
+                    "traycache.parse.batch modsRoot={ModsRoot} inventoryVersion={InventoryVersion} parsedCount={ParsedCount} workerCount={WorkerCount}",
+                    normalizedRoot,
+                    request.InventoryVersion,
+                    Interlocked.Read(ref parseCompletedCount),
+                    Volatile.Read(ref allowedWorkers));
+                parseResultChannel.Writer.Complete();
+                failCount = await writerTask.ConfigureAwait(false);
+                monitorCts.Cancel();
+                try
+                {
+                    await monitorTask.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+            }
+            else
+            {
+                Report(progress, 70, "Package cache reused from persisted rows.");
             }
 
             _logger.LogInformation(
@@ -262,6 +370,13 @@ public sealed class PackageIndexCache : IPackageIndexCache
                 changedSet.Count,
                 removedSet.Count,
                 manifestTiming.ElapsedMilliseconds);
+            _logger.LogInformation(
+                "traycache.manifest.delta modsRoot={ModsRoot} inventoryVersion={InventoryVersion} packageCount={PackageCount} changedCount={ChangedCount} removedCount={RemovedCount}",
+                normalizedRoot,
+                request.InventoryVersion,
+                manifestRows.Count,
+                changedSet.Count,
+                removedSet.Count);
             Report(progress, 85, "Root manifest rebuilt.");
 
             Report(progress, 85, "Cleaning orphan package rows...");
@@ -441,6 +556,254 @@ public sealed class PackageIndexCache : IPackageIndexCache
         }
 
         return movedRows;
+    }
+
+    private static async Task<HashSet<string>> LoadCachedFingerprintsAsync(
+        SqliteConnection connection,
+        System.Data.Common.DbTransaction transaction,
+        IReadOnlyCollection<string> fingerprints,
+        CancellationToken cancellationToken)
+    {
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        if (fingerprints.Count == 0)
+        {
+            return result;
+        }
+
+        foreach (var chunk in Chunk(fingerprints, 400))
+        {
+            var rows = await connection.QueryAsync<string>(new CommandDefinition(
+                "SELECT FingerprintKey FROM TrayCachePackage WHERE FingerprintKey IN @FingerprintKeys;",
+                new { FingerprintKeys = chunk },
+                transaction,
+                cancellationToken: cancellationToken)).ConfigureAwait(false);
+            foreach (var row in rows)
+            {
+                result.Add(row);
+            }
+        }
+
+        return result;
+    }
+
+    private async Task<int> WriteParsedPackagesAsync(
+        SqliteConnection connection,
+        System.Data.Common.DbTransaction transaction,
+        ChannelReader<PackageParseResult> reader,
+        int writeBatchSize,
+        CancellationToken cancellationToken)
+    {
+        var batch = new List<PackageParseResult>(writeBatchSize);
+        var failCount = 0;
+        var processedCount = 0;
+
+        while (await reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            while (reader.TryRead(out var parsed))
+            {
+                batch.Add(parsed);
+                if (batch.Count < writeBatchSize)
+                {
+                    continue;
+                }
+
+                failCount += await FlushParseBatchAsync(connection, transaction, batch, cancellationToken).ConfigureAwait(false);
+                processedCount += batch.Count;
+                _logger.LogInformation(
+                    "traycache.write.batch batchSize={BatchSize} processed={Processed}",
+                    batch.Count,
+                    processedCount);
+                batch.Clear();
+            }
+        }
+
+        if (batch.Count > 0)
+        {
+            failCount += await FlushParseBatchAsync(connection, transaction, batch, cancellationToken).ConfigureAwait(false);
+            processedCount += batch.Count;
+            _logger.LogInformation(
+                "traycache.write.batch batchSize={BatchSize} processed={Processed}",
+                batch.Count,
+                processedCount);
+        }
+
+        return failCount;
+    }
+
+    private static async Task<int> FlushParseBatchAsync(
+        SqliteConnection connection,
+        System.Data.Common.DbTransaction transaction,
+        IReadOnlyList<PackageParseResult> batch,
+        CancellationToken cancellationToken)
+    {
+        var packageRows = batch.Select(parsed => new
+        {
+            parsed.FingerprintKey,
+            PackagePath = parsed.PackagePath,
+            Length = parsed.Length,
+            LastWriteUtcTicks = parsed.LastWriteTicks,
+            EntryCount = parsed.Success ? parsed.Entries.Count : 0,
+            ParseStatus = parsed.Success ? 1 : 0,
+            ParseError = parsed.Success ? (string?)null : parsed.ParseError,
+            UpdatedUtcTicks = DateTime.UtcNow.Ticks
+        }).ToArray();
+
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            INSERT INTO TrayCachePackage (
+                FingerprintKey,
+                PackagePath,
+                Length,
+                LastWriteUtcTicks,
+                EntryCount,
+                ParseStatus,
+                ParseError,
+                UpdatedUtcTicks
+            ) VALUES (
+                @FingerprintKey,
+                @PackagePath,
+                @Length,
+                @LastWriteUtcTicks,
+                @EntryCount,
+                @ParseStatus,
+                @ParseError,
+                @UpdatedUtcTicks
+            )
+            ON CONFLICT(FingerprintKey) DO UPDATE SET
+                PackagePath = excluded.PackagePath,
+                Length = excluded.Length,
+                LastWriteUtcTicks = excluded.LastWriteUtcTicks,
+                EntryCount = excluded.EntryCount,
+                ParseStatus = excluded.ParseStatus,
+                ParseError = excluded.ParseError,
+                UpdatedUtcTicks = excluded.UpdatedUtcTicks;
+            """,
+            packageRows,
+            transaction,
+            cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        var fingerprintKeys = batch
+            .Select(parsed => parsed.FingerprintKey)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        foreach (var chunk in Chunk(fingerprintKeys, 300))
+        {
+            await connection.ExecuteAsync(new CommandDefinition(
+                "DELETE FROM TrayCacheEntry WHERE FingerprintKey IN @FingerprintKeys;",
+                new { FingerprintKeys = chunk },
+                transaction,
+                cancellationToken: cancellationToken)).ConfigureAwait(false);
+        }
+
+        var entryRows = batch
+            .Where(parsed => parsed.Success && parsed.Entries.Count > 0)
+            .SelectMany(parsed => parsed.Entries)
+            .ToArray();
+        if (entryRows.Length > 0)
+        {
+            await connection.ExecuteAsync(new CommandDefinition(
+                """
+                INSERT INTO TrayCacheEntry (
+                    FingerprintKey,
+                    EntryIndex,
+                    Type,
+                    [Group],
+                    Instance,
+                    IsDeleted,
+                    DataOffset,
+                    CompressedSize,
+                    UncompressedSize,
+                    CompressionType
+                ) VALUES (
+                    @FingerprintKey,
+                    @EntryIndex,
+                    @Type,
+                    @Group,
+                    @Instance,
+                    @IsDeleted,
+                    @DataOffset,
+                    @CompressedSize,
+                    @UncompressedSize,
+                    @CompressionType
+                );
+                """,
+                entryRows,
+                transaction,
+                cancellationToken: cancellationToken)).ConfigureAwait(false);
+        }
+
+        return batch.Count(parsed => !parsed.Success);
+    }
+
+    private static PackageParseResult ParsePackage(ParsePlan plan)
+    {
+        try
+        {
+            var package = DbpfPackageIndexReader.ReadPackageIndex(plan.File.Path);
+            var entries = new List<EntryRow>();
+            for (var i = 0; i < package.Entries.Length; i++)
+            {
+                var entry = package.Entries[i];
+                if (!StructuredTypes.Contains(entry.Type))
+                {
+                    continue;
+                }
+
+                entries.Add(new EntryRow
+                {
+                    FingerprintKey = plan.FingerprintKey,
+                    EntryIndex = i,
+                    Type = entry.Type,
+                    Group = entry.Group,
+                    Instance = entry.Instance,
+                    IsDeleted = entry.IsDeleted,
+                    DataOffset = entry.DataOffset,
+                    CompressedSize = entry.CompressedSize,
+                    UncompressedSize = entry.UncompressedSize,
+                    CompressionType = entry.CompressionType
+                });
+            }
+
+            return new PackageParseResult(
+                FingerprintKey: plan.FingerprintKey,
+                PackagePath: plan.File.Path,
+                Length: plan.File.Length,
+                LastWriteTicks: plan.File.LastWriteTicks,
+                Success: true,
+                ParseError: null,
+                Entries: entries);
+        }
+        catch (Exception ex)
+        {
+            return new PackageParseResult(
+                FingerprintKey: plan.FingerprintKey,
+                PackagePath: plan.File.Path,
+                Length: plan.File.Length,
+                LastWriteTicks: plan.File.LastWriteTicks,
+                Success: false,
+                ParseError: ex.Message,
+                Entries: Array.Empty<EntryRow>());
+        }
+    }
+
+    private static IReadOnlyList<T[]> Chunk<T>(IReadOnlyCollection<T> items, int chunkSize)
+    {
+        if (items.Count == 0)
+        {
+            return Array.Empty<T[]>();
+        }
+
+        var materialized = items as T[] ?? items.ToArray();
+        var chunks = new List<T[]>((materialized.Length + chunkSize - 1) / chunkSize);
+        for (var offset = 0; offset < materialized.Length; offset += chunkSize)
+        {
+            var size = Math.Min(chunkSize, materialized.Length - offset);
+            var chunk = new T[size];
+            Array.Copy(materialized, offset, chunk, 0, size);
+            chunks.Add(chunk);
+        }
+
+        return chunks;
     }
 
     private async Task<bool> UpsertPackageCacheAsync(
@@ -844,6 +1207,9 @@ public sealed class PackageIndexCache : IPackageIndexCache
 
             CREATE INDEX IF NOT EXISTS IX_TrayRootManifestPackage_Fingerprint
                 ON TrayRootManifestPackage(FingerprintKey);
+
+            CREATE INDEX IF NOT EXISTS IX_TrayRootManifestPackage_RootVersionFingerprint
+                ON TrayRootManifestPackage(ModsRootPath, InventoryVersion, FingerprintKey);
             """,
             cancellationToken: cancellationToken)).ConfigureAwait(false);
 
@@ -938,6 +1304,17 @@ public sealed class PackageIndexCache : IPackageIndexCache
             Detail = detail
         });
     }
+
+    private sealed record ParsePlan(BuildFile File, string FingerprintKey);
+
+    private sealed record PackageParseResult(
+        string FingerprintKey,
+        string PackagePath,
+        long Length,
+        long LastWriteTicks,
+        bool Success,
+        string? ParseError,
+        IReadOnlyList<EntryRow> Entries);
 
     private sealed record BuildFile(string Path, long Length, long LastWriteTicks);
 

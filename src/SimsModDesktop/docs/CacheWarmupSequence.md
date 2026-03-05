@@ -6,7 +6,7 @@ Current baseline:
 
 * There is no startup-time Tray dependency warmup.
 * `Mods` and `Tray` use page-triggered blocking warmup.
-* A single `MainWindowCacheWarmupController` serializes blocking warmup work.
+* `MainWindowCacheWarmupController` uses a keyed per-root gate to serialize warmup per `ModsRoot`.
 * Tray export and Tray dependency analysis both consume a preloaded ready snapshot.
 * `TrayDependencyEngine` no longer performs hidden `Mods` directory validation for export or analysis.
 
@@ -43,7 +43,7 @@ sequenceDiagram
         Warmup-->>TrayVM: validated and ready snapshot
     end
 
-    Note over Warmup: A single SemaphoreSlim gate\nserializes blocking warmup work
+    Note over Warmup: A keyed SemaphoreSlim gate\nserializes blocking warmup per ModsRoot
 ```
 
 ---

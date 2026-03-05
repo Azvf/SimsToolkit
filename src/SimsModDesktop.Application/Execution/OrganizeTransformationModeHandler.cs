@@ -1,7 +1,10 @@
 using System.IO.Compression;
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using SimsModDesktop.Application.Configuration;
 using SimsModDesktop.Application.Services;
+using SimsModDesktop.PackageCore.Performance;
 
 namespace SimsModDesktop.Application.Execution;
 
@@ -32,93 +35,188 @@ internal sealed class OrganizeTransformationModeHandler : TransformationModeHand
         var recurse = organizeOptions?.RecurseSource != false;
         var cleanupMacArtifacts = await GetConfigBoolAsync("Organize.CleanupMacOsArtifacts", true, cancellationToken);
         var flattenTopLevel = GetCustomBool(options.CustomParameters, "Organize.FlattenSingleTopLevelDirectory", true);
+        var configuredWorkers = organizeOptions?.MaxParallelArchives ?? options.WorkerCount;
+        var workerCount = PerformanceWorkerSizer.ResolveOrganizeWorkers(configuredWorkers);
 
         var archives = Directory.EnumerateFiles(
                 sourcePath,
                 "*",
                 recurse ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly)
             .Where(path => archiveExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase))
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var processed = new List<string>();
-        var failed = new List<string>();
-        var skipped = new List<string>();
-        var conflicts = new List<FileConflict>();
-        var warnings = new List<string>();
+        var processed = new ConcurrentBag<string>();
+        var failed = new ConcurrentBag<string>();
+        var skipped = new ConcurrentBag<string>();
+        var conflicts = new ConcurrentBag<FileConflict>();
+        var warnings = new ConcurrentBag<string>();
 
         Directory.CreateDirectory(targetRoot);
 
-        var current = 0;
+        var executionPlans = new List<OrganizeExecutionPlan>(archives.Count);
         foreach (var archive in archives)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            current++;
-
-            try
+            var destination = BuildOrganizeDestination(targetRoot, archive, organizeOptions);
+            if (Directory.Exists(destination) && Directory.EnumerateFileSystemEntries(destination).Any())
             {
-                var destination = BuildOrganizeDestination(targetRoot, archive, organizeOptions);
-
-                if (Directory.Exists(destination) && Directory.EnumerateFileSystemEntries(destination).Any())
+                var conflictPlan = ResolveDirectoryConflictPlan(archive, destination, options.ConflictStrategy);
+                if (conflictPlan.Skip)
                 {
-                    var dirResolution = ResolveDirectoryConflict(archive, destination, options.ConflictStrategy, options.WhatIf);
-                    if (dirResolution is null)
+                    skipped.Add(archive);
+                    conflicts.Add(new FileConflict
                     {
-                        skipped.Add(archive);
-                        conflicts.Add(new FileConflict
-                        {
-                            Type = ConflictType.NameConflict,
-                            SourcePath = archive,
-                            TargetPath = destination,
-                            Description = "Organize destination exists and was skipped"
-                        });
-                        ReportSimpleProgress(progress, "Organize", current, archives.Count, archive);
+                        Type = ConflictType.NameConflict,
+                        SourcePath = archive,
+                        TargetPath = destination,
+                        Description = "Organize destination exists and was skipped"
+                    });
+                    continue;
+                }
+
+                executionPlans.Add(new OrganizeExecutionPlan(archive, conflictPlan.DestinationPath, conflictPlan.DeleteExisting));
+            }
+            else
+            {
+                executionPlans.Add(new OrganizeExecutionPlan(archive, destination, DeleteExisting: false));
+            }
+        }
+
+        var completedCount = skipped.Count;
+        var baselineWorkingSet = Process.GetCurrentProcess().WorkingSet64;
+        var throttle = new PerformanceAdaptiveThrottle(
+            targetWorkers: workerCount,
+            minWorkers: 4,
+            startedAtUtc: DateTime.UtcNow);
+        var allowedWorkers = workerCount;
+        var startedAt = DateTime.UtcNow;
+        Logger.LogInformation(
+            "organize.archive.batch start total={Total} processCount={ProcessCount} skipCount={SkipCount} workerCount={WorkerCount}",
+            archives.Count,
+            executionPlans.Count,
+            skipped.Count,
+            workerCount);
+
+        using var monitorCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var monitorTask = Task.Run(async () =>
+        {
+            while (!monitorCts.IsCancellationRequested)
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(5), monitorCts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+
+                var decision = throttle.Update(
+                    totalCompletedCount: completedCount,
+                    nowUtc: DateTime.UtcNow,
+                    workingSetBytes: Process.GetCurrentProcess().WorkingSet64,
+                    baselineWorkingSetBytes: baselineWorkingSet);
+                if (!decision.Changed)
+                {
+                    continue;
+                }
+
+                Interlocked.Exchange(ref allowedWorkers, decision.RecommendedWorkers);
+                Logger.LogInformation(
+                    "organize.dynamic.throttle workerCount={WorkerCount} reason={Reason}",
+                    decision.RecommendedWorkers,
+                    decision.Reason);
+            }
+        }, cancellationToken);
+
+        var queue = new ConcurrentQueue<OrganizeExecutionPlan>(executionPlans);
+        var workers = Enumerable.Range(0, workerCount)
+            .Select(workerId => Task.Run(async () =>
+            {
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    if (workerId >= Volatile.Read(ref allowedWorkers))
+                    {
+                        await Task.Delay(50, cancellationToken).ConfigureAwait(false);
                         continue;
                     }
 
-                    destination = dirResolution;
-                }
-
-                if (!options.WhatIf)
-                {
-                    Directory.CreateDirectory(destination);
-                    ZipFile.ExtractToDirectory(archive, destination, overwriteFiles: true);
-
-                    if (cleanupMacArtifacts)
+                    if (!queue.TryDequeue(out var plan))
                     {
-                        CleanupMacOsArtifacts(destination);
+                        break;
                     }
 
-                    if (flattenTopLevel)
+                    try
                     {
-                        FlattenSingleTopLevelDirectory(destination);
-                    }
-
-                    if (organizeOptions?.KeepZip != true)
-                    {
-                        var deleted = await FileOperationService.DeleteFileAsync(archive, permanent: true);
-                        if (!deleted)
+                        if (!options.WhatIf)
                         {
-                            warnings.Add($"Unable to delete archive after extraction: {archive}");
+                            if (plan.DeleteExisting && Directory.Exists(plan.DestinationPath))
+                            {
+                                Directory.Delete(plan.DestinationPath, recursive: true);
+                            }
+
+                            Directory.CreateDirectory(plan.DestinationPath);
+                            ZipFile.ExtractToDirectory(plan.ArchivePath, plan.DestinationPath, overwriteFiles: true);
+
+                            if (cleanupMacArtifacts)
+                            {
+                                CleanupMacOsArtifacts(plan.DestinationPath);
+                            }
+
+                            if (flattenTopLevel)
+                            {
+                                FlattenSingleTopLevelDirectory(plan.DestinationPath);
+                            }
+
+                            if (organizeOptions?.KeepZip != true)
+                            {
+                                var deleted = await FileOperationService.DeleteFileAsync(plan.ArchivePath, permanent: true).ConfigureAwait(false);
+                                if (!deleted)
+                                {
+                                    warnings.Add($"Unable to delete archive after extraction: {plan.ArchivePath}");
+                                }
+                            }
                         }
+
+                        processed.Add(plan.ArchivePath);
+                    }
+                    catch (InvalidDataException ex)
+                    {
+                        Logger.LogWarning(ex, "Invalid archive {Archive}", plan.ArchivePath);
+                        failed.Add(plan.ArchivePath);
+                        warnings.Add($"Invalid archive skipped: {plan.ArchivePath}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogError(ex, "Failed to organize archive {Archive}", plan.ArchivePath);
+                        failed.Add(plan.ArchivePath);
+                    }
+                    finally
+                    {
+                        var current = Interlocked.Increment(ref completedCount);
+                        ReportSimpleProgress(progress, "Organize", current, archives.Count, plan.ArchivePath);
                     }
                 }
+            }, cancellationToken))
+            .ToArray();
 
-                processed.Add(archive);
-            }
-            catch (InvalidDataException ex)
-            {
-                Logger.LogWarning(ex, "Invalid archive {Archive}", archive);
-                failed.Add(archive);
-                warnings.Add($"Invalid archive skipped: {archive}");
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError(ex, "Failed to organize archive {Archive}", archive);
-                failed.Add(archive);
-            }
-
-            ReportSimpleProgress(progress, "Organize", current, archives.Count, archive);
+        await Task.WhenAll(workers).ConfigureAwait(false);
+        monitorCts.Cancel();
+        try
+        {
+            await monitorTask.ConfigureAwait(false);
         }
+        catch (OperationCanceledException)
+        {
+        }
+        Logger.LogInformation(
+            "organize.archive.batch done total={Total} processed={Processed} failed={Failed} skipped={Skipped} elapsedMs={ElapsedMs}",
+            archives.Count,
+            processed.Count,
+            failed.Count,
+            skipped.Count,
+            (DateTime.UtcNow - startedAt).TotalMilliseconds);
 
         return new TransformationResult
         {
@@ -128,11 +226,11 @@ internal sealed class OrganizeTransformationModeHandler : TransformationModeHand
             SkippedFiles = skipped.Count,
             FailedFiles = failed.Count,
             TotalFiles = archives.Count,
-            ProcessedFileList = processed,
-            SkippedFileList = skipped,
-            FailedFileList = failed,
-            Conflicts = conflicts,
-            Warnings = warnings
+            ProcessedFileList = processed.ToArray(),
+            SkippedFileList = skipped.ToArray(),
+            FailedFileList = failed.ToArray(),
+            Conflicts = conflicts.ToArray(),
+            Warnings = warnings.ToArray()
         };
     }
 
@@ -174,38 +272,29 @@ internal sealed class OrganizeTransformationModeHandler : TransformationModeHand
         return Path.Combine(targetRoot, name);
     }
 
-    private static string? ResolveDirectoryConflict(
+    private static OrganizeDirectoryConflictPlan ResolveDirectoryConflictPlan(
         string sourceArchive,
         string destination,
-        ConflictResolutionStrategy strategy,
-        bool whatIf)
+        ConflictResolutionStrategy strategy)
     {
         switch (strategy)
         {
             case ConflictResolutionStrategy.Skip:
             case ConflictResolutionStrategy.Prompt:
-                return null;
+                return new OrganizeDirectoryConflictPlan(Skip: true, destination, DeleteExisting: false);
             case ConflictResolutionStrategy.Overwrite:
             case ConflictResolutionStrategy.HashCompare:
-                if (!whatIf)
-                {
-                    Directory.Delete(destination, recursive: true);
-                }
-                return destination;
+                return new OrganizeDirectoryConflictPlan(Skip: false, destination, DeleteExisting: true);
             case ConflictResolutionStrategy.KeepNewer:
             {
                 var sourceTime = File.GetLastWriteTimeUtc(sourceArchive);
                 var targetTime = Directory.GetLastWriteTimeUtc(destination);
                 if (sourceTime <= targetTime)
                 {
-                    return null;
+                    return new OrganizeDirectoryConflictPlan(Skip: true, destination, DeleteExisting: false);
                 }
 
-                if (!whatIf)
-                {
-                    Directory.Delete(destination, recursive: true);
-                }
-                return destination;
+                return new OrganizeDirectoryConflictPlan(Skip: false, destination, DeleteExisting: true);
             }
             case ConflictResolutionStrategy.KeepOlder:
             {
@@ -213,17 +302,13 @@ internal sealed class OrganizeTransformationModeHandler : TransformationModeHand
                 var targetTime = Directory.GetLastWriteTimeUtc(destination);
                 if (sourceTime >= targetTime)
                 {
-                    return null;
+                    return new OrganizeDirectoryConflictPlan(Skip: true, destination, DeleteExisting: false);
                 }
 
-                if (!whatIf)
-                {
-                    Directory.Delete(destination, recursive: true);
-                }
-                return destination;
+                return new OrganizeDirectoryConflictPlan(Skip: false, destination, DeleteExisting: true);
             }
             default:
-                return null;
+                return new OrganizeDirectoryConflictPlan(Skip: true, destination, DeleteExisting: false);
         }
     }
 
@@ -269,4 +354,14 @@ internal sealed class OrganizeTransformationModeHandler : TransformationModeHand
             Directory.Delete(top);
         }
     }
+
+    private readonly record struct OrganizeExecutionPlan(
+        string ArchivePath,
+        string DestinationPath,
+        bool DeleteExisting);
+
+    private readonly record struct OrganizeDirectoryConflictPlan(
+        bool Skip,
+        string DestinationPath,
+        bool DeleteExisting);
 }

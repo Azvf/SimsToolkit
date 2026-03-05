@@ -272,3 +272,40 @@ Additional verification (2026-03-05, WS3/WS8 logging completion):
 
 * `dotnet test src/SimsModDesktop.Tests/SimsModDesktop.Tests.csproj --configuration Release --no-restore` -> pass (`220/220`)
 * `dotnet test src/SimsModDesktop.TrayDependencyEngine.Tests/SimsModDesktop.TrayDependencyEngine.Tests.csproj --configuration Release --no-restore` -> pass (`10/10`)
+
+## 6. Round2 (Aggressive Worker) Checklist
+
+Implementation:
+
+- [x] add aggressive worker sizing and adaptive down-throttle infrastructure
+- [x] add `ModIndexRefreshRequest.FastWorkerCount` / `DeepWorkerCount`
+- [x] add `PackageIndexBuildRequest.ParseWorkerCount` / `WriteBatchSize`
+- [x] add `ITrayMetadataService` batch request overload
+- [x] add `ISavePreviewCacheBuilder` options overload
+- [x] add `OrganizeOptions.MaxParallelArchives`
+- [x] update hash worker default from `8` to `12`
+- [x] add Round2 default performance config keys
+
+Pipeline:
+
+- [x] refactor tray cache build to plan + parallel parse + single writer batch persistence
+- [x] add tray cache round2 logs: `traycache.snapshot.plan`, `traycache.parse.batch`, `traycache.write.batch`, `traycache.dynamic.throttle`
+- [x] optimize tray preview metadata pending path matching by `HashSet`
+- [x] refactor warmup controller gate to keyed per-root lock and add `modcache.warmup.lock.wait`
+- [x] refactor inventory persistence to staging + set-based SQL and add `modcache.inventory.persist.batch`
+- [x] refactor `Organize` to two-phase planning + parallel execution + adaptive throttle
+- [x] refactor `SavePreviewCacheBuilder` to bounded parallel household export with stable manifest ordering
+
+Schema:
+
+- [x] `TrayDependencyPackageIndex/cache.db` schema version bumped to `3`
+- [x] add `IX_TrayRootManifestPackage_RootVersionFingerprint`
+- [x] `app-cache.db` inventory schema version bumped to `3`
+
+Verification:
+
+- [x] `dotnet test src/SimsModDesktop.Tests/SimsModDesktop.Tests.csproj --configuration Release`
+- [x] `dotnet test src/SimsModDesktop.TrayDependencyEngine.Tests/SimsModDesktop.TrayDependencyEngine.Tests.csproj --configuration Release --no-restore`
+- [x] `dotnet test src/SimsModDesktop.PackageCore.Tests/SimsModDesktop.PackageCore.Tests.csproj --configuration Release --no-restore`
+- [ ] run `scripts/perf/run-round2-baseline.ps1` on representative large dataset and attach JSON
+- [ ] complete cold/warm scenario measurement and compare against Round2 targets

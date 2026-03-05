@@ -7,6 +7,8 @@ public sealed record ModIndexRefreshRequest
     public IReadOnlyList<string> RemovedPackages { get; init; } = Array.Empty<string>();
     public IReadOnlyList<string> PriorityPackages { get; init; } = Array.Empty<string>();
     public bool AllowDeepEnrichment { get; init; } = true;
+    public int? FastWorkerCount { get; init; }
+    public int? DeepWorkerCount { get; init; }
 }
 
 public sealed record ModIndexRefreshProgress

@@ -1,6 +1,11 @@
 using System.Buffers.Binary;
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using SimsModDesktop.PackageCore.Performance;
 
 namespace SimsModDesktop.Infrastructure.Tray;
 
@@ -8,29 +13,52 @@ public sealed class TrayMetadataService : ITrayMetadataService
 {
     private readonly object _gate = new();
     private readonly Dictionary<string, CacheEntry> _cache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ILogger<TrayMetadataService> _logger;
+
+    public TrayMetadataService()
+        : this(NullLogger<TrayMetadataService>.Instance)
+    {
+    }
+
+    public TrayMetadataService(ILogger<TrayMetadataService> logger)
+    {
+        _logger = logger ?? NullLogger<TrayMetadataService>.Instance;
+    }
 
     public Task<IReadOnlyDictionary<string, TrayMetadataResult>> GetMetadataAsync(
         IReadOnlyCollection<string> trayItemPaths,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(trayItemPaths);
+        return GetMetadataAsync(
+            new TrayMetadataBatchRequest
+            {
+                TrayItemPaths = trayItemPaths
+            },
+            cancellationToken);
+    }
 
-        if (trayItemPaths.Count == 0)
+    public Task<IReadOnlyDictionary<string, TrayMetadataResult>> GetMetadataAsync(
+        TrayMetadataBatchRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (request.TrayItemPaths.Count == 0)
         {
             return Task.FromResult<IReadOnlyDictionary<string, TrayMetadataResult>>(
                 new Dictionary<string, TrayMetadataResult>(StringComparer.OrdinalIgnoreCase));
         }
 
         return Task.Run(
-            () => GetMetadataCore(trayItemPaths, cancellationToken),
+            () => GetMetadataCore(request, cancellationToken),
             cancellationToken);
     }
 
     private IReadOnlyDictionary<string, TrayMetadataResult> GetMetadataCore(
-        IReadOnlyCollection<string> trayItemPaths,
+        TrayMetadataBatchRequest request,
         CancellationToken cancellationToken)
     {
-        var normalizedPaths = trayItemPaths
+        var normalizedPaths = request.TrayItemPaths
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Select(Path.GetFullPath)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -66,26 +94,26 @@ public sealed class TrayMetadataService : ITrayMetadataService
             return results;
         }
 
-        var loaded = new Dictionary<string, TrayMetadataResult>(StringComparer.OrdinalIgnoreCase);
-        foreach (var path in misses)
+        if (request.PreferCacheOnly)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            try
-            {
-                var metadata = InternalTrayMetadataReader.Read(path);
-                loaded[path] = metadata;
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch
-            {
-                // Skip invalid tray items. Exact parsing only: malformed files produce no metadata.
-            }
+            return results;
         }
 
+        var workerCount = PerformanceWorkerSizer.ResolveTrayMetadataWorkers(request.WorkerCount);
+        _logger.LogInformation(
+            "traymeta.batch.start pathCount={PathCount} missCount={MissCount} workerCount={WorkerCount}",
+            normalizedPaths.Count,
+            misses.Count,
+            workerCount);
+        var startedAt = DateTime.UtcNow;
+        var loaded = ParseMisses(misses, workerCount, cancellationToken);
+        _logger.LogInformation(
+            "traymeta.batch.done pathCount={PathCount} missCount={MissCount} loadedCount={LoadedCount} workerCount={WorkerCount} elapsedMs={ElapsedMs}",
+            normalizedPaths.Count,
+            misses.Count,
+            loaded.Count,
+            workerCount,
+            (DateTime.UtcNow - startedAt).TotalMilliseconds);
         if (loaded.Count == 0)
         {
             return results;
@@ -107,6 +135,124 @@ public sealed class TrayMetadataService : ITrayMetadataService
         }
 
         return results;
+    }
+
+    private IReadOnlyDictionary<string, TrayMetadataResult> ParseMisses(
+        IReadOnlyList<string> misses,
+        int workerCount,
+        CancellationToken cancellationToken)
+    {
+        if (misses.Count == 0)
+        {
+            return new Dictionary<string, TrayMetadataResult>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        if (workerCount <= 1 || misses.Count == 1)
+        {
+            var single = new Dictionary<string, TrayMetadataResult>(StringComparer.OrdinalIgnoreCase);
+            foreach (var path in misses)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                TryParse(path, single);
+            }
+
+            return single;
+        }
+
+        var queue = new ConcurrentQueue<string>(misses);
+        var loaded = new ConcurrentDictionary<string, TrayMetadataResult>(StringComparer.OrdinalIgnoreCase);
+        var baselineWorkingSet = Process.GetCurrentProcess().WorkingSet64;
+        var throttle = new PerformanceAdaptiveThrottle(
+            targetWorkers: workerCount,
+            minWorkers: 4,
+            startedAtUtc: DateTime.UtcNow);
+        var allowedWorkers = workerCount;
+        long processedCount = 0;
+
+        using var monitorCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var monitorTask = Task.Run(async () =>
+        {
+            while (!monitorCts.IsCancellationRequested)
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(5), monitorCts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+
+                var decision = throttle.Update(
+                    totalCompletedCount: Interlocked.Read(ref processedCount),
+                    nowUtc: DateTime.UtcNow,
+                    workingSetBytes: Process.GetCurrentProcess().WorkingSet64,
+                    baselineWorkingSetBytes: baselineWorkingSet);
+                if (!decision.Changed)
+                {
+                    continue;
+                }
+
+                Interlocked.Exchange(ref allowedWorkers, decision.RecommendedWorkers);
+                _logger.LogInformation(
+                    "traymeta.dynamic.throttle workerCount={WorkerCount} reason={Reason}",
+                    decision.RecommendedWorkers,
+                    decision.Reason);
+            }
+        }, cancellationToken);
+
+        var workers = Enumerable.Range(0, workerCount)
+            .Select(workerId => Task.Run(async () =>
+            {
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    if (workerId >= Volatile.Read(ref allowedWorkers))
+                    {
+                        await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    if (!queue.TryDequeue(out var path))
+                    {
+                        break;
+                    }
+
+                    TryParse(path, loaded);
+                    Interlocked.Increment(ref processedCount);
+                }
+            }, cancellationToken))
+            .ToArray();
+
+        Task.WhenAll(workers).GetAwaiter().GetResult();
+        monitorCts.Cancel();
+        try
+        {
+            monitorTask.GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        return loaded;
+    }
+
+    private static void TryParse(
+        string path,
+        IDictionary<string, TrayMetadataResult> target)
+    {
+        try
+        {
+            var metadata = InternalTrayMetadataReader.Read(path);
+            target[path] = metadata;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            // Skip invalid tray items. Exact parsing only: malformed files produce no metadata.
+        }
     }
 
     private sealed class CacheEntry

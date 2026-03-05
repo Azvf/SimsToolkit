@@ -112,7 +112,7 @@ public sealed class AppSettings
         public bool VerifyContentOnNameConflict { get; set; }
         public string ModExtensionsText { get; set; } = ".package,.ts4script";
         public string PrefixHashBytesText { get; set; } = "102400";
-        public string HashWorkerCountText { get; set; } = "8";
+        public string HashWorkerCountText { get; set; } = "12";
     }
 
     public sealed class UiStateSettings

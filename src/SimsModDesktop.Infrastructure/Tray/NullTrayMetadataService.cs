@@ -16,4 +16,11 @@ public sealed class NullTrayMetadataService : ITrayMetadataService
         return Task.FromResult<IReadOnlyDictionary<string, TrayMetadataResult>>(
             new Dictionary<string, TrayMetadataResult>(StringComparer.OrdinalIgnoreCase));
     }
+
+    public Task<IReadOnlyDictionary<string, TrayMetadataResult>> GetMetadataAsync(
+        TrayMetadataBatchRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        return GetMetadataAsync(request.TrayItemPaths, cancellationToken);
+    }
 }

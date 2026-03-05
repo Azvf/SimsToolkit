@@ -170,6 +170,11 @@ public sealed record OrganizeOptions
     /// 统一的目标文件夹名称（可选）
     /// </summary>
     public string? UnifiedTargetFolder { get; init; }
+
+    /// <summary>
+    /// 并行处理压缩包的最大数量（可选）
+    /// </summary>
+    public int? MaxParallelArchives { get; init; }
 }
 
 /// <summary>

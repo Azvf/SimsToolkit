@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using System.Threading;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using SimsModDesktop.PackageCore.Performance;
+using System.Diagnostics;
 
 namespace SimsModDesktop.Application.Mods;
 
@@ -115,11 +117,12 @@ public sealed class ModItemIndexScheduler : IModItemIndexScheduler
             if (fastPassPackages.Count > 0)
             {
                 IsFastPassRunning = true;
-                var fastWorkerCount = ResolveFastWorkerCount();
+                var fastWorkerCount = PerformanceWorkerSizer.ResolveModsFastWorkers(request.FastWorkerCount);
                 var fastStartedAt = DateTime.UtcNow;
                 var fastResults = await ParsePackagesAsync(
                     fastPassPackages,
                     fastWorkerCount,
+                    stage: "fast",
                     (packagePath, token) => BuildFastPackageAsync(packagePath, parseContextCache, token),
                     cancellationToken).ConfigureAwait(false);
                 _logger.LogInformation(
@@ -153,11 +156,12 @@ public sealed class ModItemIndexScheduler : IModItemIndexScheduler
             }
 
             IsDeepPassRunning = true;
-            var deepWorkerCount = ResolveDeepWorkerCount();
+            var deepWorkerCount = PerformanceWorkerSizer.ResolveModsDeepWorkers(request.DeepWorkerCount);
             var deepStartedAt = DateTime.UtcNow;
             var deepResults = await ParsePackagesAsync(
                 deepPassPackages,
                 deepWorkerCount,
+                stage: "deep",
                 (packagePath, token) => EnrichPackageAsync(packagePath, parseContextCache, token),
                 cancellationToken).ConfigureAwait(false);
             _logger.LogInformation(
@@ -305,9 +309,10 @@ public sealed class ModItemIndexScheduler : IModItemIndexScheduler
         }
     }
 
-    private static async Task<IReadOnlyList<T>> ParsePackagesAsync<T>(
+    private async Task<IReadOnlyList<T>> ParsePackagesAsync<T>(
         IReadOnlyList<string> packagePaths,
         int workerCount,
+        string stage,
         Func<string, CancellationToken, Task<T>> factory,
         CancellationToken cancellationToken)
     {
@@ -320,19 +325,79 @@ public sealed class ModItemIndexScheduler : IModItemIndexScheduler
             .Select((path, index) => new IndexedPackagePath(index, path))
             .ToArray();
         var results = new ConcurrentBag<IndexedPackageResult<T>>();
+        var queue = new ConcurrentQueue<IndexedPackagePath>(indexedPackages);
+        var baselineWorkingSet = Process.GetCurrentProcess().WorkingSet64;
+        var throttle = new PerformanceAdaptiveThrottle(
+            targetWorkers: workerCount,
+            minWorkers: 2,
+            startedAtUtc: DateTime.UtcNow);
+        var allowedWorkers = workerCount;
+        long processedCount = 0;
 
-        await Parallel.ForEachAsync(
-            indexedPackages,
-            new ParallelOptions
+        using var monitorCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var monitorTask = Task.Run(async () =>
+        {
+            while (!monitorCts.IsCancellationRequested)
             {
-                MaxDegreeOfParallelism = workerCount,
-                CancellationToken = cancellationToken
-            },
-            async (indexedPackage, token) =>
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(5), monitorCts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+
+                var decision = throttle.Update(
+                    totalCompletedCount: Interlocked.Read(ref processedCount),
+                    nowUtc: DateTime.UtcNow,
+                    workingSetBytes: Process.GetCurrentProcess().WorkingSet64,
+                    baselineWorkingSetBytes: baselineWorkingSet);
+                if (!decision.Changed)
+                {
+                    continue;
+                }
+
+                Interlocked.Exchange(ref allowedWorkers, decision.RecommendedWorkers);
+                _logger.LogInformation(
+                    "modcache.dynamic.throttle Stage={Stage} WorkerCount={WorkerCount} Reason={Reason}",
+                    stage,
+                    decision.RecommendedWorkers,
+                    decision.Reason);
+            }
+        }, cancellationToken);
+
+        var workers = Enumerable.Range(0, workerCount)
+            .Select(workerId => Task.Run(async () =>
             {
-                var result = await factory(indexedPackage.PackagePath, token).ConfigureAwait(false);
-                results.Add(new IndexedPackageResult<T>(indexedPackage.Index, result));
-            }).ConfigureAwait(false);
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    if (workerId >= Volatile.Read(ref allowedWorkers))
+                    {
+                        await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    if (!queue.TryDequeue(out var indexedPackage))
+                    {
+                        break;
+                    }
+
+                    var result = await factory(indexedPackage.PackagePath, cancellationToken).ConfigureAwait(false);
+                    results.Add(new IndexedPackageResult<T>(indexedPackage.Index, result));
+                    Interlocked.Increment(ref processedCount);
+                }
+            }, cancellationToken))
+            .ToArray();
+        await Task.WhenAll(workers).ConfigureAwait(false);
+        monitorCts.Cancel();
+        try
+        {
+            await monitorTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
 
         return results
             .OrderBy(item => item.Index)
@@ -374,16 +439,6 @@ public sealed class ModItemIndexScheduler : IModItemIndexScheduler
         }
 
         return chunks;
-    }
-
-    private static int ResolveFastWorkerCount()
-    {
-        return Math.Min(8, Math.Max(2, Environment.ProcessorCount / 2));
-    }
-
-    private static int ResolveDeepWorkerCount()
-    {
-        return Math.Min(4, Math.Max(2, Environment.ProcessorCount / 4));
     }
 
     private sealed record IndexedPackagePath(int Index, string PackagePath);

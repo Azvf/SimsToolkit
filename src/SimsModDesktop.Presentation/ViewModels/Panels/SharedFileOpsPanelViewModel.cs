@@ -9,7 +9,7 @@ public sealed class SharedFileOpsPanelViewModel : ObservableObject
     private bool _verifyContentOnNameConflict;
     private string _modExtensionsText = ".package,.ts4script";
     private string _prefixHashBytesText = "102400";
-    private string _hashWorkerCountText = "8";
+    private string _hashWorkerCountText = "12";
 
     public bool SkipPruneEmptyDirs
     {

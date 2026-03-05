@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
+using System.Collections.Concurrent;
 using SimsModDesktop.Application.Caching;
 using SimsModDesktop.Application.Mods;
 using SimsModDesktop.PackageCore;
@@ -15,7 +16,7 @@ public sealed class MainWindowCacheWarmupController
     private readonly IPackageIndexCache _packageIndexCache;
     private readonly ILogger<MainWindowCacheWarmupController> _logger;
     private readonly IPathIdentityResolver _pathIdentityResolver;
-    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _rootGates = new(StringComparer.OrdinalIgnoreCase);
 
     private string? _currentRoot;
     private ModPackageInventoryRefreshResult? _inventoryResult;
@@ -48,9 +49,18 @@ public sealed class MainWindowCacheWarmupController
 
         var resolvedRoot = ResolveDirectory(modsRootPath);
         var normalizedRoot = resolvedRoot.CanonicalPath;
+        var rootGate = GetRootGate(normalizedRoot);
         host.AppendLog(
             $"[path.resolve] component=modcache.warmup rawPath={resolvedRoot.FullPath} canonicalPath={resolvedRoot.CanonicalPath} exists={resolvedRoot.Exists} isReparse={resolvedRoot.IsReparsePoint} linkTarget={resolvedRoot.LinkTarget ?? string.Empty}");
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var gateWaitStarted = Stopwatch.StartNew();
+        await rootGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (gateWaitStarted.ElapsedMilliseconds > 0)
+        {
+            _logger.LogInformation(
+                "modcache.warmup.lock.wait modsRoot={ModsRoot} elapsedMs={ElapsedMs}",
+                normalizedRoot,
+                gateWaitStarted.ElapsedMilliseconds);
+        }
 
         try
         {
@@ -134,7 +144,7 @@ public sealed class MainWindowCacheWarmupController
         }
         finally
         {
-            _gate.Release();
+            rootGate.Release();
         }
     }
 
@@ -148,13 +158,22 @@ public sealed class MainWindowCacheWarmupController
 
         var resolvedRoot = ResolveDirectory(modsRootPath);
         var normalizedRoot = resolvedRoot.CanonicalPath;
+        var rootGate = GetRootGate(normalizedRoot);
         host.AppendLog(
             $"[path.resolve] component=traycache.warmup rawPath={resolvedRoot.FullPath} canonicalPath={resolvedRoot.CanonicalPath} exists={resolvedRoot.Exists} isReparse={resolvedRoot.IsReparsePoint} linkTarget={resolvedRoot.LinkTarget ?? string.Empty}");
         ModPackageInventoryRefreshResult inventory;
         Task<PackageIndexSnapshot> trayWarmupTask;
         var trayWarmupKey = string.Empty;
 
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var gateWaitStarted = Stopwatch.StartNew();
+        await rootGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (gateWaitStarted.ElapsedMilliseconds > 0)
+        {
+            _logger.LogInformation(
+                "modcache.warmup.lock.wait modsRoot={ModsRoot} elapsedMs={ElapsedMs}",
+                normalizedRoot,
+                gateWaitStarted.ElapsedMilliseconds);
+        }
         try
         {
             inventory = await EnsureInventoryCoreAsync(normalizedRoot, host, cancellationToken).ConfigureAwait(false);
@@ -192,7 +211,7 @@ public sealed class MainWindowCacheWarmupController
         }
         finally
         {
-            _gate.Release();
+            rootGate.Release();
         }
 
         PackageIndexSnapshot snapshot;
@@ -206,7 +225,7 @@ public sealed class MainWindowCacheWarmupController
         }
         catch
         {
-            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            await rootGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
                 if (_trayWarmupTasks.TryGetValue(trayWarmupKey, out var existingTask) &&
@@ -217,13 +236,13 @@ public sealed class MainWindowCacheWarmupController
             }
             finally
             {
-                _gate.Release();
+                rootGate.Release();
             }
 
             throw;
         }
 
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await rootGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (_trayWarmupTasks.TryGetValue(trayWarmupKey, out var existingTask) &&
@@ -236,7 +255,7 @@ public sealed class MainWindowCacheWarmupController
         }
         finally
         {
-            _gate.Release();
+            rootGate.Release();
         }
 
         host.ReportProgress(new CacheWarmupProgress
@@ -497,6 +516,12 @@ public sealed class MainWindowCacheWarmupController
         _modsReadyInventoryVersion = 0;
         _trayReadySnapshot = null;
         _trayWarmupTasks.Clear();
+        _rootGates.Clear();
+    }
+
+    private SemaphoreSlim GetRootGate(string normalizedRoot)
+    {
+        return _rootGates.GetOrAdd(normalizedRoot, _ => new SemaphoreSlim(1, 1));
     }
 
     private async Task<ModPackageInventoryRefreshResult> EnsureInventoryCoreAsync(

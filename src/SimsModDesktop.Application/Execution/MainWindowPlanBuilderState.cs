@@ -15,5 +15,5 @@ public sealed record SharedFileOpsPlanState
     public bool VerifyContentOnNameConflict { get; init; }
     public string ModExtensionsText { get; init; } = ".package,.ts4script";
     public string PrefixHashBytesText { get; init; } = "102400";
-    public string HashWorkerCountText { get; init; } = "8";
+    public string HashWorkerCountText { get; init; } = "12";
 }

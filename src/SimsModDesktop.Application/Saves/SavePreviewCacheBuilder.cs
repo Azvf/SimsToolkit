@@ -1,7 +1,10 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using SimsModDesktop.SaveData.Models;
 using SimsModDesktop.SaveData.Services;
+using SimsModDesktop.PackageCore.Performance;
 
 namespace SimsModDesktop.Application.Saves;
 
@@ -35,6 +38,15 @@ public sealed class SavePreviewCacheBuilder : ISavePreviewCacheBuilder
         IProgress<SavePreviewCacheBuildProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
+        return BuildAsync(saveFilePath, options: null, progress, cancellationToken);
+    }
+
+    public Task<SavePreviewCacheBuildResult> BuildAsync(
+        string saveFilePath,
+        SavePreviewBuildOptions? options,
+        IProgress<SavePreviewCacheBuildProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
         return Task.Run(() =>
         {
             var normalizedSavePath = Path.GetFullPath(saveFilePath);
@@ -48,90 +60,190 @@ public sealed class SavePreviewCacheBuilder : ISavePreviewCacheBuilder
                 ClearTrayFiles(cacheRoot);
 
                 var buildStartedUtc = DateTime.UtcNow;
-                var entries = new List<SavePreviewCacheHouseholdEntry>(snapshot.Households.Count);
+                var entries = new SavePreviewCacheHouseholdEntry[snapshot.Households.Count];
                 var readyCount = 0;
                 var failedCount = 0;
                 var blockedCount = 0;
                 var exportableCount = snapshot.Households.Count(item => item.CanExport);
                 var previewNames = BuildPreviewNameLookup(snapshot.Households);
+                var workerCount = PerformanceWorkerSizer.ResolveSavePreviewWorkers(options?.WorkerCount);
+                var continueOnItemFailure = options?.ContinueOnItemFailure ?? true;
+                var processedCount = 0;
+                var indexQueue = new ConcurrentQueue<int>(Enumerable.Range(0, snapshot.Households.Count));
+                var baselineWorkingSet = Process.GetCurrentProcess().WorkingSet64;
+                var throttle = new PerformanceAdaptiveThrottle(
+                    targetWorkers: workerCount,
+                    minWorkers: 4,
+                    startedAtUtc: DateTime.UtcNow);
+                var allowedWorkers = workerCount;
 
-                for (var index = 0; index < snapshot.Households.Count; index++)
+                using var workerCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                var monitorTask = Task.Run(async () =>
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var household = snapshot.Households[index];
-                    var previewName = previewNames.TryGetValue(household.HouseholdId, out var resolvedPreviewName)
-                        ? resolvedPreviewName
-                        : household.Name;
-                    progress?.Report(new SavePreviewCacheBuildProgress
+                    while (!workerCts.IsCancellationRequested)
                     {
-                        Percent = snapshot.Households.Count == 0 ? 100 : (int)Math.Round(((index + 1d) / snapshot.Households.Count) * 100d),
-                        Detail = $"Caching {previewName}"
-                    });
-
-                    if (!household.CanExport)
-                    {
-                        blockedCount++;
-                        entries.Add(new SavePreviewCacheHouseholdEntry
+                        try
                         {
-                            HouseholdId = household.HouseholdId,
-                            HouseholdName = previewName,
-                            HomeZoneName = household.HomeZoneName,
-                            HouseholdSize = household.HouseholdSize,
-                            BuildState = "Blocked",
-                            LastError = household.ExportBlockReason
-                        });
-                        continue;
-                    }
-
-                    var stableInstanceId = ComputeStableInstanceId(normalizedSavePath, household.HouseholdId);
-                    var exportResult = _householdTrayExporter.Export(new SaveHouseholdExportRequest
-                    {
-                        SourceSavePath = normalizedSavePath,
-                        HouseholdId = household.HouseholdId,
-                        ExportRootPath = cacheRoot,
-                        OutputDirectoryOverride = cacheRoot,
-                        InstanceIdOverride = stableInstanceId,
-                        MetadataNameOverride = previewName,
-                        CreatorName = "SimsModDesktop Save Preview",
-                        CreatorId = 0x53494D5350524556,
-                        GenerateThumbnails = true
-                    });
-
-                    var trayItemKey = $"0x{stableInstanceId:X16}";
-                    if (!exportResult.Succeeded)
-                    {
-                        failedCount++;
-                        entries.Add(new SavePreviewCacheHouseholdEntry
+                            await Task.Delay(TimeSpan.FromSeconds(5), workerCts.Token).ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException)
                         {
-                            HouseholdId = household.HouseholdId,
-                            HouseholdName = previewName,
-                            HomeZoneName = household.HomeZoneName,
-                            HouseholdSize = household.HouseholdSize,
-                            BuildState = "Failed",
-                            TrayInstanceId = exportResult.InstanceIdHex,
-                            TrayItemKey = trayItemKey,
-                            LastError = exportResult.Error ?? "Failed to build save preview cache."
-                        });
-                        continue;
-                    }
+                            break;
+                        }
 
-                    readyCount++;
-                    entries.Add(new SavePreviewCacheHouseholdEntry
+                        var decision = throttle.Update(
+                            totalCompletedCount: Interlocked.CompareExchange(ref processedCount, 0, 0),
+                            nowUtc: DateTime.UtcNow,
+                            workingSetBytes: Process.GetCurrentProcess().WorkingSet64,
+                            baselineWorkingSetBytes: baselineWorkingSet);
+                        if (!decision.Changed)
+                        {
+                            continue;
+                        }
+
+                        Interlocked.Exchange(ref allowedWorkers, decision.RecommendedWorkers);
+                    }
+                }, workerCts.Token);
+
+                var workers = Enumerable.Range(0, workerCount)
+                    .Select(workerId => Task.Run(() =>
                     {
-                        HouseholdId = household.HouseholdId,
-                        HouseholdName = previewName,
-                        HomeZoneName = household.HomeZoneName,
-                        HouseholdSize = household.HouseholdSize,
-                        BuildState = "Ready",
-                        TrayInstanceId = exportResult.InstanceIdHex,
-                        TrayItemKey = trayItemKey,
-                        GeneratedFileNames = exportResult.WrittenFiles
-                            .Select(Path.GetFileName)
-                            .Where(name => !string.IsNullOrWhiteSpace(name))
-                            .Cast<string>()
-                            .ToArray()
-                    });
+                        while (!workerCts.IsCancellationRequested)
+                        {
+                            if (workerId >= Volatile.Read(ref allowedWorkers))
+                            {
+                                try
+                                {
+                                    Task.Delay(50, workerCts.Token).GetAwaiter().GetResult();
+                                }
+                                catch (OperationCanceledException)
+                                {
+                                    break;
+                                }
+
+                                continue;
+                            }
+
+                            if (!indexQueue.TryDequeue(out var index))
+                            {
+                                break;
+                            }
+
+                            if (workerCts.IsCancellationRequested)
+                            {
+                                break;
+                            }
+                            var household = snapshot.Households[index];
+                            var previewName = previewNames.TryGetValue(household.HouseholdId, out var resolvedPreviewName)
+                                ? resolvedPreviewName
+                                : household.Name;
+
+                            if (!household.CanExport)
+                            {
+                                Interlocked.Increment(ref blockedCount);
+                                entries[index] = new SavePreviewCacheHouseholdEntry
+                                {
+                                    HouseholdId = household.HouseholdId,
+                                    HouseholdName = previewName,
+                                    HomeZoneName = household.HomeZoneName,
+                                    HouseholdSize = household.HouseholdSize,
+                                    BuildState = "Blocked",
+                                    LastError = household.ExportBlockReason
+                                };
+                            }
+                            else
+                            {
+                                var stableInstanceId = ComputeStableInstanceId(normalizedSavePath, household.HouseholdId);
+                                var exportResult = _householdTrayExporter.Export(new SaveHouseholdExportRequest
+                                {
+                                    SourceSavePath = normalizedSavePath,
+                                    HouseholdId = household.HouseholdId,
+                                    ExportRootPath = cacheRoot,
+                                    OutputDirectoryOverride = cacheRoot,
+                                    InstanceIdOverride = stableInstanceId,
+                                    MetadataNameOverride = previewName,
+                                    CreatorName = "SimsModDesktop Save Preview",
+                                    CreatorId = 0x53494D5350524556,
+                                    GenerateThumbnails = true
+                                });
+
+                                var trayItemKey = $"0x{stableInstanceId:X16}";
+                                if (!exportResult.Succeeded)
+                                {
+                                    Interlocked.Increment(ref failedCount);
+                                    entries[index] = new SavePreviewCacheHouseholdEntry
+                                    {
+                                        HouseholdId = household.HouseholdId,
+                                        HouseholdName = previewName,
+                                        HomeZoneName = household.HomeZoneName,
+                                        HouseholdSize = household.HouseholdSize,
+                                        BuildState = "Failed",
+                                        TrayInstanceId = exportResult.InstanceIdHex,
+                                        TrayItemKey = trayItemKey,
+                                        LastError = exportResult.Error ?? "Failed to build save preview cache."
+                                    };
+
+                                    if (!continueOnItemFailure)
+                                    {
+                                        workerCts.Cancel();
+                                    }
+                                }
+                                else
+                                {
+                                    Interlocked.Increment(ref readyCount);
+                                    entries[index] = new SavePreviewCacheHouseholdEntry
+                                    {
+                                        HouseholdId = household.HouseholdId,
+                                        HouseholdName = previewName,
+                                        HomeZoneName = household.HomeZoneName,
+                                        HouseholdSize = household.HouseholdSize,
+                                        BuildState = "Ready",
+                                        TrayInstanceId = exportResult.InstanceIdHex,
+                                        TrayItemKey = trayItemKey,
+                                        GeneratedFileNames = exportResult.WrittenFiles
+                                            .Select(Path.GetFileName)
+                                            .Where(name => !string.IsNullOrWhiteSpace(name))
+                                            .Cast<string>()
+                                            .ToArray()
+                                    };
+                                }
+                            }
+
+                            var done = Interlocked.Increment(ref processedCount);
+                            progress?.Report(new SavePreviewCacheBuildProgress
+                            {
+                                Percent = snapshot.Households.Count == 0
+                                    ? 100
+                                    : (int)Math.Round((done / (double)snapshot.Households.Count) * 100d),
+                                Detail = $"Caching {previewName}"
+                            });
+                        }
+                    }, CancellationToken.None))
+                    .ToArray();
+
+                Task.WhenAll(workers).GetAwaiter().GetResult();
+                workerCts.Cancel();
+                try
+                {
+                    monitorTask.GetAwaiter().GetResult();
                 }
+                catch (OperationCanceledException)
+                {
+                }
+
+                var materializedEntries = entries
+                    .Select((entry, index) => entry ?? new SavePreviewCacheHouseholdEntry
+                    {
+                        HouseholdId = snapshot.Households[index].HouseholdId,
+                        HouseholdName = previewNames.TryGetValue(snapshot.Households[index].HouseholdId, out var fallbackName)
+                            ? fallbackName
+                            : snapshot.Households[index].Name,
+                        HomeZoneName = snapshot.Households[index].HomeZoneName,
+                        HouseholdSize = snapshot.Households[index].HouseholdSize,
+                        BuildState = "Failed",
+                        LastError = "Build interrupted before household was processed."
+                    })
+                    .ToList();
 
                 var sourceInfo = new FileInfo(normalizedSavePath);
                 var manifest = new SavePreviewCacheManifest
@@ -147,7 +259,7 @@ public sealed class SavePreviewCacheBuilder : ISavePreviewCacheBuilder
                     ReadyHouseholdCount = readyCount,
                     FailedHouseholdCount = failedCount,
                     BlockedHouseholdCount = blockedCount,
-                    Entries = entries
+                    Entries = materializedEntries
                 };
                 _cacheStore.Save(normalizedSavePath, manifest);
                 progress?.Report(new SavePreviewCacheBuildProgress

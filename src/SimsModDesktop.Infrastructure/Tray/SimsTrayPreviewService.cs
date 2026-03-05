@@ -493,6 +493,7 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
             .ToArray();
         if (pendingPaths.Length != 0)
         {
+            var pendingSet = pendingPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
             var loaded = _trayMetadataService
                 .GetMetadataAsync(pendingPaths, cancellationToken)
                 .GetAwaiter()
@@ -500,7 +501,7 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
 
             UpdateMetadataIndex(
                 normalizedTrayRoot,
-                rows.Where(row => pendingPaths.Contains(row.Group.TrayItemPath, StringComparer.OrdinalIgnoreCase)).ToArray(),
+                rows.Where(row => pendingSet.Contains(row.Group.TrayItemPath)).ToArray(),
                 loaded);
             _metadataIndexStore.Store(loaded);
         }
@@ -531,9 +532,10 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
             .GetAwaiter()
             .GetResult();
 
+        var pendingSet = pendingPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
         UpdateMetadataIndex(
             normalizedTrayRoot,
-            rows.Where(row => pendingPaths.Contains(row.Group.TrayItemPath, StringComparer.OrdinalIgnoreCase)).ToArray(),
+            rows.Where(row => pendingSet.Contains(row.Group.TrayItemPath)).ToArray(),
             loaded);
         _metadataIndexStore.Store(loaded);
     }

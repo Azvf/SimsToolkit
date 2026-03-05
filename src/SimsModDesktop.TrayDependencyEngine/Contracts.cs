@@ -265,6 +265,8 @@ public sealed record PackageIndexBuildRequest
     public required IReadOnlyList<PackageIndexBuildFile> PackageFiles { get; init; }
     public IReadOnlyList<PackageIndexBuildFile> ChangedPackageFiles { get; init; } = Array.Empty<PackageIndexBuildFile>();
     public IReadOnlyList<string> RemovedPackagePaths { get; init; } = Array.Empty<string>();
+    public int? ParseWorkerCount { get; init; }
+    public int? WriteBatchSize { get; init; }
 }
 
 public sealed record PackageIndexBuildFile

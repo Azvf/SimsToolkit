@@ -657,3 +657,28 @@ Execution must follow the companion checklist:
 
 * [PerformanceOptimizationChecklist.md](PerformanceOptimizationChecklist.md)
 
+## 14. Round2 Aggressive Worker Profile (2026-03)
+
+This profile extends the original plan with a high-throughput worker strategy while preserving product semantics.
+
+Worker defaults:
+
+* `ModIndex.FastWorkers`: `clamp(CPU, 4, 16)`
+* `ModIndex.DeepWorkers`: `clamp(ceil(CPU/2), 3, 10)`
+* `TrayCache.ParseWorkers`: `clamp(CPU, 4, 16)`
+* `TrayCache.WriteBatchSize`: `512`
+* `TrayMetadata.ParseWorkers`: `clamp(ceil(CPU/2), 4, 12)`
+* `Organize.MaxParallelArchives`: `clamp(ceil(CPU/2), 4, 8)`
+* `SavePreview.Workers`: `clamp(ceil(CPU/2), 4, 12)`
+* `HashWorkerCount`: default `12`
+
+Adaptive down-throttle rules:
+
+* sample window: `5s`
+* if throughput is below `85%` of previous-6-window average for `3` consecutive windows, reduce workers to `floor(current * 0.75)`
+* if throughput recovers to `>=95%` of previous average for `4` consecutive windows, increase workers by `+1` up to target
+* if process working set exceeds `120%` of baseline for `10s`, force one downscale
+
+Baseline script:
+
+* `scripts/perf/run-round2-baseline.ps1`
