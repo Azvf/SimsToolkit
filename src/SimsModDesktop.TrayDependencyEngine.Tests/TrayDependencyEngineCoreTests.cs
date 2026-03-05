@@ -136,6 +136,49 @@ public sealed class TrayDependencyEngineCoreTests
     }
 
     [Fact]
+    public async Task PackageIndexCache_TryLoadSnapshot_MigratesAliasRootToCanonicalRoot()
+    {
+        using var modsRoot = new TempDirectory("tray-alias-mods");
+        using var cacheRoot = new TempDirectory("tray-alias-cache");
+        var aliasRoot = Path.Combine(modsRoot.Path, "alias-root");
+        Directory.CreateDirectory(aliasRoot);
+
+        var packagePath = Path.Combine(modsRoot.Path, "sample.package");
+        WritePackage(packagePath, [new PackageSpec(SupportedResourceType, 0, FirstInstance, [1, 2, 3, 4])]);
+
+        var legacyResolver = new FakePathIdentityResolver();
+        var modernResolver = new FakePathIdentityResolver(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [aliasRoot] = modsRoot.Path
+        });
+
+        var legacyCache = new PackageIndexCache(cacheRoot.Path, pathIdentityResolver: legacyResolver);
+        var buildRequest = CreateBuildRequest(modsRoot.Path) with { ModsRootPath = aliasRoot };
+        _ = await legacyCache.BuildSnapshotAsync(buildRequest);
+
+        var modernCache = new PackageIndexCache(cacheRoot.Path, pathIdentityResolver: modernResolver);
+        var loaded = await modernCache.TryLoadSnapshotAsync(aliasRoot, buildRequest.InventoryVersion);
+
+        Assert.NotNull(loaded);
+        Assert.Equal(modsRoot.Path, loaded!.ModsRootPath, StringComparer.OrdinalIgnoreCase);
+
+        var dbPath = Path.Combine(cacheRoot.Path, "cache.db");
+        await using var verifyConnection = new SqliteConnection($"Data Source={dbPath};Mode=ReadWrite;");
+        await verifyConnection.OpenAsync();
+        await using var canonicalCountCommand = verifyConnection.CreateCommand();
+        canonicalCountCommand.CommandText = "SELECT COUNT(1) FROM TrayRootManifest WHERE ModsRootPath = @ModsRootPath;";
+        canonicalCountCommand.Parameters.AddWithValue("@ModsRootPath", modsRoot.Path);
+        var canonicalCount = Convert.ToInt64(await canonicalCountCommand.ExecuteScalarAsync());
+        Assert.Equal(1L, canonicalCount);
+
+        await using var aliasCountCommand = verifyConnection.CreateCommand();
+        aliasCountCommand.CommandText = "SELECT COUNT(1) FROM TrayRootManifest WHERE ModsRootPath = @ModsRootPath;";
+        aliasCountCommand.Parameters.AddWithValue("@ModsRootPath", aliasRoot);
+        var aliasCount = Convert.ToInt64(await aliasCountCommand.ExecuteScalarAsync());
+        Assert.Equal(0L, aliasCount);
+    }
+
+    [Fact]
     public async Task TrayDependencyExportService_ReusesSingleReadSession_PerPackageDuringExpansion()
     {
         using var trayRoot = new TempDirectory("tray-session-tray");
@@ -483,6 +526,59 @@ public sealed class TrayDependencyEngineCoreTests
             {
                 Directory.Delete(Path, recursive: true);
             }
+        }
+    }
+
+    private sealed class FakePathIdentityResolver : IPathIdentityResolver
+    {
+        private readonly IReadOnlyDictionary<string, string> _directoryMap;
+
+        public FakePathIdentityResolver(IReadOnlyDictionary<string, string>? directoryMap = null)
+        {
+            _directoryMap = directoryMap ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        public ResolvedPathInfo ResolveDirectory(string path)
+        {
+            var fullPath = Path.GetFullPath(path.Trim().Trim('"'));
+            var canonicalPath = _directoryMap.TryGetValue(fullPath, out var mapped)
+                ? Path.GetFullPath(mapped.Trim().Trim('"'))
+                : fullPath;
+            return new ResolvedPathInfo
+            {
+                InputPath = path,
+                FullPath = fullPath,
+                CanonicalPath = canonicalPath,
+                Exists = Directory.Exists(fullPath) || Directory.Exists(canonicalPath),
+                IsReparsePoint = false,
+                LinkTarget = null
+            };
+        }
+
+        public ResolvedPathInfo ResolveFile(string path)
+        {
+            var fullPath = Path.GetFullPath(path.Trim().Trim('"'));
+            return new ResolvedPathInfo
+            {
+                InputPath = path,
+                FullPath = fullPath,
+                CanonicalPath = fullPath,
+                Exists = File.Exists(fullPath),
+                IsReparsePoint = false,
+                LinkTarget = null
+            };
+        }
+
+        public bool EqualsDirectory(string? left, string? right)
+        {
+            if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+            {
+                return false;
+            }
+
+            var resolvedLeft = ResolveDirectory(left);
+            var resolvedRight = ResolveDirectory(right);
+            return string.Equals(resolvedLeft.CanonicalPath, resolvedRight.CanonicalPath, StringComparison.OrdinalIgnoreCase);
         }
     }
 }

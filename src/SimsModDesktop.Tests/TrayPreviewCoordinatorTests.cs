@@ -1,6 +1,7 @@
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Application.Validation;
+using SimsModDesktop.PackageCore;
 
 namespace SimsModDesktop.Tests;
 
@@ -80,6 +81,41 @@ public sealed class TrayPreviewCoordinatorTests
         }
     }
 
+    [Fact]
+    public async Task TryGetCached_UsesCanonicalTrayRootIdentity()
+    {
+        var trayDir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")));
+        var aliasPath = Path.Combine(trayDir.FullName, "alias-root");
+        Directory.CreateDirectory(aliasPath);
+
+        try
+        {
+            var resolver = new FakePathIdentityResolver(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [aliasPath] = trayDir.FullName
+            });
+            var coordinator = new TrayPreviewCoordinator(
+                new FakeTrayPreviewService(),
+                new TrayPreviewInputValidator(),
+                resolver);
+
+            var aliasInput = new TrayPreviewInput
+            {
+                TrayPath = aliasPath,
+                PageSize = 50
+            };
+            var canonicalInput = aliasInput with { TrayPath = trayDir.FullName };
+
+            _ = await coordinator.LoadAsync(aliasInput);
+
+            Assert.True(coordinator.TryGetCached(canonicalInput, out _));
+        }
+        finally
+        {
+            trayDir.Delete(recursive: true);
+        }
+    }
+
     private sealed class FakeTrayPreviewService : ISimsTrayPreviewService
     {
         public Task<SimsTrayPreviewSummary> BuildSummaryAsync(
@@ -122,6 +158,59 @@ public sealed class TrayPreviewCoordinatorTests
 
         public void Invalidate(string? trayRootPath = null)
         {
+        }
+    }
+
+    private sealed class FakePathIdentityResolver : IPathIdentityResolver
+    {
+        private readonly IReadOnlyDictionary<string, string> _directoryMap;
+
+        public FakePathIdentityResolver(IReadOnlyDictionary<string, string>? directoryMap = null)
+        {
+            _directoryMap = directoryMap ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        public ResolvedPathInfo ResolveDirectory(string path)
+        {
+            var fullPath = Path.GetFullPath(path.Trim().Trim('"'));
+            var canonicalPath = _directoryMap.TryGetValue(fullPath, out var mapped)
+                ? Path.GetFullPath(mapped.Trim().Trim('"'))
+                : fullPath;
+            return new ResolvedPathInfo
+            {
+                InputPath = path,
+                FullPath = fullPath,
+                CanonicalPath = canonicalPath,
+                Exists = true,
+                IsReparsePoint = false,
+                LinkTarget = null
+            };
+        }
+
+        public ResolvedPathInfo ResolveFile(string path)
+        {
+            var fullPath = Path.GetFullPath(path.Trim().Trim('"'));
+            return new ResolvedPathInfo
+            {
+                InputPath = path,
+                FullPath = fullPath,
+                CanonicalPath = fullPath,
+                Exists = File.Exists(fullPath),
+                IsReparsePoint = false,
+                LinkTarget = null
+            };
+        }
+
+        public bool EqualsDirectory(string? left, string? right)
+        {
+            if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+            {
+                return false;
+            }
+
+            var leftResolved = ResolveDirectory(left);
+            var rightResolved = ResolveDirectory(right);
+            return string.Equals(leftResolved.CanonicalPath, rightResolved.CanonicalPath, StringComparison.OrdinalIgnoreCase);
         }
     }
 }

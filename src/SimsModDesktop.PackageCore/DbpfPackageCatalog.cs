@@ -8,21 +8,25 @@ public sealed class DbpfPackageCatalog : IDbpfPackageCatalog
 {
     private static readonly byte[] CacheMagic = Encoding.ASCII.GetBytes("STDBPFC1");
     private const int CacheVersion = 1;
+    private static readonly IPathIdentityResolver PathIdentityResolver = new SystemPathIdentityResolver();
 
     public async Task<DbpfCatalogSnapshot> BuildSnapshotAsync(
         string rootPath,
         DbpfCatalogBuildOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        var normalizedRoot = Path.GetFullPath(rootPath.Trim());
+        var resolvedRoot = PathIdentityResolver.ResolveDirectory(rootPath);
+        var normalizedRoot = !string.IsNullOrWhiteSpace(resolvedRoot.CanonicalPath)
+            ? resolvedRoot.CanonicalPath
+            : resolvedRoot.FullPath;
         var packageFiles = Directory.Exists(normalizedRoot)
-            ? Directory.EnumerateFiles(normalizedRoot, "*.package", SearchOption.AllDirectories)
-                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            ? EnumeratePackageFiles(normalizedRoot, cancellationToken)
                 .Select(path =>
                 {
                     var info = new FileInfo(path);
-                    return new DbpfCatalogPackageFile(path, info.Length, info.LastWriteTimeUtc.Ticks);
+                    return new DbpfCatalogPackageFile(info.FullName, info.Length, info.LastWriteTimeUtc.Ticks);
                 })
+                .OrderBy(file => file.FilePath, StringComparer.OrdinalIgnoreCase)
                 .ToArray()
             : Array.Empty<DbpfCatalogPackageFile>();
 
@@ -36,13 +40,20 @@ public sealed class DbpfPackageCatalog : IDbpfPackageCatalog
         CancellationToken cancellationToken = default)
     {
         options ??= new DbpfCatalogBuildOptions();
-        var normalizedRoot = Path.GetFullPath(rootPath.Trim());
+        var resolvedRoot = PathIdentityResolver.ResolveDirectory(rootPath);
+        var normalizedRoot = !string.IsNullOrWhiteSpace(resolvedRoot.CanonicalPath)
+            ? resolvedRoot.CanonicalPath
+            : resolvedRoot.FullPath;
         var metadata = packageFiles
             .Where(file => !string.IsNullOrWhiteSpace(file.FilePath))
-            .Select(file => new PackageFileMetadata(
-                Path.GetFullPath(file.FilePath.Trim()),
-                file.Length,
-                file.LastWriteUtcTicks))
+            .Select(file =>
+            {
+                var resolvedFile = PathIdentityResolver.ResolveFile(file.FilePath);
+                var canonicalFilePath = !string.IsNullOrWhiteSpace(resolvedFile.CanonicalPath)
+                    ? resolvedFile.CanonicalPath
+                    : resolvedFile.FullPath;
+                return new PackageFileMetadata(canonicalFilePath, file.Length, file.LastWriteUtcTicks);
+            })
             .OrderBy(file => file.FilePath, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
@@ -192,6 +203,58 @@ public sealed class DbpfPackageCatalog : IDbpfPackageCatalog
     {
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         return Path.Combine(localAppData, "SimsToolkit", "Cache", "dbpf-catalog-v1.bin");
+    }
+
+    private static IReadOnlyList<string> EnumeratePackageFiles(string root, CancellationToken cancellationToken)
+    {
+        var pending = new Stack<string>();
+        var files = new List<string>();
+        pending.Push(root);
+
+        while (pending.Count > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var current = pending.Pop();
+
+            string[] childDirectories;
+            string[] packageFiles;
+            try
+            {
+                childDirectories = Directory.GetDirectories(current);
+                packageFiles = Directory.GetFiles(current, "*.package");
+            }
+            catch
+            {
+                continue;
+            }
+
+            foreach (var child in childDirectories)
+            {
+                if (IsReparseDirectory(child))
+                {
+                    continue;
+                }
+
+                pending.Push(child);
+            }
+
+            files.AddRange(packageFiles);
+        }
+
+        return files;
+    }
+
+    private static bool IsReparseDirectory(string path)
+    {
+        try
+        {
+            var attributes = File.GetAttributes(path);
+            return (attributes & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static FrozenDictionary<TKey, ResourceLocation[]> Freeze<TKey>(Dictionary<TKey, List<ResourceLocation>> source)

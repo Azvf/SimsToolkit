@@ -3,12 +3,14 @@ using System.Text;
 using System.Text.Json;
 using Dapper;
 using SimsModDesktop.Infrastructure.Persistence;
+using SimsModDesktop.PackageCore;
 
 namespace SimsModDesktop.Infrastructure.Saves;
 
 public sealed class SavePreviewCacheStore : ISavePreviewCacheStore
 {
     private const string CacheSchemaVersion = "save-preview-v2";
+    private static readonly IPathIdentityResolver PathIdentityResolver = new SystemPathIdentityResolver();
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -54,7 +56,7 @@ public sealed class SavePreviewCacheStore : ISavePreviewCacheStore
         ArgumentException.ThrowIfNullOrWhiteSpace(saveFilePath);
         ArgumentNullException.ThrowIfNull(manifest);
 
-        var file = new FileInfo(Path.GetFullPath(saveFilePath));
+        var file = new FileInfo(NormalizePath(saveFilePath));
         if (!file.Exists)
         {
             return false;
@@ -235,9 +237,23 @@ public sealed class SavePreviewCacheStore : ISavePreviewCacheStore
 
     private static string NormalizePath(string? saveFilePath)
     {
-        return string.IsNullOrWhiteSpace(saveFilePath)
-            ? string.Empty
-            : Path.GetFullPath(saveFilePath.Trim());
+        if (string.IsNullOrWhiteSpace(saveFilePath))
+        {
+            return string.Empty;
+        }
+
+        var resolved = PathIdentityResolver.ResolveFile(saveFilePath);
+        if (!string.IsNullOrWhiteSpace(resolved.CanonicalPath))
+        {
+            return resolved.CanonicalPath;
+        }
+
+        if (!string.IsNullOrWhiteSpace(resolved.FullPath))
+        {
+            return resolved.FullPath;
+        }
+
+        return saveFilePath.Trim().Trim('"');
     }
 
     private static string ComputeShortHash(string value)

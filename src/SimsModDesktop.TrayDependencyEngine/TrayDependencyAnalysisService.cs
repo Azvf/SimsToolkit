@@ -28,10 +28,14 @@ public sealed class TrayDependencyAnalysisService : ITrayDependencyAnalysisServi
     private readonly DirectMatchEngine _directMatchEngine = new();
     private readonly DependencyExpandEngine _dependencyExpandEngine;
     private readonly ModFileExporter _fileExporter = new();
+    private readonly IPathIdentityResolver _pathIdentityResolver;
 
-    public TrayDependencyAnalysisService(IDbpfResourceReader? resourceReader = null)
+    public TrayDependencyAnalysisService(
+        IDbpfResourceReader? resourceReader = null,
+        IPathIdentityResolver? pathIdentityResolver = null)
     {
         _dependencyExpandEngine = new DependencyExpandEngine(resourceReader ?? new DbpfResourceReader());
+        _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
     }
 
     public Task<TrayDependencyAnalysisResult> AnalyzeAsync(
@@ -169,14 +173,17 @@ public sealed class TrayDependencyAnalysisService : ITrayDependencyAnalysisServi
         }, cancellationToken);
     }
 
-    private static bool TryLocateTraySourceFiles(
+    private bool TryLocateTraySourceFiles(
         string trayPath,
         string trayItemKey,
         List<TrayDependencyIssue> issues,
         out string[] traySourceFiles)
     {
         traySourceFiles = Array.Empty<string>();
-        var normalizedTrayPath = (trayPath ?? string.Empty).Trim();
+        var resolvedTrayPath = _pathIdentityResolver.ResolveDirectory(trayPath ?? string.Empty);
+        var normalizedTrayPath = !string.IsNullOrWhiteSpace(resolvedTrayPath.CanonicalPath)
+            ? resolvedTrayPath.CanonicalPath
+            : resolvedTrayPath.FullPath;
         if (string.IsNullOrWhiteSpace(normalizedTrayPath))
         {
             issues.Add(new TrayDependencyIssue
@@ -235,7 +242,7 @@ public sealed class TrayDependencyAnalysisService : ITrayDependencyAnalysisServi
         return true;
     }
 
-    private static bool TryGetValidatedSnapshot(
+    private bool TryGetValidatedSnapshot(
         TrayDependencyAnalysisRequest request,
         List<TrayDependencyIssue> issues,
         IProgress<TrayDependencyAnalysisProgress>? progress,
@@ -274,17 +281,14 @@ public sealed class TrayDependencyAnalysisService : ITrayDependencyAnalysisServi
         return true;
     }
 
-    private static bool MatchesModsRoot(PackageIndexSnapshot snapshot, string? modsRootPath)
+    private bool MatchesModsRoot(PackageIndexSnapshot snapshot, string? modsRootPath)
     {
         if (snapshot is null || string.IsNullOrWhiteSpace(modsRootPath))
         {
             return false;
         }
 
-        return string.Equals(
-            snapshot.ModsRootPath,
-            Path.GetFullPath(modsRootPath.Trim()),
-            StringComparison.OrdinalIgnoreCase);
+        return _pathIdentityResolver.EqualsDirectory(snapshot.ModsRootPath, modsRootPath);
     }
 
     private static bool MatchesTrayItemKey(string path, string normalizedKey)

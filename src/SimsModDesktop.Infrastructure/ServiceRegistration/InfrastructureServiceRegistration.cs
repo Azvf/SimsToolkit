@@ -22,6 +22,7 @@ using SimsModDesktop.Infrastructure.TextureCompression;
 using SimsModDesktop.Infrastructure.TextureProcessing;
 using SimsModDesktop.Infrastructure.Tray;
 using SimsModDesktop.Infrastructure.UseCases;
+using SimsModDesktop.PackageCore;
 using SimsModDesktop.SaveData.Services;
 
 namespace SimsModDesktop.Infrastructure.ServiceRegistration;
@@ -40,6 +41,7 @@ public static class InfrastructureServiceRegistration
 
         services.AddSingleton<IFileOperationService, CrossPlatformFileOperationService>();
         services.AddSingleton<IHashComputationService, CrossPlatformHashComputationService>();
+        services.AddSingleton<IPathIdentityResolver, SystemPathIdentityResolver>();
 
         services.AddSingleton<ImageSharpPngDecoder>();
         services.AddSingleton<PfimDdsDecoder>();

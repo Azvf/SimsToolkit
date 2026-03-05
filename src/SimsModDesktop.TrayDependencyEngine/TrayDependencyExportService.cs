@@ -11,6 +11,7 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
 {
     private readonly IPackageIndexCache _packageIndexCache;
     private readonly ILogger<TrayDependencyExportService> _logger;
+    private readonly IPathIdentityResolver _pathIdentityResolver;
     private readonly TrayBundleLoader _bundleLoader = new();
     private readonly TraySearchExtractor _searchExtractor = new();
     private readonly DirectMatchEngine _directMatchEngine = new();
@@ -20,10 +21,12 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
     public TrayDependencyExportService(
         IPackageIndexCache packageIndexCache,
         IDbpfResourceReader? resourceReader = null,
-        ILogger<TrayDependencyExportService>? logger = null)
+        ILogger<TrayDependencyExportService>? logger = null,
+        IPathIdentityResolver? pathIdentityResolver = null)
     {
         _packageIndexCache = packageIndexCache;
         _logger = logger ?? NullLogger<TrayDependencyExportService>.Instance;
+        _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
         _dependencyExpandEngine = new DependencyExpandEngine(resourceReader ?? new DbpfResourceReader());
     }
 
@@ -49,13 +52,22 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
             var snapshotPackageCount = 0;
             var directMatchCount = 0;
             var expandedMatchCount = 0;
+            var resolvedModsRoot = ResolveDirectory(request.ModsRootPath);
             _logger.LogInformation(
                 "Tray export start trayKey={TrayItemKey} title={ItemTitle} sourceFiles={SourceFileCount} modsPath={ModsPath} preloadedSnapshot={HasPreloadedSnapshot}",
                 request.TrayItemKey,
                 request.ItemTitle,
                 inputSourceFileCount,
-                request.ModsRootPath,
+                resolvedModsRoot.CanonicalPath,
                 request.PreloadedSnapshot is not null);
+            _logger.LogInformation(
+                "path.resolve component={Component} rawPath={RawPath} canonicalPath={CanonicalPath} exists={Exists} isReparse={IsReparse} linkTarget={LinkTarget}",
+                "trayexport",
+                resolvedModsRoot.FullPath,
+                resolvedModsRoot.CanonicalPath,
+                resolvedModsRoot.Exists,
+                resolvedModsRoot.IsReparsePoint,
+                resolvedModsRoot.LinkTarget ?? string.Empty);
 
             Report(progress, TrayDependencyExportStage.Preparing, 0, "Copying tray files...");
 
@@ -342,23 +354,30 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
         }
     }
 
-    private static bool MatchesModsRoot(PackageIndexSnapshot snapshot, string modsRootPath)
+    private bool MatchesModsRoot(PackageIndexSnapshot snapshot, string modsRootPath)
     {
         if (string.IsNullOrWhiteSpace(snapshot.ModsRootPath) || string.IsNullOrWhiteSpace(modsRootPath))
         {
             return false;
         }
 
-        try
+        return _pathIdentityResolver.EqualsDirectory(snapshot.ModsRootPath, modsRootPath);
+    }
+
+    private ResolvedPathInfo ResolveDirectory(string path)
+    {
+        var resolved = _pathIdentityResolver.ResolveDirectory(path);
+        var fullPath = !string.IsNullOrWhiteSpace(resolved.FullPath)
+            ? resolved.FullPath
+            : path.Trim().Trim('"');
+        var canonicalPath = !string.IsNullOrWhiteSpace(resolved.CanonicalPath)
+            ? resolved.CanonicalPath
+            : fullPath;
+        return resolved with
         {
-            var snapshotRoot = Path.GetFullPath(snapshot.ModsRootPath.Trim());
-            var requestRoot = Path.GetFullPath(modsRootPath.Trim());
-            return string.Equals(snapshotRoot, requestRoot, StringComparison.OrdinalIgnoreCase);
-        }
-        catch
-        {
-            return false;
-        }
+            FullPath = fullPath,
+            CanonicalPath = canonicalPath
+        };
     }
 
     private static void Report(

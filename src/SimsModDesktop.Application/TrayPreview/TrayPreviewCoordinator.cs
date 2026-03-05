@@ -1,6 +1,7 @@
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Validation;
 using SimsModDesktop.Application.TrayPreview;
+using SimsModDesktop.PackageCore;
 
 namespace SimsModDesktop.Application.TrayPreview;
 
@@ -8,6 +9,7 @@ public sealed class TrayPreviewCoordinator : ITrayPreviewCoordinator
 {
     private readonly ISimsTrayPreviewService _previewService;
     private readonly IActionInputValidator<TrayPreviewInput> _validator;
+    private readonly IPathIdentityResolver _pathIdentityResolver;
     private readonly Dictionary<int, SimsTrayPreviewPage> _pageCache = new();
 
     private TrayPreviewInput? _activeInput;
@@ -17,10 +19,12 @@ public sealed class TrayPreviewCoordinator : ITrayPreviewCoordinator
 
     public TrayPreviewCoordinator(
         ISimsTrayPreviewService previewService,
-        IActionInputValidator<TrayPreviewInput> validator)
+        IActionInputValidator<TrayPreviewInput> validator,
+        IPathIdentityResolver? pathIdentityResolver = null)
     {
         _previewService = previewService;
         _validator = validator;
+        _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
     }
 
     public bool TryGetCached(TrayPreviewInput input, out TrayPreviewLoadResult result)
@@ -122,12 +126,7 @@ public sealed class TrayPreviewCoordinator : ITrayPreviewCoordinator
 
         if (string.IsNullOrWhiteSpace(trayRootPath) ||
             _activeInput is null ||
-            string.Equals(
-                Path.GetFullPath(_activeInput.TrayPath.Trim())
-                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                Path.GetFullPath(trayRootPath.Trim())
-                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                StringComparison.OrdinalIgnoreCase))
+            _pathIdentityResolver.EqualsDirectory(_activeInput.TrayPath, trayRootPath))
         {
             Reset();
         }
@@ -142,11 +141,11 @@ public sealed class TrayPreviewCoordinator : ITrayPreviewCoordinator
         _pageCache.Clear();
     }
 
-    private static SimsTrayPreviewRequest ToRequest(TrayPreviewInput input)
+    private SimsTrayPreviewRequest ToRequest(TrayPreviewInput input)
     {
         return new SimsTrayPreviewRequest
         {
-            TrayPath = Path.GetFullPath(input.TrayPath.Trim()),
+            TrayPath = ResolveDirectoryPath(input.TrayPath),
             PageSize = input.PageSize,
             PresetTypeFilter = string.IsNullOrWhiteSpace(input.PresetTypeFilter) ? "All" : input.PresetTypeFilter.Trim(),
             BuildSizeFilter = string.IsNullOrWhiteSpace(input.BuildSizeFilter) ? "All" : input.BuildSizeFilter.Trim(),
@@ -157,9 +156,9 @@ public sealed class TrayPreviewCoordinator : ITrayPreviewCoordinator
         };
     }
 
-    private static string BuildFingerprint(TrayPreviewInput input)
+    private string BuildFingerprint(TrayPreviewInput input)
     {
-        var trayPath = Path.GetFullPath(input.TrayPath.Trim())
+        var trayPath = ResolveDirectoryPath(input.TrayPath)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
             .ToLowerInvariant();
         var presetTypeFilter = string.IsNullOrWhiteSpace(input.PresetTypeFilter) ? "all" : input.PresetTypeFilter.Trim().ToLowerInvariant();
@@ -179,6 +178,22 @@ public sealed class TrayPreviewCoordinator : ITrayPreviewCoordinator
             authorFilter,
             timeFilter,
             searchQuery);
+    }
+
+    private string ResolveDirectoryPath(string path)
+    {
+        var resolved = _pathIdentityResolver.ResolveDirectory(path);
+        if (!string.IsNullOrWhiteSpace(resolved.CanonicalPath))
+        {
+            return resolved.CanonicalPath;
+        }
+
+        if (!string.IsNullOrWhiteSpace(resolved.FullPath))
+        {
+            return resolved.FullPath;
+        }
+
+        return path.Trim().Trim('"');
     }
 }
 

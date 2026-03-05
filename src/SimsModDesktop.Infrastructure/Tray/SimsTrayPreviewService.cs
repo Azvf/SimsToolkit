@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using SimsModDesktop.PackageCore;
 
 namespace SimsModDesktop.Infrastructure.Tray;
 
@@ -37,6 +38,7 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
     private readonly ITrayThumbnailService _trayThumbnailService;
     private readonly ITrayMetadataService _trayMetadataService;
     private readonly ILogger<SimsTrayPreviewService> _logger;
+    private readonly IPathIdentityResolver _pathIdentityResolver;
     private readonly object _cacheGate = new();
     private readonly object _metadataIndexGate = new();
     private readonly object _thumbnailCleanupGate = new();
@@ -66,12 +68,14 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         ITrayThumbnailService? trayThumbnailService,
         ITrayMetadataService? trayMetadataService,
         TrayMetadataIndexStore? metadataIndexStore,
-        ILogger<SimsTrayPreviewService>? logger = null)
+        ILogger<SimsTrayPreviewService>? logger = null,
+        IPathIdentityResolver? pathIdentityResolver = null)
     {
         _metadataIndexStore = metadataIndexStore ?? new TrayMetadataIndexStore();
         _trayThumbnailService = trayThumbnailService ?? new TrayThumbnailService();
         _trayMetadataService = trayMetadataService ?? new TrayMetadataService();
         _logger = logger ?? NullLogger<SimsTrayPreviewService>.Instance;
+        _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
     }
 
     public Task<SimsTrayPreviewSummary> BuildSummaryAsync(
@@ -110,7 +114,7 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
             else
             {
                 var pageDescriptors = snapshot.RowDescriptors.Skip(skip).Take(pageSize).ToList();
-                items = BuildPageItems(request.TrayPath.Trim(), pageDescriptors, cancellationToken);
+                items = BuildPageItems(NormalizeTrayRootPath(request.TrayPath), pageDescriptors, cancellationToken);
             }
 
             return new SimsTrayPreviewPage
@@ -199,8 +203,8 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         SimsTrayPreviewRequest request,
         CancellationToken cancellationToken)
     {
-        var trayPath = request.TrayPath.Trim();
-        var normalizedTrayRoot = NormalizeTrayRootPath(trayPath);
+        var normalizedTrayRoot = NormalizeTrayRootPath(request.TrayPath);
+        var trayPath = normalizedTrayRoot;
         var directoryWriteUtcTicks = Directory.GetLastWriteTimeUtc(normalizedTrayRoot).Ticks;
 
         lock (_cacheGate)
@@ -671,10 +675,20 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
                !string.IsNullOrWhiteSpace(request.SearchQuery);
     }
 
-    private static string NormalizeTrayRootPath(string trayRootPath)
+    private string NormalizeTrayRootPath(string trayRootPath)
     {
-        return Path.GetFullPath(trayRootPath.Trim())
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var resolved = _pathIdentityResolver.ResolveDirectory(trayRootPath);
+        if (!string.IsNullOrWhiteSpace(resolved.CanonicalPath))
+        {
+            return resolved.CanonicalPath;
+        }
+
+        if (!string.IsNullOrWhiteSpace(resolved.FullPath))
+        {
+            return resolved.FullPath;
+        }
+
+        return trayRootPath.Trim().Trim('"');
     }
 
     private static PreviewRowDescriptor CreatePreviewRowDescriptor(
@@ -1836,8 +1850,7 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
             return;
         }
 
-        var normalizedTrayRoot = Path.GetFullPath(trayRootPath.Trim())
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var normalizedTrayRoot = NormalizeTrayRootPath(trayRootPath);
         var snapshotKeys = liveItemKeys.ToArray();
 
         lock (_thumbnailCleanupGate)

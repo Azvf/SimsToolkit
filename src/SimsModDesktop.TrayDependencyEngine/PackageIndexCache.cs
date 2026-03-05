@@ -20,9 +20,13 @@ public sealed class PackageIndexCache : IPackageIndexCache
     private readonly Dictionary<string, PackageIndexSnapshot> _states = new(StringComparer.OrdinalIgnoreCase);
     private readonly SqliteCacheDatabase _database;
     private readonly ILogger<PackageIndexCache> _logger;
+    private readonly IPathIdentityResolver _pathIdentityResolver;
     private readonly string _databasePath;
 
-    public PackageIndexCache(IDbpfPackageCatalog? packageCatalog = null, ILogger<PackageIndexCache>? logger = null)
+    public PackageIndexCache(
+        IDbpfPackageCatalog? packageCatalog = null,
+        ILogger<PackageIndexCache>? logger = null,
+        IPathIdentityResolver? pathIdentityResolver = null)
         : this(
             Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -30,13 +34,19 @@ public sealed class PackageIndexCache : IPackageIndexCache
                 "Cache",
                 "TrayDependencyPackageIndex"),
             packageCatalog,
-            logger)
+            logger,
+            pathIdentityResolver)
     {
     }
 
-    public PackageIndexCache(string cacheRootPath, IDbpfPackageCatalog? packageCatalog = null, ILogger<PackageIndexCache>? logger = null)
+    public PackageIndexCache(
+        string cacheRootPath,
+        IDbpfPackageCatalog? packageCatalog = null,
+        ILogger<PackageIndexCache>? logger = null,
+        IPathIdentityResolver? pathIdentityResolver = null)
     {
-        var normalizedCacheRoot = Path.GetFullPath(cacheRootPath.Trim());
+        _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
+        var normalizedCacheRoot = ResolveDirectoryPath(cacheRootPath);
         _databasePath = Path.Combine(normalizedCacheRoot, "cache.db");
         _database = new SqliteCacheDatabase(_databasePath);
         _logger = logger ?? NullLogger<PackageIndexCache>.Instance;
@@ -52,7 +62,17 @@ public sealed class PackageIndexCache : IPackageIndexCache
             return null;
         }
 
-        var normalizedRoot = Path.GetFullPath(modsRootPath.Trim());
+        var resolvedRoot = ResolveDirectory(modsRootPath);
+        var rawRoot = resolvedRoot.FullPath;
+        var normalizedRoot = resolvedRoot.CanonicalPath;
+        _logger.LogInformation(
+            "path.resolve component={Component} rawPath={RawPath} canonicalPath={CanonicalPath} exists={Exists} isReparse={IsReparse} linkTarget={LinkTarget}",
+            "traycache.snapshot.load",
+            rawRoot,
+            normalizedRoot,
+            resolvedRoot.Exists,
+            resolvedRoot.IsReparsePoint,
+            resolvedRoot.LinkTarget ?? string.Empty);
         var cacheKey = BuildCacheKey(normalizedRoot, inventoryVersion);
         lock (_sync)
         {
@@ -68,6 +88,7 @@ public sealed class PackageIndexCache : IPackageIndexCache
             {
                 await using var connection = await _database.OpenConnectionAsync(ct).ConfigureAwait(false);
                 await EnsureSchemaAsync(connection, ct).ConfigureAwait(false);
+                await MigrateManifestAliasAsync(connection, rawRoot, normalizedRoot, ct).ConfigureAwait(false);
                 var snapshot = await LoadSnapshotAsync(connection, normalizedRoot, inventoryVersion, ct).ConfigureAwait(false);
                 if (snapshot is null)
                 {
@@ -104,21 +125,31 @@ public sealed class PackageIndexCache : IPackageIndexCache
             throw new ArgumentException("Mods root path is required.", nameof(request));
         }
 
-        var normalizedRoot = Path.GetFullPath(request.ModsRootPath.Trim());
+        var resolvedRoot = ResolveDirectory(request.ModsRootPath);
+        var rawRoot = resolvedRoot.FullPath;
+        var normalizedRoot = resolvedRoot.CanonicalPath;
         var removedSet = request.RemovedPackagePaths
             .Where(path => !string.IsNullOrWhiteSpace(path))
-            .Select(path => Path.GetFullPath(path.Trim()))
+            .Select(ResolveFilePath)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var changedSet = request.ChangedPackageFiles
             .Where(file => !string.IsNullOrWhiteSpace(file.FilePath))
-            .Select(file => Path.GetFullPath(file.FilePath.Trim()))
+            .Select(file => ResolveFilePath(file.FilePath))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var files = request.PackageFiles
             .Where(file => !string.IsNullOrWhiteSpace(file.FilePath))
-            .Select(file => new BuildFile(Path.GetFullPath(file.FilePath.Trim()), file.Length, file.LastWriteUtcTicks))
+            .Select(file => new BuildFile(ResolveFilePath(file.FilePath), file.Length, file.LastWriteUtcTicks))
             .Where(file => !removedSet.Contains(file.Path))
             .OrderBy(file => file.Path, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        _logger.LogInformation(
+            "path.resolve component={Component} rawPath={RawPath} canonicalPath={CanonicalPath} exists={Exists} isReparse={IsReparse} linkTarget={LinkTarget}",
+            "traycache.snapshot",
+            rawRoot,
+            normalizedRoot,
+            resolvedRoot.Exists,
+            resolvedRoot.IsReparsePoint,
+            resolvedRoot.LinkTarget ?? string.Empty);
 
         Report(progress, 5, "Preparing package cache...");
         var timer = Stopwatch.StartNew();
@@ -135,6 +166,7 @@ public sealed class PackageIndexCache : IPackageIndexCache
             await using var connection = await _database.OpenConnectionAsync(ct).ConfigureAwait(false);
             await EnsureSchemaAsync(connection, ct).ConfigureAwait(false);
             await using var transaction = await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
+            await MigrateManifestAliasAsync(connection, transaction, rawRoot, normalizedRoot, ct).ConfigureAwait(false);
 
             var manifestRows = new List<ManifestRow>(files.Length);
             var hitCount = 0;
@@ -279,6 +311,141 @@ public sealed class PackageIndexCache : IPackageIndexCache
             timer.ElapsedMilliseconds);
         return snapshot;
     }
+
+    private ResolvedPathInfo ResolveDirectory(string path)
+    {
+        var resolved = _pathIdentityResolver.ResolveDirectory(path);
+        var fullPath = !string.IsNullOrWhiteSpace(resolved.FullPath)
+            ? resolved.FullPath
+            : path.Trim().Trim('"');
+        var canonicalPath = !string.IsNullOrWhiteSpace(resolved.CanonicalPath)
+            ? resolved.CanonicalPath
+            : fullPath;
+        return resolved with
+        {
+            FullPath = fullPath,
+            CanonicalPath = canonicalPath
+        };
+    }
+
+    private string ResolveDirectoryPath(string path)
+    {
+        return ResolveDirectory(path).CanonicalPath;
+    }
+
+    private string ResolveFilePath(string path)
+    {
+        var resolved = _pathIdentityResolver.ResolveFile(path);
+        if (!string.IsNullOrWhiteSpace(resolved.CanonicalPath))
+        {
+            return resolved.CanonicalPath;
+        }
+
+        if (!string.IsNullOrWhiteSpace(resolved.FullPath))
+        {
+            return resolved.FullPath;
+        }
+
+        return path.Trim().Trim('"');
+    }
+
+    private async Task MigrateManifestAliasAsync(
+        SqliteConnection connection,
+        string fromRoot,
+        string toRoot,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(fromRoot) ||
+            string.IsNullOrWhiteSpace(toRoot) ||
+            string.Equals(fromRoot, toRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        _ = await MigrateManifestAliasAsync(
+            connection,
+            transaction,
+            fromRoot,
+            toRoot,
+            cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<int> MigrateManifestAliasAsync(
+        SqliteConnection connection,
+        System.Data.Common.DbTransaction transaction,
+        string fromRoot,
+        string toRoot,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(fromRoot) ||
+            string.IsNullOrWhiteSpace(toRoot) ||
+            string.Equals(fromRoot, toRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            return 0;
+        }
+
+        var migrationTimer = Stopwatch.StartNew();
+        var aliasExists = await connection.ExecuteScalarAsync<long>(new CommandDefinition(
+            "SELECT COUNT(1) FROM TrayRootManifest WHERE ModsRootPath = @ModsRootPath;",
+            new { ModsRootPath = fromRoot },
+            transaction,
+            cancellationToken: cancellationToken)).ConfigureAwait(false) > 0;
+        if (!aliasExists)
+        {
+            return 0;
+        }
+
+        var canonicalExists = await connection.ExecuteScalarAsync<long>(new CommandDefinition(
+            "SELECT COUNT(1) FROM TrayRootManifest WHERE ModsRootPath = @ModsRootPath;",
+            new { ModsRootPath = toRoot },
+            transaction,
+            cancellationToken: cancellationToken)).ConfigureAwait(false) > 0;
+        int movedRows;
+        if (canonicalExists)
+        {
+            var deletedPackages = await connection.ExecuteAsync(new CommandDefinition(
+                "DELETE FROM TrayRootManifestPackage WHERE ModsRootPath = @ModsRootPath;",
+                new { ModsRootPath = fromRoot },
+                transaction,
+                cancellationToken: cancellationToken)).ConfigureAwait(false);
+            var deletedManifest = await connection.ExecuteAsync(new CommandDefinition(
+                "DELETE FROM TrayRootManifest WHERE ModsRootPath = @ModsRootPath;",
+                new { ModsRootPath = fromRoot },
+                transaction,
+                cancellationToken: cancellationToken)).ConfigureAwait(false);
+            movedRows = deletedPackages + deletedManifest;
+        }
+        else
+        {
+            var updatedPackages = await connection.ExecuteAsync(new CommandDefinition(
+                "UPDATE TrayRootManifestPackage SET ModsRootPath = @ToRoot WHERE ModsRootPath = @FromRoot;",
+                new { FromRoot = fromRoot, ToRoot = toRoot },
+                transaction,
+                cancellationToken: cancellationToken)).ConfigureAwait(false);
+            var updatedManifest = await connection.ExecuteAsync(new CommandDefinition(
+                "UPDATE TrayRootManifest SET ModsRootPath = @ToRoot WHERE ModsRootPath = @FromRoot;",
+                new { FromRoot = fromRoot, ToRoot = toRoot },
+                transaction,
+                cancellationToken: cancellationToken)).ConfigureAwait(false);
+            movedRows = updatedPackages + updatedManifest;
+        }
+
+        if (movedRows > 0)
+        {
+            _logger.LogInformation(
+                "path.alias.migrate component={Component} fromRoot={FromRoot} toRoot={ToRoot} movedRows={MovedRows} elapsedMs={ElapsedMs}",
+                "traycache.manifest",
+                fromRoot,
+                toRoot,
+                movedRows,
+                migrationTimer.ElapsedMilliseconds);
+        }
+
+        return movedRows;
+    }
+
     private async Task<bool> UpsertPackageCacheAsync(
         SqliteConnection connection,
         System.Data.Common.DbTransaction transaction,

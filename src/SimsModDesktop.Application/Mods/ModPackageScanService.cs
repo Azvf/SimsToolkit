@@ -1,7 +1,11 @@
+using SimsModDesktop.PackageCore;
+
 namespace SimsModDesktop.Application.Mods;
 
 public sealed class ModPackageScanService : IModPackageScanService
 {
+    private static readonly IPathIdentityResolver PathIdentityResolver = new SystemPathIdentityResolver();
+
     public Task<IReadOnlyList<ModPackageScanResult>> ScanAsync(
         string modsRoot,
         CancellationToken cancellationToken = default)
@@ -9,7 +13,10 @@ public sealed class ModPackageScanService : IModPackageScanService
         cancellationToken.ThrowIfCancellationRequested();
         ArgumentException.ThrowIfNullOrWhiteSpace(modsRoot);
 
-        var root = Path.GetFullPath(modsRoot.Trim());
+        var resolvedRoot = PathIdentityResolver.ResolveDirectory(modsRoot);
+        var root = !string.IsNullOrWhiteSpace(resolvedRoot.CanonicalPath)
+            ? resolvedRoot.CanonicalPath
+            : resolvedRoot.FullPath;
         if (!Directory.Exists(root))
         {
             return Task.FromResult<IReadOnlyList<ModPackageScanResult>>(Array.Empty<ModPackageScanResult>());
@@ -62,6 +69,11 @@ public sealed class ModPackageScanService : IModPackageScanService
 
             foreach (var child in childDirectories)
             {
+                if (IsReparseDirectory(child))
+                {
+                    continue;
+                }
+
                 pending.Push(child);
             }
 
@@ -69,6 +81,19 @@ public sealed class ModPackageScanService : IModPackageScanService
             {
                 yield return file;
             }
+        }
+    }
+
+    private static bool IsReparseDirectory(string path)
+    {
+        try
+        {
+            var attributes = File.GetAttributes(path);
+            return (attributes & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint;
+        }
+        catch
+        {
+            return false;
         }
     }
 

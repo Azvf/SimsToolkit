@@ -1,8 +1,10 @@
+using System.Diagnostics;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Application.Mods;
 using SimsModDesktop.Infrastructure.Persistence;
+using SimsModDesktop.PackageCore;
 
 namespace SimsModDesktop.Infrastructure.Mods;
 
@@ -11,28 +13,38 @@ internal sealed class SqliteModPackageInventoryService : IModPackageInventorySer
     private const int SchemaVersion = 2;
     private readonly AppCacheDatabase _database;
     private readonly ILogger<SqliteModPackageInventoryService> _logger;
+    private readonly IPathIdentityResolver _pathIdentityResolver;
 
     public SqliteModPackageInventoryService()
-        : this(new AppCacheDatabase(), NullLogger<SqliteModPackageInventoryService>.Instance)
+        : this(new AppCacheDatabase(), NullLogger<SqliteModPackageInventoryService>.Instance, new SystemPathIdentityResolver())
     {
     }
 
     public SqliteModPackageInventoryService(string cacheRootPath)
-        : this(new AppCacheDatabase(cacheRootPath), NullLogger<SqliteModPackageInventoryService>.Instance)
+        : this(new AppCacheDatabase(cacheRootPath), NullLogger<SqliteModPackageInventoryService>.Instance, new SystemPathIdentityResolver())
     {
     }
 
     public SqliteModPackageInventoryService(ILogger<SqliteModPackageInventoryService> logger)
-        : this(new AppCacheDatabase(), logger)
+        : this(new AppCacheDatabase(), logger, new SystemPathIdentityResolver())
+    {
+    }
+
+    public SqliteModPackageInventoryService(
+        ILogger<SqliteModPackageInventoryService> logger,
+        IPathIdentityResolver pathIdentityResolver)
+        : this(new AppCacheDatabase(), logger, pathIdentityResolver)
     {
     }
 
     private SqliteModPackageInventoryService(
         AppCacheDatabase database,
-        ILogger<SqliteModPackageInventoryService> logger)
+        ILogger<SqliteModPackageInventoryService> logger,
+        IPathIdentityResolver pathIdentityResolver)
     {
         _database = database;
         _logger = logger;
+        _pathIdentityResolver = pathIdentityResolver;
     }
 
     public Task<ModPackageInventoryRefreshResult> RefreshAsync(
@@ -44,11 +56,38 @@ internal sealed class SqliteModPackageInventoryService : IModPackageInventorySer
         ArgumentException.ThrowIfNullOrWhiteSpace(modsRoot);
         var startedAt = DateTime.UtcNow;
 
-        var normalizedRoot = Path.GetFullPath(modsRoot.Trim());
+        var resolvedRoot = _pathIdentityResolver.ResolveDirectory(modsRoot);
+        var rawRoot = !string.IsNullOrWhiteSpace(resolvedRoot.FullPath)
+            ? resolvedRoot.FullPath
+            : modsRoot.Trim().Trim('"');
+        var normalizedRoot = !string.IsNullOrWhiteSpace(resolvedRoot.CanonicalPath)
+            ? resolvedRoot.CanonicalPath
+            : rawRoot;
+        _logger.LogInformation(
+            "path.resolve component={Component} rawPath={RawPath} canonicalPath={CanonicalPath} exists={Exists} isReparse={IsReparse} linkTarget={LinkTarget}",
+            "modcache.inventory",
+            rawRoot,
+            normalizedRoot,
+            resolvedRoot.Exists,
+            resolvedRoot.IsReparsePoint,
+            resolvedRoot.LinkTarget ?? string.Empty);
         var currentEntries = ScanEntries(normalizedRoot, progress, cancellationToken);
 
         using var connection = OpenConnection();
         using var transaction = connection.BeginTransaction();
+        var aliasMigrationStarted = Stopwatch.StartNew();
+        var aliasMovedRows = MigrateRootAlias(connection, transaction, rawRoot, normalizedRoot);
+        aliasMigrationStarted.Stop();
+        if (aliasMovedRows > 0)
+        {
+            _logger.LogInformation(
+                "path.alias.migrate component={Component} fromRoot={FromRoot} toRoot={ToRoot} movedRows={MovedRows} elapsedMs={ElapsedMs}",
+                "modcache.inventory",
+                rawRoot,
+                normalizedRoot,
+                aliasMovedRows,
+                aliasMigrationStarted.ElapsedMilliseconds);
+        }
 
         var existingEntries = connection.Query<InventoryEntryRow>(
                 """
@@ -237,7 +276,7 @@ internal sealed class SqliteModPackageInventoryService : IModPackageInventorySer
         });
     }
 
-    private static IReadOnlyList<ModPackageInventoryEntry> ScanEntries(
+    private IReadOnlyList<ModPackageInventoryEntry> ScanEntries(
         string normalizedRoot,
         IProgress<ModPackageInventoryRefreshProgress>? progress,
         CancellationToken cancellationToken)
@@ -247,7 +286,18 @@ internal sealed class SqliteModPackageInventoryService : IModPackageInventorySer
             return Array.Empty<ModPackageInventoryEntry>();
         }
 
-        var packagePaths = EnumeratePackageFiles(normalizedRoot, cancellationToken)
+        var packageEnumeration = EnumeratePackageFiles(normalizedRoot, cancellationToken);
+        if (packageEnumeration.SkippedReparseDirectoryCount > 0)
+        {
+            _logger.LogInformation(
+                "path.reparse.skip component={Component} root={Root} skippedCount={SkippedCount} samplePath={SamplePath}",
+                "modcache.inventory.scan",
+                normalizedRoot,
+                packageEnumeration.SkippedReparseDirectoryCount,
+                packageEnumeration.SampleSkippedPath ?? string.Empty);
+        }
+
+        var packagePaths = packageEnumeration.Paths
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var entries = new List<ModPackageInventoryEntry>(packagePaths.Length);
@@ -361,9 +411,12 @@ internal sealed class SqliteModPackageInventoryService : IModPackageInventorySer
         }
     }
 
-    private static IEnumerable<string> EnumeratePackageFiles(string root, CancellationToken cancellationToken)
+    private static PackageEnumerationResult EnumeratePackageFiles(string root, CancellationToken cancellationToken)
     {
         var pending = new Stack<string>();
+        var collectedFiles = new List<string>();
+        var skippedCount = 0;
+        string? sampleSkippedPath = null;
         pending.Push(root);
 
         while (pending.Count > 0)
@@ -372,11 +425,11 @@ internal sealed class SqliteModPackageInventoryService : IModPackageInventorySer
             var current = pending.Pop();
 
             string[] childDirectories;
-            string[] files;
+            string[] packageFiles;
             try
             {
                 childDirectories = Directory.GetDirectories(current);
-                files = Directory.GetFiles(current, "*.package");
+                packageFiles = Directory.GetFiles(current, "*.package");
             }
             catch
             {
@@ -385,14 +438,86 @@ internal sealed class SqliteModPackageInventoryService : IModPackageInventorySer
 
             foreach (var child in childDirectories)
             {
+                if (IsReparseDirectory(child))
+                {
+                    skippedCount++;
+                    sampleSkippedPath ??= child;
+                    continue;
+                }
+
                 pending.Push(child);
             }
 
-            foreach (var file in files)
+            foreach (var file in packageFiles)
             {
-                yield return file;
+                collectedFiles.Add(file);
             }
         }
+
+        return new PackageEnumerationResult(collectedFiles.ToArray(), skippedCount, sampleSkippedPath);
+    }
+
+    private static bool IsReparseDirectory(string path)
+    {
+        try
+        {
+            var attributes = File.GetAttributes(path);
+            return (attributes & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static int MigrateRootAlias(
+        System.Data.IDbConnection connection,
+        System.Data.IDbTransaction transaction,
+        string fromRoot,
+        string toRoot)
+    {
+        if (string.IsNullOrWhiteSpace(fromRoot) ||
+            string.IsNullOrWhiteSpace(toRoot) ||
+            string.Equals(fromRoot, toRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            return 0;
+        }
+
+        var aliasRootExists = connection.ExecuteScalar<long>(
+            "SELECT COUNT(1) FROM ModPackageInventoryRoots WHERE ModsRootPath = @ModsRootPath;",
+            new { ModsRootPath = fromRoot },
+            transaction) > 0;
+        if (!aliasRootExists)
+        {
+            return 0;
+        }
+
+        var canonicalRootExists = connection.ExecuteScalar<long>(
+            "SELECT COUNT(1) FROM ModPackageInventoryRoots WHERE ModsRootPath = @ModsRootPath;",
+            new { ModsRootPath = toRoot },
+            transaction) > 0;
+        if (canonicalRootExists)
+        {
+            var deletedEntries = connection.Execute(
+                "DELETE FROM ModPackageInventoryEntries WHERE ModsRootPath = @ModsRootPath;",
+                new { ModsRootPath = fromRoot },
+                transaction);
+            var deletedRoots = connection.Execute(
+                "DELETE FROM ModPackageInventoryRoots WHERE ModsRootPath = @ModsRootPath;",
+                new { ModsRootPath = fromRoot },
+                transaction);
+            return deletedEntries + deletedRoots;
+        }
+
+        var movedEntries = connection.Execute(
+            "UPDATE ModPackageInventoryEntries SET ModsRootPath = @ToRoot WHERE ModsRootPath = @FromRoot;",
+            new { FromRoot = fromRoot, ToRoot = toRoot },
+            transaction);
+        var movedRoots = connection.Execute(
+            "UPDATE ModPackageInventoryRoots SET ModsRootPath = @ToRoot WHERE ModsRootPath = @FromRoot;",
+            new { FromRoot = fromRoot, ToRoot = toRoot },
+            transaction);
+        return movedEntries + movedRoots;
     }
 
     private static string ResolvePackageType(string fileName)
@@ -445,4 +570,9 @@ internal sealed class SqliteModPackageInventoryService : IModPackageInventorySer
         public string ScopeHint { get; set; } = string.Empty;
         public string PackageFingerprintKey { get; set; } = string.Empty;
     }
+
+    private sealed record PackageEnumerationResult(
+        IReadOnlyList<string> Paths,
+        int SkippedReparseDirectoryCount,
+        string? SampleSkippedPath);
 }
