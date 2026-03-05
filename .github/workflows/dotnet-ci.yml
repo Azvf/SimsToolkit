@@ -8,7 +8,18 @@ on:
   pull_request:
 
 jobs:
+  docs-governance:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify Config And Docs Consistency
+        shell: pwsh
+        run: ./scripts/docs/verify-config-docs.ps1
+
   architecture-guards:
+    needs: docs-governance
     runs-on: windows-latest
     steps:
       - name: Checkout

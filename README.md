@@ -2,7 +2,7 @@
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![.NET](https://img.shields.io/badge/.NET-8.0-purple)](https://dotnet.microsoft.com/)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey)]()
+[![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)]()
 
 [中文文档](README.zh-CN.md)
 

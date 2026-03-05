@@ -27,16 +27,12 @@ Provide a persistent, runtime-editable configuration table for debug and feature
   - `Reset Debug Config` resets all toggles to defaults.
 
 ## Active Toggles
-- `startup.tray_cache_warmup.enabled`
-  - Enables startup tray dependency cache warmup.
-- `startup.tray_cache_warmup.show_banner`
-  - Shows/hides startup warmup progress banner.
-- `startup.tray_cache_warmup.verbose_log`
-  - Enables periodic warmup progress logs.
+- No active toggles are currently defined in `ShellSettingsController` (`DebugToggleDefinitions = []`).
+- The debug config file is still maintained and can be extended when new toggles are introduced.
 
 ## Extension Pattern
 To add a new toggle:
 1. Add a `DebugToggleDefinition` entry in `ShellSettingsController`.
-2. Read it via `GetDebugToggleValue(key)` and expose a typed property.
+2. Bind the definition to the target runtime flow and read it from `DebugConfigItems`.
 3. Consume the property in the target runtime path.
 4. No schema migration needed; defaults apply automatically when key is missing.
