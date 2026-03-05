@@ -39,20 +39,21 @@ public sealed class ShellSystemOperationsController : ObservableObject
         private set => SetProperty(ref _cacheMaintenanceStatus, value);
     }
 
-    public async Task LaunchGameAsync(string gameExecutablePath)
+    public async Task LaunchGameAsync(string? gameExecutablePath)
     {
+        var executablePath = gameExecutablePath?.Trim() ?? string.Empty;
         _logger.LogInformation(
             "{Event} status={Status} domain={Domain} executablePath={ExecutablePath}",
             LogEvents.ShellOpsLaunchGameStart,
             "start",
             "shell",
-            gameExecutablePath ?? string.Empty);
+            executablePath);
         var request = new LaunchGameRequest
         {
-            ExecutablePath = gameExecutablePath,
-            WorkingDirectory = string.IsNullOrWhiteSpace(gameExecutablePath)
+            ExecutablePath = executablePath,
+            WorkingDirectory = string.IsNullOrWhiteSpace(executablePath)
                 ? null
-                : Path.GetDirectoryName(gameExecutablePath)
+                : Path.GetDirectoryName(executablePath)
         };
 
         try
@@ -76,7 +77,7 @@ public sealed class ShellSystemOperationsController : ObservableObject
                 LogEvents.ShellOpsLaunchGameFail,
                 "fail",
                 "shell",
-                gameExecutablePath ?? string.Empty);
+                executablePath);
             throw;
         }
     }

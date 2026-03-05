@@ -191,7 +191,7 @@ public sealed class MainWindowTrayExportController
             batchTiming.Cancel("cache-not-ready");
             return;
         }
-        if (preloadedSnapshot.Packages.Count == 0)
+        if (preloadedSnapshot is null || preloadedSnapshot.Packages.Count == 0)
         {
             _logger.LogWarning(
                 "{Event} status={Status} domain={Domain} modsPath={ModsPath} inventoryVersion={InventoryVersion} snapshotPackages={SnapshotPackages} reason={Reason}",
@@ -199,8 +199,8 @@ public sealed class MainWindowTrayExportController
                 "blocked",
                 "trayexport",
                 queueEntries[0].Request.ModsRootPath,
-                preloadedSnapshot.InventoryVersion,
-                preloadedSnapshot.Packages.Count,
+                preloadedSnapshot?.InventoryVersion ?? 0,
+                preloadedSnapshot?.Packages.Count ?? 0,
                 "snapshot-empty");
             const string blockedMessage = "Export blocked: tray dependency cache is empty (0 packages). Verify Mods Path points to your real The Sims 4 Mods folder and wait for warmup to finish.";
             for (var index = 0; index < queueEntries.Length; index++)
@@ -214,7 +214,7 @@ public sealed class MainWindowTrayExportController
 
             host.SetStatus(blockedMessage);
             host.AppendLog(
-                $"[trayexport.blocked.snapshot-empty] modsPath={queueEntries[0].Request.ModsRootPath} inventoryVersion={preloadedSnapshot.InventoryVersion} snapshotPackages=0");
+                $"[trayexport.blocked.snapshot-empty] modsPath={queueEntries[0].Request.ModsRootPath} inventoryVersion={preloadedSnapshot?.InventoryVersion ?? 0} snapshotPackages=0");
             batchTiming.Cancel("snapshot-empty");
             return;
         }

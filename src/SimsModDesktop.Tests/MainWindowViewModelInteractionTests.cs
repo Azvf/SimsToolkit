@@ -1222,9 +1222,21 @@ public sealed class MainWindowViewModelInteractionTests
 
     private sealed class NoOpModItemIndexScheduler : IModItemIndexScheduler
     {
-        public event EventHandler<ModFastBatchAppliedEventArgs>? FastBatchApplied;
-        public event EventHandler<ModEnrichmentAppliedEventArgs>? EnrichmentApplied;
-        public event EventHandler? AllWorkCompleted;
+        public event EventHandler<ModFastBatchAppliedEventArgs>? FastBatchApplied
+        {
+            add { }
+            remove { }
+        }
+        public event EventHandler<ModEnrichmentAppliedEventArgs>? EnrichmentApplied
+        {
+            add { }
+            remove { }
+        }
+        public event EventHandler? AllWorkCompleted
+        {
+            add { }
+            remove { }
+        }
         public bool IsFastPassRunning => false;
         public bool IsDeepPassRunning => false;
 

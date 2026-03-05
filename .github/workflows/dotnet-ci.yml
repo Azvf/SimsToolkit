@@ -24,7 +24,7 @@ jobs:
         run: dotnet restore SimsDesktopTools.sln
 
       - name: Build
-        run: dotnet build SimsDesktopTools.sln --configuration Release --no-restore
+        run: dotnet build SimsDesktopTools.sln --configuration Release --no-restore -warnaserror:CS8600,CS8601,CS8602,CS8603,CS8604,CS8618
 
       - name: Engineering Guard Tests
         run: dotnet test src/SimsModDesktop.Tests/SimsModDesktop.Tests.csproj --configuration Release --no-build --filter "FullyQualifiedName~ArchitectureProjectsTests|FullyQualifiedName~ArchitectureBoundaryTests|FullyQualifiedName~PureArchitectureConstraintsTests|FullyQualifiedName~EngineeringConventionsGuardTests" --verbosity minimal
@@ -46,7 +46,7 @@ jobs:
         run: dotnet restore SimsDesktopTools.sln
 
       - name: Build
-        run: dotnet build SimsDesktopTools.sln --configuration Release --no-restore
+        run: dotnet build SimsDesktopTools.sln --configuration Release --no-restore -warnaserror:CS8600,CS8601,CS8602,CS8603,CS8604,CS8618
 
       - name: Test
         run: dotnet test SimsDesktopTools.sln --configuration Release --no-build --verbosity minimal

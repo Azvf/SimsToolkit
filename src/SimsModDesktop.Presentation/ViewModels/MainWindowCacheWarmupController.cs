@@ -486,9 +486,9 @@ public sealed class MainWindowCacheWarmupController
         });
     }
 
-    internal bool TryGetReadyTraySnapshot(string modsRootPath, out PackageIndexSnapshot snapshot)
+    internal bool TryGetReadyTraySnapshot(string modsRootPath, out PackageIndexSnapshot? snapshot)
     {
-        snapshot = null!;
+        snapshot = null;
         if (string.IsNullOrWhiteSpace(modsRootPath))
         {
             return false;
