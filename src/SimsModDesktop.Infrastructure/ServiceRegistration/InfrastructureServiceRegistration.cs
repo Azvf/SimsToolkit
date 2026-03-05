@@ -11,7 +11,6 @@ using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Application.TextureProcessing;
 using SimsModDesktop.Application.TrayPreview;
-using SimsModDesktop.Application.UseCases;
 using SimsModDesktop.Infrastructure.Configuration;
 using SimsModDesktop.Infrastructure.Localization;
 using SimsModDesktop.Infrastructure.Mods;
@@ -21,7 +20,6 @@ using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Infrastructure.TextureCompression;
 using SimsModDesktop.Infrastructure.TextureProcessing;
 using SimsModDesktop.Infrastructure.Tray;
-using SimsModDesktop.Infrastructure.UseCases;
 using SimsModDesktop.PackageCore;
 using SimsModDesktop.SaveData.Services;
 
@@ -79,21 +77,6 @@ public static class InfrastructureServiceRegistration
         services.AddSingleton<IGameLaunchService, GameLaunchService>();
         services.AddSingleton<IActionResultRepository, ActionResultRepository>();
         services.AddSingleton<IOperationRecoveryStore, SqliteOperationRecoveryStore>();
-
-        services.AddSingleton<IOrganizeModsUseCase, NoOpOrganizeModsUseCase>();
-        services.AddSingleton<IFlattenModsUseCase, NoOpFlattenModsUseCase>();
-        services.AddSingleton<INormalizeNamesUseCase, NoOpNormalizeNamesUseCase>();
-        services.AddSingleton<IMergeFoldersUseCase, NoOpMergeFoldersUseCase>();
-        services.AddSingleton<IFindDuplicateFilesUseCase, NoOpFindDuplicateFilesUseCase>();
-        services.AddSingleton<ICompressTexturesUseCase, NoOpCompressTexturesUseCase>();
-        services.AddSingleton<ILoadTrayPreviewUseCase, NoOpLoadTrayPreviewUseCase>();
-        services.AddSingleton<ILoadTrayPreviewPageUseCase, NoOpLoadTrayPreviewPageUseCase>();
-        services.AddSingleton<IExportTraySelectionUseCase, NoOpExportTraySelectionUseCase>();
-        services.AddSingleton<IAnalyzeTrayDependenciesUseCase, NoOpAnalyzeTrayDependenciesUseCase>();
-        services.AddSingleton<ILoadModCatalogUseCase, NoOpLoadModCatalogUseCase>();
-        services.AddSingleton<IInspectModItemUseCase, NoOpInspectModItemUseCase>();
-        services.AddSingleton<ILoadSaveCatalogUseCase, NoOpLoadSaveCatalogUseCase>();
-        services.AddSingleton<ILaunchGameUseCase, NoOpLaunchGameUseCase>();
 
         return services;
     }

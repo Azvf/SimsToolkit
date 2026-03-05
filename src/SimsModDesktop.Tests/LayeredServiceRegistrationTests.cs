@@ -3,7 +3,6 @@ using SimsModDesktop.Application.Configuration;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.ServiceRegistration;
 using SimsModDesktop.Application.TextureCompression;
-using SimsModDesktop.Application.UseCases;
 using SimsModDesktop.Infrastructure.ServiceRegistration;
 using SimsModDesktop.Presentation.ServiceRegistration;
 using SimsModDesktop.Presentation.ViewModels;
@@ -54,6 +53,5 @@ public sealed class LayeredServiceRegistrationTests
         Assert.NotNull(provider.GetRequiredService<MainWindowViewModel>());
         Assert.NotNull(provider.GetRequiredService<ITextureCompressionService>());
         Assert.NotNull(provider.GetRequiredService<IConfigurationProvider>());
-        Assert.NotNull(provider.GetRequiredService<IOrganizeModsUseCase>());
     }
 }

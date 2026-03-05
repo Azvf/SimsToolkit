@@ -333,6 +333,25 @@ public sealed class EngineeringConventionsGuardTests
             "SqliteModPackageInventoryService should remain internal and be consumed via IModPackageInventoryService.");
     }
 
+    [Fact]
+    public void InfrastructureAssembly_DoesNotContain_NoOpUseCase_Implementations()
+    {
+        var assembly = typeof(SimsModDesktop.Infrastructure.ServiceRegistration.InfrastructureServiceRegistration).Assembly;
+        var invalidTypes = assembly
+            .GetTypes()
+            .Where(type => type.Name.StartsWith("NoOp", StringComparison.Ordinal) &&
+                           type.Name.EndsWith("UseCase", StringComparison.Ordinal))
+            .Select(type => type.FullName ?? type.Name)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(
+            invalidTypes.Length == 0,
+            "Infrastructure assembly should not contain NoOp use-case placeholders:" +
+            Environment.NewLine +
+            string.Join(Environment.NewLine, invalidTypes));
+    }
+
     private static void AssertNamespaceDeclaration(
         string repoRoot,
         string relativeDirectory,

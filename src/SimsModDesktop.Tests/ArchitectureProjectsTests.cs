@@ -67,23 +67,20 @@ public sealed class ArchitectureProjectsTests
     }
 
     [Fact]
-    public void Infrastructure_Implements_ApplicationPorts()
+    public void Infrastructure_DoesNotContain_NoOpUseCase_Placeholders()
     {
-        var applicationAssembly = typeof(SimsModDesktop.Application.UseCases.IUseCase<,>).Assembly;
         var infrastructureAssembly = typeof(SimsModDesktop.Infrastructure.ServiceRegistration.InfrastructureServiceRegistration).Assembly;
 
-        var missingImplementations = applicationAssembly
+        var invalidTypes = infrastructureAssembly
             .GetTypes()
-            .Where(type => type.IsInterface && type.Name.EndsWith("UseCase", StringComparison.Ordinal))
-            .Where(type => !infrastructureAssembly.GetTypes().Any(candidate =>
-                candidate is { IsAbstract: false, IsInterface: false } &&
-                type.IsAssignableFrom(candidate)))
+            .Where(type => type.Name.StartsWith("NoOp", StringComparison.Ordinal) &&
+                           type.Name.EndsWith("UseCase", StringComparison.Ordinal))
             .Select(type => type.FullName ?? type.Name)
             .ToArray();
 
         Assert.True(
-            missingImplementations.Length == 0,
-            "Infrastructure should implement every application use case port:" + Environment.NewLine + string.Join(Environment.NewLine, missingImplementations));
+            invalidTypes.Length == 0,
+            "Infrastructure should not contain NoOp use case placeholders:" + Environment.NewLine + string.Join(Environment.NewLine, invalidTypes));
     }
 
     private static void AssertNoAssemblyReference(Assembly assembly, string forbiddenAssemblyName)
