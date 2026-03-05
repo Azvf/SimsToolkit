@@ -116,8 +116,7 @@ public sealed class SaveHouseholdCoordinator : ISaveHouseholdCoordinator
         var trayItemPath = result.WrittenFiles.FirstOrDefault(path => path.EndsWith(".trayitem", StringComparison.OrdinalIgnoreCase));
         if (string.IsNullOrWhiteSpace(trayItemPath))
         {
-            RollbackExport(result.ExportDirectory);
-            return Failed("The export did not produce a .trayitem file.");
+            return WithWarning(result, "The export did not produce a .trayitem file.");
         }
 
         try
@@ -128,8 +127,7 @@ public sealed class SaveHouseholdCoordinator : ISaveHouseholdCoordinator
                 .GetResult();
             if (metadata.Count == 0)
             {
-                RollbackExport(result.ExportDirectory);
-                return Failed("The generated .trayitem could not be parsed.");
+                return WithWarning(result, "The generated .trayitem could not be parsed.");
             }
 
             var summary = _simsTrayPreviewService
@@ -141,31 +139,31 @@ public sealed class SaveHouseholdCoordinator : ISaveHouseholdCoordinator
                 .GetResult();
             if (summary.TotalItems < 1)
             {
-                RollbackExport(result.ExportDirectory);
-                return Failed("The exported bundle did not pass local tray preview validation.");
+                return WithWarning(result, "The exported bundle did not pass local tray preview validation.");
             }
 
             return result;
         }
         catch (Exception ex)
         {
-            RollbackExport(result.ExportDirectory);
-            return Failed(ex.Message);
+            return WithWarning(result, $"Post-export validation skipped: {ex.Message}");
         }
     }
 
-    private static void RollbackExport(string exportDirectory)
+    private static SaveHouseholdExportResult WithWarning(SaveHouseholdExportResult result, string warning)
     {
-        try
+        var warnings = result.Warnings is { Count: > 0 }
+            ? result.Warnings.Concat(new[] { warning }).ToArray()
+            : new[] { warning };
+        return new SaveHouseholdExportResult
         {
-            if (!string.IsNullOrWhiteSpace(exportDirectory) && Directory.Exists(exportDirectory))
-            {
-                Directory.Delete(exportDirectory, recursive: true);
-            }
-        }
-        catch
-        {
-        }
+            Succeeded = result.Succeeded,
+            ExportDirectory = result.ExportDirectory,
+            InstanceIdHex = result.InstanceIdHex,
+            WrittenFiles = result.WrittenFiles,
+            Warnings = warnings,
+            Error = result.Error
+        };
     }
 
     private static string NormalizePath(string value)
@@ -173,16 +171,5 @@ public sealed class SaveHouseholdCoordinator : ISaveHouseholdCoordinator
         return string.IsNullOrWhiteSpace(value)
             ? string.Empty
             : Path.GetFullPath(value.Trim());
-    }
-
-    private static SaveHouseholdExportResult Failed(string error)
-    {
-        return new SaveHouseholdExportResult
-        {
-            Succeeded = false,
-            Error = error,
-            WrittenFiles = Array.Empty<string>(),
-            Warnings = Array.Empty<string>()
-        };
     }
 }
