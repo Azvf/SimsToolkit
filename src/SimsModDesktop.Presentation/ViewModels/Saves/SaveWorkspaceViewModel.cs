@@ -1,5 +1,6 @@
 using SimsModDesktop.Application.Saves;
 using SimsModDesktop.Application.TrayPreview;
+using SimsModDesktop.PackageCore;
 using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.SaveData.Models;
 using SimsModDesktop.Presentation.ViewModels.Infrastructure;
@@ -12,6 +13,7 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
     private readonly ISaveHouseholdCoordinator _coordinator;
     private readonly IFileDialogService _fileDialogService;
     private readonly ITrayDependenciesLauncher _trayDependenciesLauncher;
+    private readonly IPathIdentityResolver _pathIdentityResolver;
 
     private CancellationTokenSource? _selectionLoadCts;
     private CancellationTokenSource? _cacheBuildCts;
@@ -37,11 +39,13 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
         IFileDialogService fileDialogService,
         ITrayDependenciesLauncher trayDependenciesLauncher,
         ITrayPreviewCoordinator trayPreviewCoordinator,
-        ITrayThumbnailService trayThumbnailService)
+        ITrayThumbnailService trayThumbnailService,
+        IPathIdentityResolver? pathIdentityResolver = null)
     {
         _coordinator = coordinator;
         _fileDialogService = fileDialogService;
         _trayDependenciesLauncher = trayDependenciesLauncher;
+        _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
 
         Filter = new SavePreviewFilterViewModel();
         Surface = new TrayLikePreviewSurfaceViewModel(trayPreviewCoordinator, trayThumbnailService);
@@ -778,11 +782,40 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
         ExportCommand.NotifyCanExecuteChanged();
     }
 
-    private static string NormalizePath(string? value)
+    private string NormalizePath(string? value)
     {
-        return string.IsNullOrWhiteSpace(value)
-            ? string.Empty
-            : value.Trim().Trim('"');
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = value.Trim().Trim('"');
+        var fileResolved = _pathIdentityResolver.ResolveFile(trimmed);
+        if (fileResolved.Exists || Path.HasExtension(trimmed))
+        {
+            if (!string.IsNullOrWhiteSpace(fileResolved.CanonicalPath))
+            {
+                return fileResolved.CanonicalPath;
+            }
+
+            if (!string.IsNullOrWhiteSpace(fileResolved.FullPath))
+            {
+                return fileResolved.FullPath;
+            }
+        }
+
+        var directoryResolved = _pathIdentityResolver.ResolveDirectory(trimmed);
+        if (!string.IsNullOrWhiteSpace(directoryResolved.CanonicalPath))
+        {
+            return directoryResolved.CanonicalPath;
+        }
+
+        if (!string.IsNullOrWhiteSpace(directoryResolved.FullPath))
+        {
+            return directoryResolved.FullPath;
+        }
+
+        return trimmed;
     }
 
     private static ulong ComputeCreatorId(string value)

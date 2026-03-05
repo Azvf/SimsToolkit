@@ -1158,6 +1158,18 @@ public sealed class MainWindowViewModelInteractionTests
 
     private sealed class FakePackageIndexCache : IPackageIndexCache
     {
+        private static readonly IndexedPackageFile[] FakePackages =
+        [
+            new IndexedPackageFile
+            {
+                FilePath = "fake.package",
+                Length = 1,
+                LastWriteTimeUtc = DateTime.UtcNow,
+                Entries = Array.Empty<PackageIndexEntry>(),
+                TypeIndexes = new Dictionary<uint, PackageTypeIndex>()
+            }
+        ];
+
         public Task<PackageIndexSnapshot?> TryLoadSnapshotAsync(
             string modsRootPath,
             long inventoryVersion,
@@ -1169,7 +1181,7 @@ public sealed class MainWindowViewModelInteractionTests
                     ? string.Empty
                     : Path.GetFullPath(modsRootPath.Trim()),
                 InventoryVersion = inventoryVersion <= 0 ? 1 : inventoryVersion,
-                Packages = Array.Empty<IndexedPackageFile>()
+                Packages = FakePackages
             });
         }
 
@@ -1182,7 +1194,7 @@ public sealed class MainWindowViewModelInteractionTests
             {
                 ModsRootPath = request.ModsRootPath,
                 InventoryVersion = request.InventoryVersion,
-                Packages = Array.Empty<IndexedPackageFile>()
+                Packages = FakePackages
             });
         }
 

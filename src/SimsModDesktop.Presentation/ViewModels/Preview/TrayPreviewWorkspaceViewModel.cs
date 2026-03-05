@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.ComponentModel;
 using Avalonia.Threading;
+using SimsModDesktop.PackageCore;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.TrayDependencyEngine;
@@ -19,6 +20,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
     private readonly ITrayDependencyExportService _trayDependencyExportService;
     private readonly MainWindowCacheWarmupController _cacheWarmupController;
     private readonly TrayDependenciesPanelViewModel _trayDependencies;
+    private readonly IPathIdentityResolver _pathIdentityResolver;
     private bool _isActive;
     private bool _hasPendingRefresh = true;
     private int _isExportRunning;
@@ -40,7 +42,8 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         IFileDialogService fileDialogService,
         ITrayDependencyExportService trayDependencyExportService,
         MainWindowCacheWarmupController cacheWarmupController,
-        TrayDependenciesPanelViewModel trayDependencies)
+        TrayDependenciesPanelViewModel trayDependencies,
+        IPathIdentityResolver? pathIdentityResolver = null)
     {
         Filter = filter;
         Surface = new TrayLikePreviewSurfaceViewModel(trayPreviewCoordinator, trayThumbnailService);
@@ -49,6 +52,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         _trayDependencyExportService = trayDependencyExportService;
         _cacheWarmupController = cacheWarmupController;
         _trayDependencies = trayDependencies;
+        _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
 
         OpenSelectedCommand = new RelayCommand(OpenSelected, () => Surface.HasSelection);
         ExportSelectedCommand = new AsyncRelayCommand(
@@ -318,7 +322,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
             return;
         }
 
-        var modsPath = _trayDependencies.ModsPath?.Trim() ?? string.Empty;
+        var modsPath = ResolveDirectoryPath(_trayDependencies.ModsPath ?? string.Empty);
         if (string.IsNullOrWhiteSpace(modsPath) || !Directory.Exists(modsPath))
         {
             await ExecuteOnUiAsync(() =>
@@ -414,7 +418,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
                 return;
             }
 
-            var modsPath = _trayDependencies.ModsPath?.Trim() ?? string.Empty;
+            var modsPath = ResolveDirectoryPath(_trayDependencies.ModsPath ?? string.Empty);
             if (string.IsNullOrWhiteSpace(modsPath) || !Directory.Exists(modsPath))
             {
                 LogText = "Mods Path is missing. Set a valid Mods Path before exporting referenced mods.";
@@ -451,7 +455,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
                     continue;
                 }
 
-                var trayPath = selectedItem.Item.TrayRootPath?.Trim() ?? string.Empty;
+                var trayPath = ResolveDirectoryPath(selectedItem.Item.TrayRootPath ?? string.Empty);
                 if (string.IsNullOrWhiteSpace(trayPath) || !Directory.Exists(trayPath))
                 {
                     messages.Add($"Skipped {selectedItem.Item.DisplayTitle}: tray path missing.");
@@ -568,14 +572,17 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         }
     }
 
-    private static string[] ResolveTraySourceFiles(SimsTrayPreviewItem item)
+    private string[] ResolveTraySourceFiles(SimsTrayPreviewItem item)
     {
         var resolved = item.SourceFilePaths
-            .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(path => path.Trim())
+            .Where(File.Exists)
+            .Select(ResolveFilePath)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var trayPath = item.TrayRootPath?.Trim() ?? string.Empty;
+        var trayPath = ResolveDirectoryPath(item.TrayRootPath ?? string.Empty);
         var trayKey = item.TrayItemKey?.Trim() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(trayPath) || string.IsNullOrWhiteSpace(trayKey) || !Directory.Exists(trayPath))
         {
@@ -598,7 +605,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
                 continue;
             }
 
-            resolved.Add(candidate);
+            resolved.Add(ResolveFilePath(candidate));
         }
 
         return resolved
@@ -702,6 +709,38 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         // Do not block waiting for UI thread pumping in headless test contexts.
         Dispatcher.UIThread.Post(action);
         return Task.CompletedTask;
+    }
+
+    private string ResolveDirectoryPath(string path)
+    {
+        var resolved = _pathIdentityResolver.ResolveDirectory(path);
+        if (!string.IsNullOrWhiteSpace(resolved.CanonicalPath))
+        {
+            return resolved.CanonicalPath;
+        }
+
+        if (!string.IsNullOrWhiteSpace(resolved.FullPath))
+        {
+            return resolved.FullPath;
+        }
+
+        return path.Trim().Trim('"');
+    }
+
+    private string ResolveFilePath(string path)
+    {
+        var resolved = _pathIdentityResolver.ResolveFile(path);
+        if (!string.IsNullOrWhiteSpace(resolved.CanonicalPath))
+        {
+            return resolved.CanonicalPath;
+        }
+
+        if (!string.IsNullOrWhiteSpace(resolved.FullPath))
+        {
+            return resolved.FullPath;
+        }
+
+        return path.Trim().Trim('"');
     }
 
     private static readonly string[] SupportedTrayExportExtensions =

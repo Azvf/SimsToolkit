@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using SimsModDesktop.Application.Caching;
 using SimsModDesktop.Application.Mods;
+using SimsModDesktop.PackageCore;
 using SimsModDesktop.Presentation.Diagnostics;
 using SimsModDesktop.TrayDependencyEngine;
 
@@ -13,6 +14,7 @@ public sealed class MainWindowCacheWarmupController
     private readonly IModItemIndexScheduler _indexScheduler;
     private readonly IPackageIndexCache _packageIndexCache;
     private readonly ILogger<MainWindowCacheWarmupController> _logger;
+    private readonly IPathIdentityResolver _pathIdentityResolver;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     private string? _currentRoot;
@@ -26,12 +28,14 @@ public sealed class MainWindowCacheWarmupController
         IModPackageInventoryService inventoryService,
         IModItemIndexScheduler indexScheduler,
         IPackageIndexCache packageIndexCache,
-        ILogger<MainWindowCacheWarmupController> logger)
+        ILogger<MainWindowCacheWarmupController> logger,
+        IPathIdentityResolver? pathIdentityResolver = null)
     {
         _inventoryService = inventoryService;
         _indexScheduler = indexScheduler;
         _packageIndexCache = packageIndexCache;
         _logger = logger;
+        _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
     }
 
     internal async Task<ModPackageInventoryRefreshResult> EnsureModsWorkspaceReadyAsync(
@@ -42,7 +46,10 @@ public sealed class MainWindowCacheWarmupController
         ArgumentException.ThrowIfNullOrWhiteSpace(modsRootPath);
         ArgumentNullException.ThrowIfNull(host);
 
-        var normalizedRoot = Path.GetFullPath(modsRootPath.Trim());
+        var resolvedRoot = ResolveDirectory(modsRootPath);
+        var normalizedRoot = resolvedRoot.CanonicalPath;
+        host.AppendLog(
+            $"[path.resolve] component=modcache.warmup rawPath={resolvedRoot.FullPath} canonicalPath={resolvedRoot.CanonicalPath} exists={resolvedRoot.Exists} isReparse={resolvedRoot.IsReparsePoint} linkTarget={resolvedRoot.LinkTarget ?? string.Empty}");
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
 
         try
@@ -140,7 +147,10 @@ public sealed class MainWindowCacheWarmupController
         ArgumentException.ThrowIfNullOrWhiteSpace(modsRootPath);
         ArgumentNullException.ThrowIfNull(host);
 
-        var normalizedRoot = Path.GetFullPath(modsRootPath.Trim());
+        var resolvedRoot = ResolveDirectory(modsRootPath);
+        var normalizedRoot = resolvedRoot.CanonicalPath;
+        host.AppendLog(
+            $"[path.resolve] component=traycache.warmup rawPath={resolvedRoot.FullPath} canonicalPath={resolvedRoot.CanonicalPath} exists={resolvedRoot.Exists} isReparse={resolvedRoot.IsReparsePoint} linkTarget={resolvedRoot.LinkTarget ?? string.Empty}");
         ModPackageInventoryRefreshResult inventory;
         Task<PackageIndexSnapshot> trayWarmupTask;
         var trayWarmupKey = string.Empty;
@@ -150,7 +160,7 @@ public sealed class MainWindowCacheWarmupController
         {
             inventory = await EnsureInventoryCoreAsync(normalizedRoot, host, cancellationToken).ConfigureAwait(false);
             if (_trayReadySnapshot is not null &&
-                string.Equals(_trayReadySnapshot.ModsRootPath, normalizedRoot, StringComparison.OrdinalIgnoreCase) &&
+                _pathIdentityResolver.EqualsDirectory(_trayReadySnapshot.ModsRootPath, normalizedRoot) &&
                 _trayReadySnapshot.InventoryVersion == inventory.Snapshot.InventoryVersion)
             {
                 host.ReportProgress(new CacheWarmupProgress
@@ -428,7 +438,7 @@ public sealed class MainWindowCacheWarmupController
             return;
         }
 
-        var normalizedRoot = Path.GetFullPath(modsRootPath.Trim());
+        var normalizedRoot = ResolveDirectoryPath(modsRootPath);
         if (!string.Equals(_modsReadyRoot, normalizedRoot, StringComparison.OrdinalIgnoreCase))
         {
             return;
@@ -436,7 +446,7 @@ public sealed class MainWindowCacheWarmupController
 
         var priorities = priorityPackages
             .Where(path => !string.IsNullOrWhiteSpace(path))
-            .Select(path => Path.GetFullPath(path.Trim()))
+            .Select(ResolveFilePath)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         if (priorities.Length == 0)
@@ -473,8 +483,8 @@ public sealed class MainWindowCacheWarmupController
             return false;
         }
 
-        var normalizedRoot = Path.GetFullPath(modsRootPath.Trim());
-        if (!string.Equals(_trayReadySnapshot.ModsRootPath, normalizedRoot, StringComparison.OrdinalIgnoreCase))
+        var normalizedRoot = ResolveDirectoryPath(modsRootPath);
+        if (!_pathIdentityResolver.EqualsDirectory(_trayReadySnapshot.ModsRootPath, normalizedRoot))
         {
             return false;
         }
@@ -523,7 +533,7 @@ public sealed class MainWindowCacheWarmupController
         {
             // SqliteModPackageInventoryService.RefreshAsync is mostly synchronous work wrapped in Task.
             // Offload it explicitly to keep UI thread responsive during tray/mod warmup.
-            var result = await Task.Run(
+            var refreshTask = Task.Run(
                 () => _inventoryService.RefreshAsync(
                     normalizedRoot,
                     new Progress<ModPackageInventoryRefreshProgress>(progress =>
@@ -541,8 +551,9 @@ public sealed class MainWindowCacheWarmupController
                             IsBlocking = true
                         });
                     }),
-                    cancellationToken),
-                cancellationToken).ConfigureAwait(false);
+                    CancellationToken.None),
+                CancellationToken.None);
+            var result = await refreshTask.WaitAsync(cancellationToken).ConfigureAwait(false);
 
             _currentRoot = normalizedRoot;
             _inventoryResult = result;
@@ -555,6 +566,12 @@ public sealed class MainWindowCacheWarmupController
                 ("changedCount", result.AddedEntries.Count + result.ChangedEntries.Count),
                 ("removedCount", result.RemovedPackagePaths.Count));
             return result;
+        }
+        catch (OperationCanceledException)
+        {
+            host.AppendLog($"[modcache.inventory.cancel] modsRoot={normalizedRoot}");
+            timing.Cancel("inventory cancelled");
+            throw;
         }
         catch (Exception ex)
         {
@@ -584,5 +601,42 @@ public sealed class MainWindowCacheWarmupController
     private static string BuildTrayWarmupKey(string normalizedRoot, long inventoryVersion)
     {
         return normalizedRoot + "|" + inventoryVersion.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private ResolvedPathInfo ResolveDirectory(string path)
+    {
+        var resolved = _pathIdentityResolver.ResolveDirectory(path);
+        var fullPath = !string.IsNullOrWhiteSpace(resolved.FullPath)
+            ? resolved.FullPath
+            : path.Trim().Trim('"');
+        var canonicalPath = !string.IsNullOrWhiteSpace(resolved.CanonicalPath)
+            ? resolved.CanonicalPath
+            : fullPath;
+        return resolved with
+        {
+            FullPath = fullPath,
+            CanonicalPath = canonicalPath
+        };
+    }
+
+    private string ResolveDirectoryPath(string path)
+    {
+        return ResolveDirectory(path).CanonicalPath;
+    }
+
+    private string ResolveFilePath(string path)
+    {
+        var resolved = _pathIdentityResolver.ResolveFile(path);
+        if (!string.IsNullOrWhiteSpace(resolved.CanonicalPath))
+        {
+            return resolved.CanonicalPath;
+        }
+
+        if (!string.IsNullOrWhiteSpace(resolved.FullPath))
+        {
+            return resolved.FullPath;
+        }
+
+        return path.Trim().Trim('"');
     }
 }

@@ -2,6 +2,7 @@ using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
+using SimsModDesktop.PackageCore;
 using SimsModDesktop.Presentation.Diagnostics;
 using SimsModDesktop.TrayDependencyEngine;
 using SimsModDesktop.Presentation.ViewModels.Panels;
@@ -16,16 +17,19 @@ public sealed class MainWindowTrayExportController
     private readonly ITrayDependencyExportService _trayDependencyExportService;
     private readonly MainWindowCacheWarmupController _cacheWarmupController;
     private readonly ILogger<MainWindowTrayExportController> _logger;
+    private readonly IPathIdentityResolver _pathIdentityResolver;
     private MainWindowTrayExportHost? _hookedHost;
 
     public MainWindowTrayExportController(
         ITrayDependencyExportService trayDependencyExportService,
         MainWindowCacheWarmupController cacheWarmupController,
-        ILogger<MainWindowTrayExportController> logger)
+        ILogger<MainWindowTrayExportController> logger,
+        IPathIdentityResolver? pathIdentityResolver = null)
     {
         _trayDependencyExportService = trayDependencyExportService;
         _cacheWarmupController = cacheWarmupController;
         _logger = logger;
+        _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
     }
 
     internal void OpenSelectedTrayPreviewPaths(MainWindowTrayExportHost host)
@@ -81,6 +85,13 @@ public sealed class MainWindowTrayExportController
         {
             return;
         }
+
+        var selectedTrayKeys = selectedItems
+            .Select(item => item.Item.TrayItemKey?.Trim())
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .ToArray();
+        host.AppendLog(
+            $"[trayexport.click] selectedItems={selectedItems.Count} selectedSources={GetSelectedTrayPreviewSourceFilePaths(host, selectedItems).Count} trayKeys={string.Join(",", selectedTrayKeys)}");
 
         var pickedFolders = await host.PickFolderPathsAsync("Select export folder", false);
         var exportRoot = pickedFolders.FirstOrDefault();
@@ -144,6 +155,24 @@ public sealed class MainWindowTrayExportController
             host.SetStatus("Export blocked: tray dependency cache is not ready.");
             host.AppendLog("[trayexport.blocked.cache-not-ready]");
             batchTiming.Cancel("cache-not-ready");
+            return;
+        }
+        if (preloadedSnapshot.Packages.Count == 0)
+        {
+            const string blockedMessage = "Export blocked: tray dependency cache is empty (0 packages). Verify Mods Path points to your real The Sims 4 Mods folder and wait for warmup to finish.";
+            for (var index = 0; index < queueEntries.Length; index++)
+            {
+                var exportTask = queueEntries[index].Task;
+                exportTask.SetExportRoot(queueEntries[index].ItemExportRoot);
+                exportTask.MarkFailed(index == 0
+                    ? blockedMessage
+                    : "Cancelled after batch failure.");
+            }
+
+            host.SetStatus(blockedMessage);
+            host.AppendLog(
+                $"[trayexport.blocked.snapshot-empty] modsPath={queueEntries[0].Request.ModsRootPath} inventoryVersion={preloadedSnapshot.InventoryVersion} snapshotPackages=0");
+            batchTiming.Cancel("snapshot-empty");
             return;
         }
         host.AppendLog(
@@ -467,6 +496,8 @@ public sealed class MainWindowTrayExportController
             $"[trayexport.item.start] itemIndex={queueEntry.ItemIndex} trayKey={queueEntry.Request.TrayItemKey} title={queueEntry.Request.ItemTitle}");
         host.AppendLog(
             $"[tray-selection][item] trayKey={queueEntry.Request.TrayItemKey} export-begin title={queueEntry.Request.ItemTitle}");
+        host.AppendLog(
+            $"[trayexport.item.context] itemIndex={queueEntry.ItemIndex} trayKey={queueEntry.Request.TrayItemKey} snapshotInventory={preloadedSnapshot.InventoryVersion} snapshotPackages={preloadedSnapshot.Packages.Count} sourceFiles={queueEntry.Request.TraySourceFiles.Count} trayOut={queueEntry.Request.TrayExportRoot} modsOut={queueEntry.Request.ModsExportRoot}");
 
         TrayDependencyExportResult result;
         try
@@ -571,6 +602,14 @@ public sealed class MainWindowTrayExportController
             {
                 host.AppendLog($"[tray-selection][internal] {issue.Severity}: {issue.Message}");
             }
+
+            var issueKinds = string.Join(
+                ",",
+                result.Issues
+                    .Select(issue => $"{issue.Severity}:{issue.Kind}")
+                    .Distinct(StringComparer.OrdinalIgnoreCase));
+            host.AppendLog(
+                $"[trayexport.item.issues] itemIndex={queueEntry.ItemIndex} trayKey={queueEntry.Request.TrayItemKey} count={result.Issues.Count} kinds={issueKinds}");
         }
 
         host.AppendLog(
@@ -583,6 +622,13 @@ public sealed class MainWindowTrayExportController
         if (result.CopiedModFileCount == 0)
         {
             host.AppendLog($"[tray-selection][item] trayKey={queueEntry.Request.TrayItemKey} no matched mod files exported");
+            LogNoModExportRootCause(host, queueEntry, result);
+        }
+        else
+        {
+            var modFilesOnDisk = CountFilesSafely(queueEntry.Request.ModsExportRoot);
+            host.AppendLog(
+                $"[trayexport.item.mods.disk] itemIndex={queueEntry.ItemIndex} trayKey={queueEntry.Request.TrayItemKey} reported={result.CopiedModFileCount} disk={modFilesOnDisk} modsOut={queueEntry.Request.ModsExportRoot}");
         }
 
         if (!result.Success)
@@ -677,7 +723,10 @@ public sealed class MainWindowTrayExportController
         requests = new List<(TrayPreviewListItemViewModel Item, string ItemExportRoot, TrayDependencyExportRequest Request)>();
         error = string.Empty;
 
-        var modsPath = host.TrayDependencies.ModsPath?.Trim() ?? string.Empty;
+        var modsPath = ResolveDirectoryPath(host.TrayDependencies.ModsPath ?? string.Empty);
+        var modsPathResolved = ResolveDirectory(host.TrayDependencies.ModsPath ?? string.Empty);
+        host.AppendLog(
+            $"[path.resolve] component=trayexport.batch rawPath={modsPathResolved.FullPath} canonicalPath={modsPathResolved.CanonicalPath} exists={modsPathResolved.Exists} isReparse={modsPathResolved.IsReparsePoint} linkTarget={modsPathResolved.LinkTarget ?? string.Empty}");
         if (string.IsNullOrWhiteSpace(modsPath) || !Directory.Exists(modsPath))
         {
             error = "Mods Path is missing. Set a valid Mods Path before exporting referenced mods.";
@@ -696,7 +745,7 @@ public sealed class MainWindowTrayExportController
                 return false;
             }
 
-            var trayPath = selectedItem.Item.TrayRootPath?.Trim() ?? string.Empty;
+            var trayPath = ResolveDirectoryPath(selectedItem.Item.TrayRootPath ?? string.Empty);
             if (string.IsNullOrWhiteSpace(trayPath) || !Directory.Exists(trayPath))
             {
                 error = $"Tray path is missing for selected tray item {trayKey}.";
@@ -732,14 +781,17 @@ public sealed class MainWindowTrayExportController
         return true;
     }
 
-    private static IReadOnlyList<string> ResolveTraySourceFiles(SimsTrayPreviewItem item)
+    private IReadOnlyList<string> ResolveTraySourceFiles(SimsTrayPreviewItem item)
     {
         var resolved = item.SourceFilePaths
-            .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(path => path.Trim())
+            .Where(File.Exists)
+            .Select(ResolveFilePath)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var trayPath = item.TrayRootPath?.Trim() ?? string.Empty;
+        var trayPath = ResolveDirectoryPath(item.TrayRootPath ?? string.Empty);
         var trayKey = item.TrayItemKey?.Trim() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(trayPath) || string.IsNullOrWhiteSpace(trayKey) || !Directory.Exists(trayPath))
         {
@@ -762,7 +814,7 @@ public sealed class MainWindowTrayExportController
                 continue;
             }
 
-            resolved.Add(candidate);
+            resolved.Add(ResolveFilePath(candidate));
         }
 
         return resolved
@@ -777,17 +829,118 @@ public sealed class MainWindowTrayExportController
         return SupportedTrayExportExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
     }
 
+    private ResolvedPathInfo ResolveDirectory(string path)
+    {
+        var resolved = _pathIdentityResolver.ResolveDirectory(path);
+        var fullPath = !string.IsNullOrWhiteSpace(resolved.FullPath)
+            ? resolved.FullPath
+            : path.Trim().Trim('"');
+        var canonicalPath = !string.IsNullOrWhiteSpace(resolved.CanonicalPath)
+            ? resolved.CanonicalPath
+            : fullPath;
+        return resolved with
+        {
+            FullPath = fullPath,
+            CanonicalPath = canonicalPath
+        };
+    }
+
+    private string ResolveDirectoryPath(string path)
+    {
+        return ResolveDirectory(path).CanonicalPath;
+    }
+
+    private string ResolveFilePath(string path)
+    {
+        var resolved = _pathIdentityResolver.ResolveFile(path);
+        if (!string.IsNullOrWhiteSpace(resolved.CanonicalPath))
+        {
+            return resolved.CanonicalPath;
+        }
+
+        if (!string.IsNullOrWhiteSpace(resolved.FullPath))
+        {
+            return resolved.FullPath;
+        }
+
+        return path.Trim().Trim('"');
+    }
+
     private static void LogTraySelectionItemContext(MainWindowTrayExportHost host, TrayDependencyExportRequest request)
     {
         var sourceFiles = request.TraySourceFiles
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        var sourceExtensions = sourceFiles
+            .Select(path => Path.GetExtension(path))
+            .Where(ext => !string.IsNullOrWhiteSpace(ext))
+            .GroupBy(ext => ext, StringComparer.OrdinalIgnoreCase)
+            .Select(group => $"{group.Key}:{group.Count()}")
+            .OrderBy(text => text, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
         host.AppendLog(
             $"[tray-selection][item] trayKey={request.TrayItemKey} trayPath={request.TrayRootPath} sourceFiles={sourceFiles.Length} trayOut={request.TrayExportRoot} modsOut={request.ModsExportRoot}");
+        host.AppendLog(
+            $"[trayexport.item.sources] trayKey={request.TrayItemKey} extensions={string.Join(",", sourceExtensions)}");
         foreach (var sourceFile in sourceFiles)
         {
             host.AppendLog($"[tray-selection][item-source] trayKey={request.TrayItemKey} path={sourceFile}");
+        }
+    }
+
+    private static void LogNoModExportRootCause(
+        MainWindowTrayExportHost host,
+        QueueEntry queueEntry,
+        TrayDependencyExportResult result)
+    {
+        var diagnostics = result.Diagnostics;
+        var reason = "unknown";
+        if (diagnostics is null)
+        {
+            reason = "no-diagnostics";
+        }
+        else if (diagnostics.CandidateIdCount == 0 && diagnostics.CandidateResourceKeyCount == 0)
+        {
+            reason = "no-candidates-extracted-from-tray";
+        }
+        else if (diagnostics.DirectMatchCount == 0 && diagnostics.ExpandedMatchCount == 0)
+        {
+            reason = "no-match-found-in-mod-cache";
+        }
+        else if (!result.Success)
+        {
+            reason = "export-failed-before-copy";
+        }
+        else
+        {
+            reason = "copy-step-produced-zero-mod-files";
+        }
+
+        host.AppendLog(
+            $"[trayexport.item.nomods] itemIndex={queueEntry.ItemIndex} trayKey={queueEntry.Request.TrayItemKey} reason={reason} success={result.Success} issues={result.Issues.Count}");
+        if (diagnostics is not null)
+        {
+            host.AppendLog(
+                $"[trayexport.item.nomods.diag] itemIndex={queueEntry.ItemIndex} trayKey={queueEntry.Request.TrayItemKey} candidates={diagnostics.CandidateIdCount} resourceKeys={diagnostics.CandidateResourceKeyCount} direct={diagnostics.DirectMatchCount} expanded={diagnostics.ExpandedMatchCount}");
+        }
+
+        var modFilesOnDisk = CountFilesSafely(queueEntry.Request.ModsExportRoot);
+        host.AppendLog(
+            $"[trayexport.item.nomods.disk] itemIndex={queueEntry.ItemIndex} trayKey={queueEntry.Request.TrayItemKey} modsOut={queueEntry.Request.ModsExportRoot} diskFiles={modFilesOnDisk}");
+    }
+
+    private static int CountFilesSafely(string root)
+    {
+        try
+        {
+            return Directory.Exists(root)
+                ? Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).Count()
+                : 0;
+        }
+        catch
+        {
+            return -1;
         }
     }
 

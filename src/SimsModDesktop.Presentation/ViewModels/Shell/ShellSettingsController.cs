@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using SimsModDesktop.Application.Settings;
+using SimsModDesktop.PackageCore;
 using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 using SimsModDesktop.Presentation.ViewModels.Saves;
@@ -17,6 +18,7 @@ public sealed class ShellSettingsController : ObservableObject
     private readonly IDebugConfigStore _debugConfigStore;
     private readonly IAppThemeService _appThemeService;
     private readonly ITS4PathDiscoveryService _pathDiscovery;
+    private readonly IPathIdentityResolver _pathIdentityResolver;
     private readonly Dictionary<string, DebugConfigToggleItemViewModel> _debugConfigItemsByKey =
         new(StringComparer.OrdinalIgnoreCase);
 
@@ -39,7 +41,8 @@ public sealed class ShellSettingsController : ObservableObject
         ISettingsStore settingsStore,
         IDebugConfigStore debugConfigStore,
         IAppThemeService appThemeService,
-        ITS4PathDiscoveryService pathDiscovery)
+        ITS4PathDiscoveryService pathDiscovery,
+        IPathIdentityResolver? pathIdentityResolver = null)
     {
         _workspaceVm = workspaceVm;
         _savesVm = savesVm;
@@ -48,6 +51,7 @@ public sealed class ShellSettingsController : ObservableObject
         _debugConfigStore = debugConfigStore;
         _appThemeService = appThemeService;
         _pathDiscovery = pathDiscovery;
+        _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
 
         DebugConfigItems = new ObservableCollection<DebugConfigToggleItemViewModel>();
         InitializeDebugConfigItems();
@@ -90,7 +94,7 @@ public sealed class ShellSettingsController : ObservableObject
         get => _ts4RootPath;
         set
         {
-            var normalized = NormalizePath(value);
+            var normalized = CanonicalizeDirectoryPath(value);
             if (!SetProperty(ref _ts4RootPath, normalized))
             {
                 return;
@@ -120,7 +124,8 @@ public sealed class ShellSettingsController : ObservableObject
         get => _modsPath;
         set
         {
-            if (!SetProperty(ref _modsPath, value))
+            var normalized = CanonicalizeDirectoryPath(value);
+            if (!SetProperty(ref _modsPath, normalized))
             {
                 return;
             }
@@ -135,7 +140,8 @@ public sealed class ShellSettingsController : ObservableObject
         get => _trayPath;
         set
         {
-            if (!SetProperty(ref _trayPath, value))
+            var normalized = CanonicalizeDirectoryPath(value);
+            if (!SetProperty(ref _trayPath, normalized))
             {
                 return;
             }
@@ -150,7 +156,8 @@ public sealed class ShellSettingsController : ObservableObject
         get => _savesPath;
         set
         {
-            if (!SetProperty(ref _savesPath, value))
+            var normalized = CanonicalizeDirectoryPath(value);
+            if (!SetProperty(ref _savesPath, normalized))
             {
                 return;
             }
@@ -393,6 +400,23 @@ public sealed class ShellSettingsController : ObservableObject
             : value.Trim().Trim('"');
     }
 
+    private string CanonicalizeDirectoryPath(string? value)
+    {
+        var normalized = NormalizePath(value);
+        if (normalized.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var resolved = _pathIdentityResolver.ResolveDirectory(normalized);
+        if (!string.IsNullOrWhiteSpace(resolved.CanonicalPath))
+        {
+            return resolved.CanonicalPath;
+        }
+
+        return resolved.FullPath;
+    }
+
     private static string ResolveStatusBadgeText(bool isReady, bool isWarning)
     {
         if (isReady)
@@ -403,12 +427,9 @@ public sealed class ShellSettingsController : ObservableObject
         return isWarning ? "Check" : "Missing";
     }
 
-    private static bool PathEquals(string? left, string? right)
+    private bool PathEquals(string? left, string? right)
     {
-        return string.Equals(
-            NormalizePath(left),
-            NormalizePath(right),
-            StringComparison.OrdinalIgnoreCase);
+        return _pathIdentityResolver.EqualsDirectory(left, right);
     }
 
     private void InitializeDebugConfigItems()

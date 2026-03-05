@@ -7,6 +7,7 @@ using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Results;
 using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Application.TextureProcessing;
+using SimsModDesktop.PackageCore;
 using SimsModDesktop.Presentation.Diagnostics;
 using SimsModDesktop.TrayDependencyEngine;
 
@@ -22,6 +23,7 @@ public sealed class MainWindowExecutionController
     private readonly ITextureCompressionService _textureCompressionService;
     private readonly ITextureDimensionProbe _textureDimensionProbe;
     private readonly ILogger<MainWindowExecutionController> _logger;
+    private readonly IPathIdentityResolver _pathIdentityResolver;
 
     public MainWindowExecutionController(
         IExecutionCoordinator executionCoordinator,
@@ -31,7 +33,8 @@ public sealed class MainWindowExecutionController
         MainWindowCacheWarmupController cacheWarmupController,
         ITextureCompressionService textureCompressionService,
         ITextureDimensionProbe textureDimensionProbe,
-        ILogger<MainWindowExecutionController> logger)
+        ILogger<MainWindowExecutionController> logger,
+        IPathIdentityResolver? pathIdentityResolver = null)
     {
         _executionCoordinator = executionCoordinator;
         _trayDependencyAnalysisService = trayDependencyAnalysisService;
@@ -41,6 +44,7 @@ public sealed class MainWindowExecutionController
         _textureCompressionService = textureCompressionService;
         _textureDimensionProbe = textureDimensionProbe;
         _logger = logger;
+        _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
     }
 
     internal async Task RunToolkitAsync(MainWindowExecutionHost host)
@@ -365,9 +369,13 @@ public sealed class MainWindowExecutionController
 
         try
         {
+            var resolvedModsRoot = ResolveDirectory(plan.Request.ModsRootPath);
+            host.AppendLog(
+                $"[path.resolve] component=traydependencies.run rawPath={resolvedModsRoot.FullPath} canonicalPath={resolvedModsRoot.CanonicalPath} exists={resolvedModsRoot.Exists} isReparse={resolvedModsRoot.IsReparsePoint} linkTarget={resolvedModsRoot.LinkTarget ?? string.Empty}");
+            var normalizedPlanRequest = plan.Request with { ModsRootPath = resolvedModsRoot.CanonicalPath };
             await _recoveryController.MarkRecoveryStartedAsync(operationId);
             var preloadedSnapshot = await _cacheWarmupController.EnsureTrayWorkspaceReadyAsync(
-                plan.Request.ModsRootPath,
+                normalizedPlanRequest.ModsRootPath,
                 new MainWindowCacheWarmupHost
                 {
                     ReportProgress = progress =>
@@ -381,7 +389,7 @@ public sealed class MainWindowExecutionController
                 },
                 executionCts.Token);
             var result = await _trayDependencyAnalysisService.AnalyzeAsync(
-                plan.Request with { PreloadedSnapshot = preloadedSnapshot },
+                normalizedPlanRequest with { PreloadedSnapshot = preloadedSnapshot },
                 new Progress<TrayDependencyAnalysisProgress>(progress => HandleTrayDependencyAnalysisProgress(host, progress)),
                 executionCts.Token);
             host.AppendLog($"[traydependencies] matched={result.MatchedPackageCount}");
@@ -571,5 +579,21 @@ public sealed class MainWindowExecutionController
                 error = "Source file must be a .png, .dds, or .tga file.";
                 return false;
         }
+    }
+
+    private ResolvedPathInfo ResolveDirectory(string path)
+    {
+        var resolved = _pathIdentityResolver.ResolveDirectory(path);
+        var fullPath = !string.IsNullOrWhiteSpace(resolved.FullPath)
+            ? resolved.FullPath
+            : path.Trim().Trim('"');
+        var canonicalPath = !string.IsNullOrWhiteSpace(resolved.CanonicalPath)
+            ? resolved.CanonicalPath
+            : fullPath;
+        return resolved with
+        {
+            FullPath = fullPath,
+            CanonicalPath = canonicalPath
+        };
     }
 }
