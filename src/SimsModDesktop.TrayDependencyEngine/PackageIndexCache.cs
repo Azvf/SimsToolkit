@@ -280,8 +280,9 @@ public sealed class PackageIndexCache : IPackageIndexCache
                         targetWorkers: parseWorkerCount,
                         minWorkers: 4,
                         startedAtUtc: DateTime.UtcNow);
-
-                    using var monitorCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    using var pipelineCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    var pipelineToken = pipelineCts.Token;
+                    using var monitorCts = CancellationTokenSource.CreateLinkedTokenSource(pipelineToken);
                     var monitorTask = Task.Run(async () =>
                     {
                         while (!monitorCts.IsCancellationRequested)
@@ -313,56 +314,113 @@ public sealed class PackageIndexCache : IPackageIndexCache
                                 decision.RecommendedWorkers,
                                 decision.Reason);
                         }
-                    }, ct);
+                    }, CancellationToken.None);
 
                     var writerTask = WriteParsedPackagesAsync(
                         connection,
                         transaction,
                         parseResultChannel.Reader,
                         writeBatchSize,
-                        ct);
+                        pipelineToken);
+                    var writerFaultCancellation = writerTask.ContinueWith(
+                        task =>
+                        {
+                            if (!task.IsFaulted)
+                            {
+                                return;
+                            }
+
+                            parseResultChannel.Writer.TryComplete(task.Exception);
+                            pipelineCts.Cancel();
+                        },
+                        CancellationToken.None,
+                        TaskContinuationOptions.ExecuteSynchronously,
+                        TaskScheduler.Default);
 
                     var workers = Enumerable.Range(0, parseWorkerCount)
                         .Select(workerId => Task.Run(async () =>
                         {
-                            while (!ct.IsCancellationRequested && await parseQueue.Reader.WaitToReadAsync(ct).ConfigureAwait(false))
+                            try
                             {
-                                if (workerId >= Volatile.Read(ref allowedWorkers))
+                                while (!pipelineToken.IsCancellationRequested &&
+                                       await parseQueue.Reader.WaitToReadAsync(pipelineToken).ConfigureAwait(false))
                                 {
-                                    await Task.Delay(50, ct).ConfigureAwait(false);
-                                    continue;
-                                }
+                                    if (workerId >= Volatile.Read(ref allowedWorkers))
+                                    {
+                                        await Task.Delay(50, pipelineToken).ConfigureAwait(false);
+                                        continue;
+                                    }
 
-                                if (!parseQueue.Reader.TryRead(out var plan))
-                                {
-                                    continue;
-                                }
+                                    if (!parseQueue.Reader.TryRead(out var plan))
+                                    {
+                                        continue;
+                                    }
 
-                                var parsed = ParsePackage(plan);
-                                await parseResultChannel.Writer.WriteAsync(parsed, ct).ConfigureAwait(false);
-                                Interlocked.Increment(ref parseCompletedCount);
-                                var processed = hitCount + (int)Interlocked.Read(ref parseCompletedCount);
-                                Report(progress, ProgressScale.Scale(10, 70, processed, files.Length), $"Indexing packages... {processed}/{files.Length}");
+                                    var parsed = ParsePackage(plan);
+                                    await parseResultChannel.Writer.WriteAsync(parsed, pipelineToken).ConfigureAwait(false);
+                                    Interlocked.Increment(ref parseCompletedCount);
+                                    var processed = hitCount + (int)Interlocked.Read(ref parseCompletedCount);
+                                    Report(progress, ProgressScale.Scale(10, 70, processed, files.Length), $"Indexing packages... {processed}/{files.Length}");
+                                }
                             }
-                        }, ct))
+                            catch (OperationCanceledException) when (pipelineToken.IsCancellationRequested)
+                            {
+                            }
+                        }, CancellationToken.None))
                         .ToArray();
 
-                    await Task.WhenAll(workers).ConfigureAwait(false);
-                    _logger.LogInformation(
-                        "traycache.parse.batch modsRoot={ModsRoot} inventoryVersion={InventoryVersion} parsedCount={ParsedCount} workerCount={WorkerCount}",
-                        normalizedRoot,
-                        request.InventoryVersion,
-                        Interlocked.Read(ref parseCompletedCount),
-                        Volatile.Read(ref allowedWorkers));
-                    parseResultChannel.Writer.Complete();
-                    failCount = await writerTask.ConfigureAwait(false);
-                    monitorCts.Cancel();
+                    Exception? workerFailure = null;
                     try
                     {
-                        await monitorTask.ConfigureAwait(false);
+                        await Task.WhenAll(workers).ConfigureAwait(false);
+                        _logger.LogInformation(
+                            "traycache.parse.batch modsRoot={ModsRoot} inventoryVersion={InventoryVersion} parsedCount={ParsedCount} workerCount={WorkerCount}",
+                            normalizedRoot,
+                            request.InventoryVersion,
+                            Interlocked.Read(ref parseCompletedCount),
+                            Volatile.Read(ref allowedWorkers));
+                        parseResultChannel.Writer.TryComplete();
+                        failCount = await writerTask.ConfigureAwait(false);
                     }
-                    catch (OperationCanceledException)
+                    catch (Exception ex)
                     {
+                        workerFailure = ex;
+                        parseResultChannel.Writer.TryComplete(ex);
+                        pipelineCts.Cancel();
+                    }
+                    finally
+                    {
+                        monitorCts.Cancel();
+                        try
+                        {
+                            await monitorTask.ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                        }
+
+                        try
+                        {
+                            await writerFaultCancellation.ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                        }
+                    }
+
+                    if (workerFailure is not null)
+                    {
+                        if (workerFailure is OperationCanceledException && ct.IsCancellationRequested)
+                        {
+                            throw workerFailure;
+                        }
+
+                        if (writerTask.IsFaulted)
+                        {
+                            await writerTask.ConfigureAwait(false);
+                        }
+
+                        throw workerFailure;
                     }
                 }
             }

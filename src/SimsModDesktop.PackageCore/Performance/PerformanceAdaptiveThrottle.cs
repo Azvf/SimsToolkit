@@ -38,7 +38,7 @@ public sealed class PerformanceAdaptiveThrottle
             return PerformanceAdaptiveThrottleDecision.NoChange(CurrentWorkers);
         }
 
-        var elapsedSeconds = Math.Max(_window.TotalSeconds, 0.001d);
+        var elapsedSeconds = Math.Max((nowUtc - _lastSampleUtc).TotalSeconds, 0.001d);
         var deltaCompleted = Math.Max(0, totalCompletedCount - _lastCompletedCount);
         var throughput = deltaCompleted / elapsedSeconds;
         _lastSampleUtc = nowUtc;

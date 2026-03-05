@@ -23,6 +23,7 @@ public sealed class MainWindowCacheWarmupController
     private readonly ConcurrentDictionary<string, long> _modsReadyInventoryVersions = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, PackageIndexSnapshot> _trayReadySnapshots = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, Task<PackageIndexSnapshot>> _trayWarmupTasks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, FileSystemWatcher> _rootWatchers = new(StringComparer.OrdinalIgnoreCase);
 
     public MainWindowCacheWarmupController(
         IModPackageInventoryService inventoryService,
@@ -508,6 +509,18 @@ public sealed class MainWindowCacheWarmupController
         _trayReadySnapshots.Clear();
         _trayWarmupTasks.Clear();
         _rootGates.Clear();
+        foreach (var watcher in _rootWatchers.Values)
+        {
+            try
+            {
+                watcher.Dispose();
+            }
+            catch
+            {
+            }
+        }
+
+        _rootWatchers.Clear();
     }
 
     private SemaphoreSlim GetRootGate(string normalizedRoot)
@@ -522,6 +535,7 @@ public sealed class MainWindowCacheWarmupController
     {
         if (_inventoryResults.TryGetValue(normalizedRoot, out var cachedInventory))
         {
+            EnsureRootWatcher(normalizedRoot);
             return cachedInventory;
         }
 
@@ -558,6 +572,7 @@ public sealed class MainWindowCacheWarmupController
             var result = await refreshTask.WaitAsync(cancellationToken).ConfigureAwait(false);
 
             _inventoryResults[normalizedRoot] = result;
+            EnsureRootWatcher(normalizedRoot);
             if (_trayReadySnapshots.TryGetValue(normalizedRoot, out var readySnapshot) &&
                 readySnapshot.InventoryVersion != result.Snapshot.InventoryVersion)
             {
@@ -599,6 +614,68 @@ public sealed class MainWindowCacheWarmupController
             timing.Fail(ex, "inventory failed", ("modsRoot", normalizedRoot));
             throw;
         }
+    }
+
+    private void EnsureRootWatcher(string normalizedRoot)
+    {
+        if (string.IsNullOrWhiteSpace(normalizedRoot) || !Directory.Exists(normalizedRoot))
+        {
+            return;
+        }
+
+        _rootWatchers.GetOrAdd(normalizedRoot, root =>
+        {
+            var watcher = new FileSystemWatcher(root, "*.package")
+            {
+                IncludeSubdirectories = true,
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size
+            };
+
+            watcher.Changed += (_, args) => InvalidateRootCaches(root, "changed", args.FullPath);
+            watcher.Created += (_, args) => InvalidateRootCaches(root, "created", args.FullPath);
+            watcher.Deleted += (_, args) => InvalidateRootCaches(root, "deleted", args.FullPath);
+            watcher.Renamed += (_, args) => InvalidateRootCaches(root, "renamed", args.FullPath);
+            watcher.Error += (_, args) =>
+            {
+                _logger.LogWarning(
+                    args.GetException(),
+                    "modcache.inventory.watch.error modsRoot={ModsRoot}",
+                    root);
+                InvalidateRootCaches(root, "watcher-error", string.Empty);
+            };
+            watcher.EnableRaisingEvents = true;
+            _logger.LogInformation("modcache.inventory.watch.start modsRoot={ModsRoot}", root);
+            return watcher;
+        });
+    }
+
+    private void InvalidateRootCaches(string normalizedRoot, string reason, string changedPath)
+    {
+        var invalidated = false;
+        invalidated |= _inventoryResults.TryRemove(normalizedRoot, out _);
+        invalidated |= _modsReadyInventoryVersions.TryRemove(normalizedRoot, out _);
+        invalidated |= _trayReadySnapshots.TryRemove(normalizedRoot, out _);
+
+        foreach (var key in _trayWarmupTasks.Keys)
+        {
+            if (!key.StartsWith(normalizedRoot + "|", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            invalidated |= _trayWarmupTasks.TryRemove(key, out _);
+        }
+
+        if (!invalidated)
+        {
+            return;
+        }
+
+        _logger.LogInformation(
+            "modcache.inventory.invalidate modsRoot={ModsRoot} reason={Reason} changedPath={ChangedPath}",
+            normalizedRoot,
+            reason,
+            changedPath);
     }
 
     private async Task<bool> GetRound2ConfigBoolAsync(

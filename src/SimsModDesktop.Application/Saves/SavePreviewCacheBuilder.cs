@@ -122,7 +122,7 @@ public sealed class SavePreviewCacheBuilder : ISavePreviewCacheBuilder
                             decision.RecommendedWorkers,
                             decision.Reason);
                     }
-                }, workerCts.Token);
+                }, CancellationToken.None);
 
                 var workers = Enumerable.Range(0, workerCount)
                     .Select(workerId => Task.Run(() =>
@@ -264,15 +264,20 @@ public sealed class SavePreviewCacheBuilder : ISavePreviewCacheBuilder
                         }
                     }, CancellationToken.None))
                     .ToArray();
-
-                Task.WhenAll(workers).GetAwaiter().GetResult();
-                workerCts.Cancel();
                 try
                 {
-                    monitorTask.GetAwaiter().GetResult();
+                    Task.WhenAll(workers).GetAwaiter().GetResult();
                 }
-                catch (OperationCanceledException)
+                finally
                 {
+                    workerCts.Cancel();
+                    try
+                    {
+                        monitorTask.GetAwaiter().GetResult();
+                    }
+                    catch (OperationCanceledException)
+                    {
+                    }
                 }
 
                 var materializedEntries = entries

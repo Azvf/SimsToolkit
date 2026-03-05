@@ -162,7 +162,7 @@ internal sealed class OrganizeTransformationModeHandler : TransformationModeHand
                     decision.RecommendedWorkers,
                     decision.Reason);
             }
-        }, cancellationToken);
+        }, CancellationToken.None);
 
         var destinationLocks = new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.OrdinalIgnoreCase);
         var queue = new ConcurrentQueue<OrganizeExecutionPlan>(executionPlans);
@@ -207,17 +207,22 @@ internal sealed class OrganizeTransformationModeHandler : TransformationModeHand
                         ReportSimpleProgress(progress, "Organize", current, archives.Count, plan.ArchivePath);
                     }
                 }
-            }, cancellationToken))
+            }, CancellationToken.None))
             .ToArray();
-
-        await Task.WhenAll(workers).ConfigureAwait(false);
-        monitorCts.Cancel();
         try
         {
-            await monitorTask.ConfigureAwait(false);
+            await Task.WhenAll(workers).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        finally
         {
+            monitorCts.Cancel();
+            try
+            {
+                await monitorTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
         }
         Logger.LogInformation(
             "organize.archive.batch done total={Total} processed={Processed} failed={Failed} skipped={Skipped} elapsedMs={ElapsedMs}",

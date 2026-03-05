@@ -366,7 +366,7 @@ public sealed class ModItemIndexScheduler : IModItemIndexScheduler
                     decision.RecommendedWorkers,
                     decision.Reason);
             }
-        }, cancellationToken);
+        }, CancellationToken.None);
 
         var workers = Enumerable.Range(0, workerCount)
             .Select(workerId => Task.Run(async () =>
@@ -388,16 +388,22 @@ public sealed class ModItemIndexScheduler : IModItemIndexScheduler
                     results.Add(new IndexedPackageResult<T>(indexedPackage.Index, result));
                     Interlocked.Increment(ref processedCount);
                 }
-            }, cancellationToken))
+            }, CancellationToken.None))
             .ToArray();
-        await Task.WhenAll(workers).ConfigureAwait(false);
-        monitorCts.Cancel();
         try
         {
-            await monitorTask.ConfigureAwait(false);
+            await Task.WhenAll(workers).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        finally
         {
+            monitorCts.Cancel();
+            try
+            {
+                await monitorTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
         }
 
         return results

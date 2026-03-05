@@ -199,7 +199,7 @@ public sealed class TrayMetadataService : ITrayMetadataService
                     decision.RecommendedWorkers,
                     decision.Reason);
             }
-        }, cancellationToken);
+        }, CancellationToken.None);
 
         var workers = Enumerable.Range(0, workerCount)
             .Select(workerId => Task.Run(async () =>
@@ -220,17 +220,22 @@ public sealed class TrayMetadataService : ITrayMetadataService
                     TryParse(path, loaded);
                     Interlocked.Increment(ref processedCount);
                 }
-            }, cancellationToken))
+            }, CancellationToken.None))
             .ToArray();
-
-        Task.WhenAll(workers).GetAwaiter().GetResult();
-        monitorCts.Cancel();
         try
         {
-            monitorTask.GetAwaiter().GetResult();
+            Task.WhenAll(workers).GetAwaiter().GetResult();
         }
-        catch (OperationCanceledException)
+        finally
         {
+            monitorCts.Cancel();
+            try
+            {
+                monitorTask.GetAwaiter().GetResult();
+            }
+            catch (OperationCanceledException)
+            {
+            }
         }
 
         return loaded;

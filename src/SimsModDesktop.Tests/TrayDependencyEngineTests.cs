@@ -74,6 +74,29 @@ public sealed class TrayDependencyEngineTests
     }
 
     [Fact]
+    public async Task PackageIndexCache_BuildSnapshotAsync_SupportsSequentialPipelineFallback()
+    {
+        using var modsRoot = new TempDirectory("mods-sequential-pipeline");
+        using var cacheRoot = new TempDirectory("pkg-cache-sequential-pipeline");
+        var packagePath = Path.Combine(modsRoot.Path, "single.package");
+        WritePackage(packagePath, KnownInstance, KnownResourceType, group: 0, resourceData: [1, 2, 3, 4]);
+
+        var cache = new PackageIndexCache(cacheRoot.Path);
+        var buildRequest = CreateBuildRequest(modsRoot.Path) with
+        {
+            UseParallelPipeline = false,
+            ParseWorkerCount = 12
+        };
+
+        var snapshot = await cache.BuildSnapshotAsync(buildRequest);
+        var loaded = await cache.TryLoadSnapshotAsync(buildRequest.ModsRootPath, buildRequest.InventoryVersion);
+
+        Assert.Single(snapshot.Packages);
+        Assert.NotNull(loaded);
+        Assert.Single(loaded!.Packages);
+    }
+
+    [Fact]
     public async Task PackageIndexCache_ReusesPersistedSnapshot_AcrossInstances()
     {
         using var modsRoot = new TempDirectory("mods-persisted");
