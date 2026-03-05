@@ -24,7 +24,6 @@ public sealed class PackageIndexCache : IPackageIndexCache
     private readonly string _databasePath;
 
     public PackageIndexCache(
-        IDbpfPackageCatalog? packageCatalog = null,
         ILogger<PackageIndexCache>? logger = null,
         IPathIdentityResolver? pathIdentityResolver = null)
         : this(
@@ -33,7 +32,6 @@ public sealed class PackageIndexCache : IPackageIndexCache
                 "SimsModDesktop",
                 "Cache",
                 "TrayDependencyPackageIndex"),
-            packageCatalog,
             logger,
             pathIdentityResolver)
     {
@@ -41,7 +39,6 @@ public sealed class PackageIndexCache : IPackageIndexCache
 
     public PackageIndexCache(
         string cacheRootPath,
-        IDbpfPackageCatalog? packageCatalog = null,
         ILogger<PackageIndexCache>? logger = null,
         IPathIdentityResolver? pathIdentityResolver = null)
     {

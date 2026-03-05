@@ -40,7 +40,6 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<IConfirmationDialogService, AvaloniaConfirmationDialogService>();
         services.AddSingleton<IRecoveryPromptService, AvaloniaRecoveryPromptService>();
 
-        services.AddSingleton<IDbpfPackageCatalog, DbpfPackageCatalog>();
         services.AddSingleton<IDbpfResourceReader, DbpfResourceReader>();
         services.AddSingleton<IPackageIndexCache, PackageIndexCache>();
         services.AddSingleton<ITrayDependencyExportService, TrayDependencyExportService>();

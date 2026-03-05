@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using Microsoft.Data.Sqlite;
 using SimsModDesktop.PackageCore;
 using SimsModDesktop.TrayDependencyEngine;
 
@@ -30,6 +31,7 @@ public sealed class TrayDependencyEngineTests
     public async Task PackageIndexCache_ReadsPackagesWithMultipleIndexEntries()
     {
         using var modsRoot = new TempDirectory("mods-multi");
+        using var cacheRoot = new TempDirectory("pkg-cache-multi");
         var packagePath = Path.Combine(modsRoot.Path, "multi.package");
         WritePackage(
             packagePath,
@@ -38,17 +40,20 @@ public sealed class TrayDependencyEngineTests
                 new PackageSpec(KnownResourceType, 1, KnownInstance + 1, [5, 6, 7, 8])
             ]);
 
-        var cache = new PackageIndexCache();
+        var cache = new PackageIndexCache(cacheRoot.Path);
         var snapshot = await BuildSnapshotAsync(cache, modsRoot.Path);
 
         Assert.Single(snapshot.Packages);
-        Assert.Equal(2, snapshot.Packages[0].Entries.Length);
+        Assert.Equal(
+            2L,
+            await LoadTrayCacheEntryCountAsync(Path.Combine(cacheRoot.Path, "cache.db")));
     }
 
     [Fact]
     public async Task PackageIndexCache_ReadsPackages_WhenHeaderStoresPerEntryRecordSize()
     {
         using var modsRoot = new TempDirectory("mods-per-entry");
+        using var cacheRoot = new TempDirectory("pkg-cache-per-entry");
         var packagePath = Path.Combine(modsRoot.Path, "per-entry.package");
         WritePackage(
             packagePath,
@@ -59,11 +64,13 @@ public sealed class TrayDependencyEngineTests
 
         PatchHeaderIndexRecordSize(packagePath, 32u);
 
-        var cache = new PackageIndexCache();
+        var cache = new PackageIndexCache(cacheRoot.Path);
         var snapshot = await BuildSnapshotAsync(cache, modsRoot.Path);
 
         Assert.Single(snapshot.Packages);
-        Assert.Equal(2, snapshot.Packages[0].Entries.Length);
+        Assert.Equal(
+            2L,
+            await LoadTrayCacheEntryCountAsync(Path.Combine(cacheRoot.Path, "cache.db")));
     }
 
     [Fact]
@@ -74,18 +81,20 @@ public sealed class TrayDependencyEngineTests
         var packagePath = Path.Combine(modsRoot.Path, "sample.package");
         WritePackage(packagePath, KnownInstance, KnownResourceType, group: 0, resourceData: [1, 2, 3, 4]);
 
-        var catalog = new CountingPackageCatalog();
-        var firstCache = new PackageIndexCache(cacheRoot.Path, catalog);
-        var secondCache = new PackageIndexCache(cacheRoot.Path, catalog);
+        var firstCache = new PackageIndexCache(cacheRoot.Path);
+        var secondCache = new PackageIndexCache(cacheRoot.Path);
 
         var buildRequest = CreateBuildRequest(modsRoot.Path);
         var first = await firstCache.BuildSnapshotAsync(buildRequest);
+        var cacheDbPath = Path.Combine(cacheRoot.Path, "cache.db");
+        var updatedTicksBefore = await LoadMaxPackageUpdatedTicksAsync(cacheDbPath);
         var second = await secondCache.TryLoadSnapshotAsync(modsRoot.Path, buildRequest.InventoryVersion);
+        var updatedTicksAfter = await LoadMaxPackageUpdatedTicksAsync(cacheDbPath);
 
-        Assert.Equal(1, catalog.CallCount);
         Assert.Single(first.Packages);
         Assert.NotNull(second);
         Assert.Single(second!.Packages);
+        Assert.Equal(updatedTicksBefore, updatedTicksAfter);
         Assert.True(File.Exists(Path.Combine(cacheRoot.Path, "cache.db")));
     }
 
@@ -549,6 +558,24 @@ public sealed class TrayDependencyEngineTests
         return await cache.BuildSnapshotAsync(buildRequest);
     }
 
+    private static async Task<long> LoadTrayCacheEntryCountAsync(string cacheDbPath)
+    {
+        await using var connection = new SqliteConnection($"Data Source={cacheDbPath};Mode=ReadWrite;Pooling=False;");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(1) FROM TrayCacheEntry;";
+        return Convert.ToInt64(await command.ExecuteScalarAsync());
+    }
+
+    private static async Task<long> LoadMaxPackageUpdatedTicksAsync(string cacheDbPath)
+    {
+        await using var connection = new SqliteConnection($"Data Source={cacheDbPath};Mode=ReadWrite;Pooling=False;");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COALESCE(MAX(UpdatedUtcTicks), 0) FROM TrayCachePackage;";
+        return Convert.ToInt64(await command.ExecuteScalarAsync());
+    }
+
     private static long ComputeInventoryVersion(IReadOnlyList<PackageIndexBuildFile> packageFiles)
     {
         unchecked
@@ -663,29 +690,4 @@ public sealed class TrayDependencyEngineTests
         }
     }
 
-    private sealed class CountingPackageCatalog : IDbpfPackageCatalog
-    {
-        private readonly DbpfPackageCatalog _inner = new();
-
-        public int CallCount { get; private set; }
-
-        public Task<DbpfCatalogSnapshot> BuildSnapshotAsync(
-            string rootPath,
-            DbpfCatalogBuildOptions? options = null,
-            CancellationToken cancellationToken = default)
-        {
-            CallCount++;
-            return _inner.BuildSnapshotAsync(rootPath, options, cancellationToken);
-        }
-
-        public Task<DbpfCatalogSnapshot> BuildSnapshotAsync(
-            string rootPath,
-            IReadOnlyList<DbpfCatalogPackageFile> packageFiles,
-            DbpfCatalogBuildOptions? options = null,
-            CancellationToken cancellationToken = default)
-        {
-            CallCount++;
-            return _inner.BuildSnapshotAsync(rootPath, packageFiles, options, cancellationToken);
-        }
-    }
 }

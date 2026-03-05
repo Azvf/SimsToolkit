@@ -102,7 +102,7 @@ public sealed class TrayDependencyEngineCoreTests
         using var cacheRoot = new TempDirectory("tray-legacy-cache");
         var cacheDbPath = Path.Combine(cacheRoot.Path, "cache.db");
 
-        await using (var connection = new SqliteConnection($"Data Source={cacheDbPath};Mode=ReadWriteCreate;"))
+        await using (var connection = new SqliteConnection($"Data Source={cacheDbPath};Mode=ReadWriteCreate;Pooling=False;"))
         {
             await connection.OpenAsync();
             await using var command = connection.CreateCommand();
@@ -125,7 +125,7 @@ public sealed class TrayDependencyEngineCoreTests
 
         Assert.Null(loaded);
 
-        await using var verifyConnection = new SqliteConnection($"Data Source={cacheDbPath};Mode=ReadWrite;");
+        await using var verifyConnection = new SqliteConnection($"Data Source={cacheDbPath};Mode=ReadWrite;Pooling=False;");
         await verifyConnection.OpenAsync();
         await using var verifyCommand = verifyConnection.CreateCommand();
         verifyCommand.CommandText = "SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = 'PackageIndexSnapshots';";
@@ -163,7 +163,7 @@ public sealed class TrayDependencyEngineCoreTests
         Assert.Equal(modsRoot.Path, loaded!.ModsRootPath, StringComparer.OrdinalIgnoreCase);
 
         var dbPath = Path.Combine(cacheRoot.Path, "cache.db");
-        await using var verifyConnection = new SqliteConnection($"Data Source={dbPath};Mode=ReadWrite;");
+        await using var verifyConnection = new SqliteConnection($"Data Source={dbPath};Mode=ReadWrite;Pooling=False;");
         await verifyConnection.OpenAsync();
         await using var canonicalCountCommand = verifyConnection.CreateCommand();
         canonicalCountCommand.CommandText = "SELECT COUNT(1) FROM TrayRootManifest WHERE ModsRootPath = @ModsRootPath;";
@@ -438,7 +438,7 @@ public sealed class TrayDependencyEngineCoreTests
     private static async Task<Dictionary<string, long>> LoadPackageUpdatedTicksAsync(string cacheDbPath)
     {
         var result = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
-        await using var connection = new SqliteConnection($"Data Source={cacheDbPath};Mode=ReadWrite;");
+        await using var connection = new SqliteConnection($"Data Source={cacheDbPath};Mode=ReadWrite;Pooling=False;");
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT PackagePath, UpdatedUtcTicks FROM TrayCachePackage;";
