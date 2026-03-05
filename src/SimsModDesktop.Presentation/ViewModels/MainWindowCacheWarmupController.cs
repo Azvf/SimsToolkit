@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Collections.Concurrent;
+using SimsModDesktop.Application.Configuration;
 using SimsModDesktop.Application.Caching;
 using SimsModDesktop.Application.Mods;
 using SimsModDesktop.PackageCore;
@@ -16,27 +17,27 @@ public sealed class MainWindowCacheWarmupController
     private readonly IPackageIndexCache _packageIndexCache;
     private readonly ILogger<MainWindowCacheWarmupController> _logger;
     private readonly IPathIdentityResolver _pathIdentityResolver;
+    private readonly IConfigurationProvider? _configurationProvider;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _rootGates = new(StringComparer.OrdinalIgnoreCase);
-
-    private string? _currentRoot;
-    private ModPackageInventoryRefreshResult? _inventoryResult;
-    private string? _modsReadyRoot;
-    private long _modsReadyInventoryVersion;
-    private PackageIndexSnapshot? _trayReadySnapshot;
-    private readonly Dictionary<string, Task<PackageIndexSnapshot>> _trayWarmupTasks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, ModPackageInventoryRefreshResult> _inventoryResults = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, long> _modsReadyInventoryVersions = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, PackageIndexSnapshot> _trayReadySnapshots = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, Task<PackageIndexSnapshot>> _trayWarmupTasks = new(StringComparer.OrdinalIgnoreCase);
 
     public MainWindowCacheWarmupController(
         IModPackageInventoryService inventoryService,
         IModItemIndexScheduler indexScheduler,
         IPackageIndexCache packageIndexCache,
         ILogger<MainWindowCacheWarmupController> logger,
-        IPathIdentityResolver? pathIdentityResolver = null)
+        IPathIdentityResolver? pathIdentityResolver = null,
+        IConfigurationProvider? configurationProvider = null)
     {
         _inventoryService = inventoryService;
         _indexScheduler = indexScheduler;
         _packageIndexCache = packageIndexCache;
         _logger = logger;
         _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
+        _configurationProvider = configurationProvider;
     }
 
     internal async Task<ModPackageInventoryRefreshResult> EnsureModsWorkspaceReadyAsync(
@@ -65,8 +66,8 @@ public sealed class MainWindowCacheWarmupController
         try
         {
             var inventory = await EnsureInventoryCoreAsync(normalizedRoot, host, cancellationToken).ConfigureAwait(false);
-            if (string.Equals(_modsReadyRoot, normalizedRoot, StringComparison.OrdinalIgnoreCase) &&
-                _modsReadyInventoryVersion == inventory.Snapshot.InventoryVersion)
+            if (_modsReadyInventoryVersions.TryGetValue(normalizedRoot, out var readyInventoryVersion) &&
+                readyInventoryVersion == inventory.Snapshot.InventoryVersion)
             {
                 host.ReportProgress(new CacheWarmupProgress
                 {
@@ -122,8 +123,7 @@ public sealed class MainWindowCacheWarmupController
                 }),
                 cancellationToken).ConfigureAwait(false);
 
-            _modsReadyRoot = normalizedRoot;
-            _modsReadyInventoryVersion = inventory.Snapshot.InventoryVersion;
+            _modsReadyInventoryVersions[normalizedRoot] = inventory.Snapshot.InventoryVersion;
             host.ReportProgress(new CacheWarmupProgress
             {
                 Domain = CacheWarmupDomain.ModsCatalog,
@@ -177,9 +177,8 @@ public sealed class MainWindowCacheWarmupController
         try
         {
             inventory = await EnsureInventoryCoreAsync(normalizedRoot, host, cancellationToken).ConfigureAwait(false);
-            if (_trayReadySnapshot is not null &&
-                _pathIdentityResolver.EqualsDirectory(_trayReadySnapshot.ModsRootPath, normalizedRoot) &&
-                _trayReadySnapshot.InventoryVersion == inventory.Snapshot.InventoryVersion)
+            if (_trayReadySnapshots.TryGetValue(normalizedRoot, out var readySnapshot) &&
+                readySnapshot.InventoryVersion == inventory.Snapshot.InventoryVersion)
             {
                 host.ReportProgress(new CacheWarmupProgress
                 {
@@ -191,7 +190,7 @@ public sealed class MainWindowCacheWarmupController
                     Detail = "Tray dependency cache is ready.",
                     IsBlocking = true
                 });
-                return _trayReadySnapshot;
+                return readySnapshot;
             }
 
             trayWarmupKey = BuildTrayWarmupKey(normalizedRoot, inventory.Snapshot.InventoryVersion);
@@ -201,7 +200,7 @@ public sealed class MainWindowCacheWarmupController
                 trayWarmupTask = Task.Run(
                     () => LoadOrBuildTraySnapshotAsync(normalizedRoot, inventory, host, CancellationToken.None),
                     CancellationToken.None);
-                _trayWarmupTasks[trayWarmupKey] = trayWarmupTask;
+                _trayWarmupTasks.TryAdd(trayWarmupKey, trayWarmupTask);
             }
             else
             {
@@ -228,11 +227,7 @@ public sealed class MainWindowCacheWarmupController
             await rootGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                if (_trayWarmupTasks.TryGetValue(trayWarmupKey, out var existingTask) &&
-                    ReferenceEquals(existingTask, trayWarmupTask))
-                {
-                    _trayWarmupTasks.Remove(trayWarmupKey);
-                }
+                _ = _trayWarmupTasks.TryRemove(trayWarmupKey, out _);
             }
             finally
             {
@@ -245,13 +240,8 @@ public sealed class MainWindowCacheWarmupController
         await rootGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (_trayWarmupTasks.TryGetValue(trayWarmupKey, out var existingTask) &&
-                ReferenceEquals(existingTask, trayWarmupTask))
-            {
-                _trayWarmupTasks.Remove(trayWarmupKey);
-            }
-
-            _trayReadySnapshot = snapshot;
+            _ = _trayWarmupTasks.TryRemove(trayWarmupKey, out _);
+            _trayReadySnapshots[normalizedRoot] = snapshot;
         }
         finally
         {
@@ -339,6 +329,10 @@ public sealed class MainWindowCacheWarmupController
         var stageStopwatch = new Stopwatch();
         var currentStageLabel = string.Empty;
         var currentStagePercent = 0;
+        var useRound2TrayCachePipeline = await GetRound2ConfigBoolAsync(
+            "Performance.Round2.TrayCachePipelineEnabled",
+            defaultValue: true,
+            cancellationToken).ConfigureAwait(false);
         try
         {
             snapshot = await _packageIndexCache.BuildSnapshotAsync(
@@ -363,7 +357,8 @@ public sealed class MainWindowCacheWarmupController
                             LastWriteUtcTicks = entry.LastWriteUtcTicks
                         })
                         .ToArray(),
-                    RemovedPackagePaths = inventory.RemovedPackagePaths
+                    RemovedPackagePaths = inventory.RemovedPackagePaths,
+                    UseParallelPipeline = useRound2TrayCachePipeline
                 },
                 new Progress<TrayDependencyExportProgress>(progress =>
                 {
@@ -454,7 +449,7 @@ public sealed class MainWindowCacheWarmupController
         }
 
         var normalizedRoot = ResolveDirectoryPath(modsRootPath);
-        if (!string.Equals(_modsReadyRoot, normalizedRoot, StringComparison.OrdinalIgnoreCase))
+        if (!_modsReadyInventoryVersions.ContainsKey(normalizedRoot))
         {
             return;
         }
@@ -493,28 +488,24 @@ public sealed class MainWindowCacheWarmupController
     internal bool TryGetReadyTraySnapshot(string modsRootPath, out PackageIndexSnapshot snapshot)
     {
         snapshot = null!;
-        if (_trayReadySnapshot is null || string.IsNullOrWhiteSpace(modsRootPath))
+        if (string.IsNullOrWhiteSpace(modsRootPath))
         {
             return false;
         }
 
         var normalizedRoot = ResolveDirectoryPath(modsRootPath);
-        if (!_pathIdentityResolver.EqualsDirectory(_trayReadySnapshot.ModsRootPath, normalizedRoot))
+        if (!_trayReadySnapshots.TryGetValue(normalizedRoot, out snapshot))
         {
             return false;
         }
-
-        snapshot = _trayReadySnapshot;
         return true;
     }
 
     internal void Reset()
     {
-        _currentRoot = null;
-        _inventoryResult = null;
-        _modsReadyRoot = null;
-        _modsReadyInventoryVersion = 0;
-        _trayReadySnapshot = null;
+        _inventoryResults.Clear();
+        _modsReadyInventoryVersions.Clear();
+        _trayReadySnapshots.Clear();
         _trayWarmupTasks.Clear();
         _rootGates.Clear();
     }
@@ -529,18 +520,9 @@ public sealed class MainWindowCacheWarmupController
         MainWindowCacheWarmupHost host,
         CancellationToken cancellationToken)
     {
-        if (string.Equals(_currentRoot, normalizedRoot, StringComparison.OrdinalIgnoreCase) &&
-            _inventoryResult is not null)
+        if (_inventoryResults.TryGetValue(normalizedRoot, out var cachedInventory))
         {
-            return _inventoryResult;
-        }
-
-        if (!string.Equals(_currentRoot, normalizedRoot, StringComparison.OrdinalIgnoreCase))
-        {
-            _modsReadyRoot = null;
-            _modsReadyInventoryVersion = 0;
-            _trayReadySnapshot = null;
-            _trayWarmupTasks.Clear();
+            return cachedInventory;
         }
 
         using var timing = PerformanceLogScope.Begin(
@@ -575,8 +557,26 @@ public sealed class MainWindowCacheWarmupController
                 CancellationToken.None);
             var result = await refreshTask.WaitAsync(cancellationToken).ConfigureAwait(false);
 
-            _currentRoot = normalizedRoot;
-            _inventoryResult = result;
+            _inventoryResults[normalizedRoot] = result;
+            if (_trayReadySnapshots.TryGetValue(normalizedRoot, out var readySnapshot) &&
+                readySnapshot.InventoryVersion != result.Snapshot.InventoryVersion)
+            {
+                _trayReadySnapshots.TryRemove(normalizedRoot, out _);
+            }
+
+            foreach (var key in _trayWarmupTasks.Keys)
+            {
+                if (!key.StartsWith(normalizedRoot + "|", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var expectedKey = BuildTrayWarmupKey(normalizedRoot, result.Snapshot.InventoryVersion);
+                if (!string.Equals(key, expectedKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    _trayWarmupTasks.TryRemove(key, out _);
+                }
+            }
             host.AppendLog(
                 $"[modcache.inventory.done] modsRoot={normalizedRoot} inventoryVersion={result.Snapshot.InventoryVersion} packages={result.Snapshot.Entries.Count} changed={result.AddedEntries.Count + result.ChangedEntries.Count} removed={result.RemovedPackagePaths.Count}");
             timing.Success(
@@ -599,6 +599,20 @@ public sealed class MainWindowCacheWarmupController
             timing.Fail(ex, "inventory failed", ("modsRoot", normalizedRoot));
             throw;
         }
+    }
+
+    private async Task<bool> GetRound2ConfigBoolAsync(
+        string key,
+        bool defaultValue,
+        CancellationToken cancellationToken)
+    {
+        if (_configurationProvider is null)
+        {
+            return defaultValue;
+        }
+
+        var configured = await _configurationProvider.GetConfigurationAsync<bool?>(key, cancellationToken).ConfigureAwait(false);
+        return configured ?? defaultValue;
     }
 
     private static string BuildTrayCacheStageLabel(TrayDependencyExportProgress progress)

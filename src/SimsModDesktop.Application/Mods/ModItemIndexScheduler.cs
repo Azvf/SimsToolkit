@@ -327,9 +327,10 @@ public sealed class ModItemIndexScheduler : IModItemIndexScheduler
         var results = new ConcurrentBag<IndexedPackageResult<T>>();
         var queue = new ConcurrentQueue<IndexedPackagePath>(indexedPackages);
         var baselineWorkingSet = Process.GetCurrentProcess().WorkingSet64;
+        var minWorkers = string.Equals(stage, "deep", StringComparison.OrdinalIgnoreCase) ? 3 : 4;
         var throttle = new PerformanceAdaptiveThrottle(
             targetWorkers: workerCount,
-            minWorkers: 2,
+            minWorkers: Math.Min(minWorkers, workerCount),
             startedAtUtc: DateTime.UtcNow);
         var allowedWorkers = workerCount;
         long processedCount = 0;

@@ -267,6 +267,7 @@ public sealed record PackageIndexBuildRequest
     public IReadOnlyList<string> RemovedPackagePaths { get; init; } = Array.Empty<string>();
     public int? ParseWorkerCount { get; init; }
     public int? WriteBatchSize { get; init; }
+    public bool? UseParallelPipeline { get; init; }
 }
 
 public sealed record PackageIndexBuildFile

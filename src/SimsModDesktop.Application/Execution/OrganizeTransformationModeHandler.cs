@@ -35,8 +35,11 @@ internal sealed class OrganizeTransformationModeHandler : TransformationModeHand
         var recurse = organizeOptions?.RecurseSource != false;
         var cleanupMacArtifacts = await GetConfigBoolAsync("Organize.CleanupMacOsArtifacts", true, cancellationToken);
         var flattenTopLevel = GetCustomBool(options.CustomParameters, "Organize.FlattenSingleTopLevelDirectory", true);
+        var useRound2Parallel = await GetConfigBoolAsync("Performance.Round2.OrganizeParallelEnabled", true, cancellationToken);
         var configuredWorkers = organizeOptions?.MaxParallelArchives ?? options.WorkerCount;
-        var workerCount = PerformanceWorkerSizer.ResolveOrganizeWorkers(configuredWorkers);
+        var workerCount = useRound2Parallel
+            ? PerformanceWorkerSizer.ResolveOrganizeWorkers(configuredWorkers)
+            : 1;
 
         var archives = Directory.EnumerateFiles(
                 sourcePath,
@@ -84,20 +87,51 @@ internal sealed class OrganizeTransformationModeHandler : TransformationModeHand
         }
 
         var completedCount = skipped.Count;
+        var startedAt = DateTime.UtcNow;
+        Logger.LogInformation(
+            "organize.archive.batch start total={Total} processCount={ProcessCount} skipCount={SkipCount} workerCount={WorkerCount} useRound2Parallel={UseRound2Parallel}",
+            archives.Count,
+            executionPlans.Count,
+            skipped.Count,
+            workerCount,
+            useRound2Parallel);
+
+        if (!useRound2Parallel)
+        {
+            foreach (var plan in executionPlans)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                await ExecuteOrganizePlanAsync(
+                    plan,
+                    options,
+                    organizeOptions,
+                    cleanupMacArtifacts,
+                    flattenTopLevel,
+                    skipped,
+                    processed,
+                    failed,
+                    conflicts,
+                    warnings).ConfigureAwait(false);
+                var current = Interlocked.Increment(ref completedCount);
+                ReportSimpleProgress(progress, "Organize", current, archives.Count, plan.ArchivePath);
+            }
+
+            Logger.LogInformation(
+                "organize.archive.batch done total={Total} processed={Processed} failed={Failed} skipped={Skipped} elapsedMs={ElapsedMs}",
+                archives.Count,
+                processed.Count,
+                failed.Count,
+                skipped.Count,
+                (DateTime.UtcNow - startedAt).TotalMilliseconds);
+            return BuildResult(archives.Count, processed, skipped, failed, conflicts, warnings);
+        }
+
         var baselineWorkingSet = Process.GetCurrentProcess().WorkingSet64;
         var throttle = new PerformanceAdaptiveThrottle(
             targetWorkers: workerCount,
             minWorkers: 4,
             startedAtUtc: DateTime.UtcNow);
         var allowedWorkers = workerCount;
-        var startedAt = DateTime.UtcNow;
-        Logger.LogInformation(
-            "organize.archive.batch start total={Total} processCount={ProcessCount} skipCount={SkipCount} workerCount={WorkerCount}",
-            archives.Count,
-            executionPlans.Count,
-            skipped.Count,
-            workerCount);
-
         using var monitorCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var monitorTask = Task.Run(async () =>
         {
@@ -113,7 +147,7 @@ internal sealed class OrganizeTransformationModeHandler : TransformationModeHand
                 }
 
                 var decision = throttle.Update(
-                    totalCompletedCount: completedCount,
+                    totalCompletedCount: Volatile.Read(ref completedCount),
                     nowUtc: DateTime.UtcNow,
                     workingSetBytes: Process.GetCurrentProcess().WorkingSet64,
                     baselineWorkingSetBytes: baselineWorkingSet);
@@ -130,6 +164,7 @@ internal sealed class OrganizeTransformationModeHandler : TransformationModeHand
             }
         }, cancellationToken);
 
+        var destinationLocks = new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.OrdinalIgnoreCase);
         var queue = new ConcurrentQueue<OrganizeExecutionPlan>(executionPlans);
         var workers = Enumerable.Range(0, workerCount)
             .Select(workerId => Task.Run(async () =>
@@ -147,53 +182,27 @@ internal sealed class OrganizeTransformationModeHandler : TransformationModeHand
                         break;
                     }
 
+                    var destinationLock = destinationLocks.GetOrAdd(
+                        plan.DestinationPath,
+                        _ => new SemaphoreSlim(1, 1));
+                    await destinationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
                     try
                     {
-                        if (!options.WhatIf)
-                        {
-                            if (plan.DeleteExisting && Directory.Exists(plan.DestinationPath))
-                            {
-                                Directory.Delete(plan.DestinationPath, recursive: true);
-                            }
-
-                            Directory.CreateDirectory(plan.DestinationPath);
-                            ZipFile.ExtractToDirectory(plan.ArchivePath, plan.DestinationPath, overwriteFiles: true);
-
-                            if (cleanupMacArtifacts)
-                            {
-                                CleanupMacOsArtifacts(plan.DestinationPath);
-                            }
-
-                            if (flattenTopLevel)
-                            {
-                                FlattenSingleTopLevelDirectory(plan.DestinationPath);
-                            }
-
-                            if (organizeOptions?.KeepZip != true)
-                            {
-                                var deleted = await FileOperationService.DeleteFileAsync(plan.ArchivePath, permanent: true).ConfigureAwait(false);
-                                if (!deleted)
-                                {
-                                    warnings.Add($"Unable to delete archive after extraction: {plan.ArchivePath}");
-                                }
-                            }
-                        }
-
-                        processed.Add(plan.ArchivePath);
-                    }
-                    catch (InvalidDataException ex)
-                    {
-                        Logger.LogWarning(ex, "Invalid archive {Archive}", plan.ArchivePath);
-                        failed.Add(plan.ArchivePath);
-                        warnings.Add($"Invalid archive skipped: {plan.ArchivePath}");
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.LogError(ex, "Failed to organize archive {Archive}", plan.ArchivePath);
-                        failed.Add(plan.ArchivePath);
+                        await ExecuteOrganizePlanAsync(
+                            plan,
+                            options,
+                            organizeOptions,
+                            cleanupMacArtifacts,
+                            flattenTopLevel,
+                            skipped,
+                            processed,
+                            failed,
+                            conflicts,
+                            warnings).ConfigureAwait(false);
                     }
                     finally
                     {
+                        destinationLock.Release();
                         var current = Interlocked.Increment(ref completedCount);
                         ReportSimpleProgress(progress, "Organize", current, archives.Count, plan.ArchivePath);
                     }
@@ -217,7 +226,96 @@ internal sealed class OrganizeTransformationModeHandler : TransformationModeHand
             failed.Count,
             skipped.Count,
             (DateTime.UtcNow - startedAt).TotalMilliseconds);
+        return BuildResult(archives.Count, processed, skipped, failed, conflicts, warnings);
+    }
 
+    private async Task ExecuteOrganizePlanAsync(
+        OrganizeExecutionPlan plan,
+        TransformationOptions options,
+        OrganizeOptions? organizeOptions,
+        bool cleanupMacArtifacts,
+        bool flattenTopLevel,
+        ConcurrentBag<string> skipped,
+        ConcurrentBag<string> processed,
+        ConcurrentBag<string> failed,
+        ConcurrentBag<FileConflict> conflicts,
+        ConcurrentBag<string> warnings)
+    {
+        var effectivePlan = plan;
+        if (Directory.Exists(plan.DestinationPath) && Directory.EnumerateFileSystemEntries(plan.DestinationPath).Any())
+        {
+            var conflictPlan = ResolveDirectoryConflictPlan(plan.ArchivePath, plan.DestinationPath, options.ConflictStrategy);
+            if (conflictPlan.Skip)
+            {
+                skipped.Add(plan.ArchivePath);
+                conflicts.Add(new FileConflict
+                {
+                    Type = ConflictType.NameConflict,
+                    SourcePath = plan.ArchivePath,
+                    TargetPath = plan.DestinationPath,
+                    Description = "Organize destination exists and was skipped"
+                });
+                return;
+            }
+
+            effectivePlan = new OrganizeExecutionPlan(plan.ArchivePath, conflictPlan.DestinationPath, conflictPlan.DeleteExisting);
+        }
+
+        try
+        {
+            if (!options.WhatIf)
+            {
+                if (effectivePlan.DeleteExisting && Directory.Exists(effectivePlan.DestinationPath))
+                {
+                    Directory.Delete(effectivePlan.DestinationPath, recursive: true);
+                }
+
+                Directory.CreateDirectory(effectivePlan.DestinationPath);
+                ZipFile.ExtractToDirectory(effectivePlan.ArchivePath, effectivePlan.DestinationPath, overwriteFiles: true);
+
+                if (cleanupMacArtifacts)
+                {
+                    CleanupMacOsArtifacts(effectivePlan.DestinationPath);
+                }
+
+                if (flattenTopLevel)
+                {
+                    FlattenSingleTopLevelDirectory(effectivePlan.DestinationPath);
+                }
+
+                if (organizeOptions?.KeepZip != true)
+                {
+                    var deleted = await FileOperationService.DeleteFileAsync(effectivePlan.ArchivePath, permanent: true).ConfigureAwait(false);
+                    if (!deleted)
+                    {
+                        warnings.Add($"Unable to delete archive after extraction: {effectivePlan.ArchivePath}");
+                    }
+                }
+            }
+
+            processed.Add(effectivePlan.ArchivePath);
+        }
+        catch (InvalidDataException ex)
+        {
+            Logger.LogWarning(ex, "Invalid archive {Archive}", effectivePlan.ArchivePath);
+            failed.Add(effectivePlan.ArchivePath);
+            warnings.Add($"Invalid archive skipped: {effectivePlan.ArchivePath}");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to organize archive {Archive}", effectivePlan.ArchivePath);
+            failed.Add(effectivePlan.ArchivePath);
+        }
+    }
+
+    private static TransformationResult BuildResult(
+        int total,
+        ConcurrentBag<string> processed,
+        ConcurrentBag<string> skipped,
+        ConcurrentBag<string> failed,
+        ConcurrentBag<FileConflict> conflicts,
+        ConcurrentBag<string> warnings)
+    {
         return new TransformationResult
         {
             Success = failed.Count == 0,
@@ -225,7 +323,7 @@ internal sealed class OrganizeTransformationModeHandler : TransformationModeHand
             ProcessedFiles = processed.Count,
             SkippedFiles = skipped.Count,
             FailedFiles = failed.Count,
-            TotalFiles = archives.Count,
+            TotalFiles = total,
             ProcessedFileList = processed.ToArray(),
             SkippedFileList = skipped.ToArray(),
             FailedFileList = failed.ToArray(),

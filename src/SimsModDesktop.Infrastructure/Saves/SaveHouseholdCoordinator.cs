@@ -1,4 +1,6 @@
 using SimsModDesktop.Application.Services;
+using SimsModDesktop.Application.Configuration;
+using SimsModDesktop.Application.Saves;
 using SimsModDesktop.SaveData.Models;
 using SimsModDesktop.SaveData.Services;
 
@@ -13,6 +15,7 @@ public sealed class SaveHouseholdCoordinator : ISaveHouseholdCoordinator
     private readonly ISavePreviewCacheBuilder _savePreviewCacheBuilder;
     private readonly ITrayMetadataService _trayMetadataService;
     private readonly ISimsTrayPreviewService _simsTrayPreviewService;
+    private readonly IConfigurationProvider _configurationProvider;
     private readonly Dictionary<string, SaveHouseholdSnapshot> _snapshotCache =
         new(StringComparer.OrdinalIgnoreCase);
 
@@ -23,7 +26,8 @@ public sealed class SaveHouseholdCoordinator : ISaveHouseholdCoordinator
         ISavePreviewCacheStore savePreviewCacheStore,
         ISavePreviewCacheBuilder savePreviewCacheBuilder,
         ITrayMetadataService trayMetadataService,
-        ISimsTrayPreviewService simsTrayPreviewService)
+        ISimsTrayPreviewService simsTrayPreviewService,
+        IConfigurationProvider configurationProvider)
     {
         _saveCatalogService = saveCatalogService;
         _saveHouseholdReader = saveHouseholdReader;
@@ -32,6 +36,7 @@ public sealed class SaveHouseholdCoordinator : ISaveHouseholdCoordinator
         _savePreviewCacheBuilder = savePreviewCacheBuilder;
         _trayMetadataService = trayMetadataService;
         _simsTrayPreviewService = simsTrayPreviewService;
+        _configurationProvider = configurationProvider;
     }
 
     public IReadOnlyList<SaveFileEntry> GetSaveFiles(string savesRootPath)
@@ -73,12 +78,24 @@ public sealed class SaveHouseholdCoordinator : ISaveHouseholdCoordinator
         return _savePreviewCacheStore.GetCacheRootPath(saveFilePath);
     }
 
-    public Task<SavePreviewCacheBuildResult> BuildPreviewCacheAsync(
+    public async Task<SavePreviewCacheBuildResult> BuildPreviewCacheAsync(
         string saveFilePath,
         IProgress<SavePreviewCacheBuildProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        return _savePreviewCacheBuilder.BuildAsync(saveFilePath, progress, cancellationToken);
+        var round2ParallelEnabled = await _configurationProvider
+            .GetConfigurationAsync<bool?>("Performance.Round2.SavePreviewParallelEnabled", cancellationToken)
+            .ConfigureAwait(false);
+        var options = round2ParallelEnabled == false
+            ? new SavePreviewBuildOptions
+            {
+                WorkerCount = 1,
+                ContinueOnItemFailure = true
+            }
+            : null;
+        return await _savePreviewCacheBuilder
+            .BuildAsync(saveFilePath, options, progress, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     public void ClearPreviewCache(string saveFilePath)
