@@ -1,4 +1,7 @@
+using System.Buffers.Binary;
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -126,7 +129,14 @@ internal sealed class SqliteModPackageInventoryService : IModPackageInventorySer
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        var inventoryVersion = DateTime.UtcNow.Ticks;
+        var (inventoryVersion, hashInputBytes) = ComputeInventoryVersion(currentEntries, normalizedRoot);
+        var validatedUtcTicks = DateTime.UtcNow.Ticks;
+        _logger.LogInformation(
+            "modcache.inventory.version mode={Mode} packageCount={PackageCount} hashInputBytes={HashInputBytes} inventoryVersion={InventoryVersion}",
+            "stablehash",
+            currentEntries.Count,
+            hashInputBytes,
+            inventoryVersion);
         var persistStartedAt = DateTime.UtcNow;
         connection.Execute(
             """
@@ -302,7 +312,7 @@ internal sealed class SqliteModPackageInventoryService : IModPackageInventorySer
             new
             {
                 ModsRootPath = normalizedRoot,
-                LastValidatedUtcTicks = inventoryVersion,
+                LastValidatedUtcTicks = validatedUtcTicks,
                 InventoryVersion = inventoryVersion,
                 PackageCount = currentEntries.Count,
                 Status = "Ready"
@@ -336,7 +346,7 @@ internal sealed class SqliteModPackageInventoryService : IModPackageInventorySer
                 ModsRootPath = normalizedRoot,
                 InventoryVersion = inventoryVersion,
                 Entries = currentEntries,
-                LastValidatedUtcTicks = inventoryVersion
+                LastValidatedUtcTicks = validatedUtcTicks
             },
             AddedEntries = added,
             ChangedEntries = changed,
@@ -617,6 +627,36 @@ internal sealed class SqliteModPackageInventoryService : IModPackageInventorySer
     private static string BuildPackageFingerprintKey(ModPackageInventoryEntry entry)
     {
         return $"{entry.FileLength}:{entry.LastWriteUtcTicks}";
+    }
+
+    private static (long Version, int HashInputBytes) ComputeInventoryVersion(
+        IReadOnlyList<ModPackageInventoryEntry> entries,
+        string modsRootPath)
+    {
+        var builder = new StringBuilder(modsRootPath.Length + Math.Max(64, entries.Count * 96));
+        builder.Append(modsRootPath);
+        builder.Append('\n');
+        foreach (var entry in entries.OrderBy(item => item.PackagePath, StringComparer.OrdinalIgnoreCase))
+        {
+            builder.Append(entry.PackagePath)
+                .Append('|')
+                .Append(BuildPackageFingerprintKey(entry))
+                .Append('|')
+                .Append(entry.PackageType)
+                .Append('|')
+                .Append(entry.ScopeHint)
+                .Append('\n');
+        }
+
+        var payload = Encoding.UTF8.GetBytes(builder.ToString());
+        var hash = SHA256.HashData(payload);
+        var version = BinaryPrimitives.ReadInt64LittleEndian(hash.AsSpan(0, sizeof(long))) & long.MaxValue;
+        if (version == 0)
+        {
+            version = 1;
+        }
+
+        return (version, payload.Length);
     }
 
     private static int ScaleProgress(int start, int end, int current, int total)

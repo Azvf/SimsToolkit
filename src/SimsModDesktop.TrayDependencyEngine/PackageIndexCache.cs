@@ -14,7 +14,7 @@ namespace SimsModDesktop.TrayDependencyEngine;
 
 public sealed class PackageIndexCache : IPackageIndexCache
 {
-    private const int SchemaVersion = 3;
+    private const int SchemaVersion = 5;
     private static readonly HashSet<uint> StructuredTypes = KnownResourceTypes.StructuredReferenceTypes.ToHashSet();
     private static readonly PackageIndexEntry[] EmptyEntries = Array.Empty<PackageIndexEntry>();
     private static readonly IReadOnlyDictionary<uint, PackageTypeIndex> EmptyTypeIndexes = new Dictionary<uint, PackageTypeIndex>();
@@ -74,12 +74,10 @@ public sealed class PackageIndexCache : IPackageIndexCache
             resolvedRoot.IsReparsePoint,
             resolvedRoot.LinkTarget ?? string.Empty);
         var cacheKey = BuildCacheKey(normalizedRoot, inventoryVersion);
+        PackageIndexSnapshot? cachedSnapshot = null;
         lock (_sync)
         {
-            if (_states.TryGetValue(cacheKey, out var cached))
-            {
-                return cached;
-            }
+            _states.TryGetValue(cacheKey, out cachedSnapshot);
         }
 
         try
@@ -89,16 +87,35 @@ public sealed class PackageIndexCache : IPackageIndexCache
                 await using var connection = await _database.OpenConnectionAsync(ct).ConfigureAwait(false);
                 await EnsureSchemaAsync(connection, ct).ConfigureAwait(false);
                 await MigrateManifestAliasAsync(connection, rawRoot, normalizedRoot, ct).ConfigureAwait(false);
+                var currentVersion = await connection.ExecuteScalarAsync<long?>(new CommandDefinition(
+                    "SELECT InventoryVersion FROM TrayRootManifest WHERE ModsRootPath = @ModsRootPath LIMIT 1;",
+                    new { ModsRootPath = normalizedRoot },
+                    cancellationToken: ct)).ConfigureAwait(false);
+                if (!currentVersion.HasValue || currentVersion.Value != inventoryVersion)
+                {
+                    if (cachedSnapshot is not null)
+                    {
+                        lock (_sync)
+                        {
+                            _states.Remove(cacheKey);
+                        }
+                    }
+
+                    return null;
+                }
+
+                if (cachedSnapshot is not null)
+                {
+                    return cachedSnapshot;
+                }
+
                 var snapshot = await LoadSnapshotAsync(connection, normalizedRoot, inventoryVersion, ct).ConfigureAwait(false);
                 if (snapshot is null)
                 {
                     return null;
                 }
 
-                lock (_sync)
-                {
-                    _states[cacheKey] = snapshot;
-                }
+                CacheSnapshot(normalizedRoot, inventoryVersion, snapshot);
 
                 return snapshot;
             }, normalizedRoot, inventoryVersion, cancellationToken).ConfigureAwait(false);
@@ -203,7 +220,6 @@ public sealed class PackageIndexCache : IPackageIndexCache
                 manifestRows.Add(new ManifestRow
                 {
                     ModsRootPath = normalizedRoot,
-                    InventoryVersion = request.InventoryVersion,
                     PackagePath = file.Path,
                     FingerprintKey = fingerprint,
                     Length = file.Length,
@@ -485,7 +501,7 @@ public sealed class PackageIndexCache : IPackageIndexCache
                     ModsRootPath = normalizedRoot,
                     InventoryVersion = request.InventoryVersion,
                     Packages = Array.Empty<IndexedPackageFile>(),
-                    Lookup = new SqliteTrayDependencyLookup(_database, normalizedRoot, request.InventoryVersion)
+                    Lookup = new SqliteTrayDependencyLookup(_database, normalizedRoot, request.InventoryVersion, _logger)
                 };
             materializeTiming.Stop();
             _logger.LogInformation(
@@ -500,10 +516,7 @@ public sealed class PackageIndexCache : IPackageIndexCache
             return loaded;
         }, normalizedRoot, request.InventoryVersion, cancellationToken).ConfigureAwait(false);
 
-        lock (_sync)
-        {
-            _states[BuildCacheKey(normalizedRoot, request.InventoryVersion)] = snapshot;
-        }
+        CacheSnapshot(normalizedRoot, request.InventoryVersion, snapshot);
 
         Report(progress, 100, "Tray dependency cache is ready.");
         _logger.LogInformation(
@@ -1073,7 +1086,7 @@ public sealed class PackageIndexCache : IPackageIndexCache
         }
     }
 
-    private static async Task RebuildManifestAsync(
+    private async Task RebuildManifestAsync(
         SqliteConnection connection,
         System.Data.Common.DbTransaction transaction,
         string modsRootPath,
@@ -1082,24 +1095,64 @@ public sealed class PackageIndexCache : IPackageIndexCache
         CancellationToken cancellationToken)
     {
         await connection.ExecuteAsync(new CommandDefinition(
-            "DELETE FROM TrayRootManifestPackage WHERE ModsRootPath = @ModsRootPath AND InventoryVersion = @InventoryVersion;",
-            new { ModsRootPath = modsRootPath, InventoryVersion = inventoryVersion },
+            """
+            DROP TABLE IF EXISTS TempManifestInput;
+            DROP TABLE IF EXISTS TempOrphanCandidates;
+            CREATE TEMP TABLE TempManifestInput (
+                ModsRootPath TEXT NOT NULL,
+                PackagePath TEXT NOT NULL PRIMARY KEY,
+                FingerprintKey TEXT NOT NULL,
+                Length INTEGER NOT NULL,
+                LastWriteUtcTicks INTEGER NOT NULL
+            );
+            CREATE TEMP TABLE TempOrphanCandidates (
+                FingerprintKey TEXT NOT NULL PRIMARY KEY
+            );
+            """,
+            transaction: transaction,
+            cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            INSERT OR IGNORE INTO TempOrphanCandidates (FingerprintKey)
+            SELECT FingerprintKey
+            FROM TrayRootManifestPackage
+            WHERE ModsRootPath = @ModsRootPath;
+            """,
+            new { ModsRootPath = modsRootPath },
             transaction,
             cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        if (rows.Count > 0)
+        {
+            await connection.ExecuteAsync(new CommandDefinition(
+                """
+                INSERT INTO TempManifestInput (
+                    ModsRootPath,
+                    PackagePath,
+                    FingerprintKey,
+                    Length,
+                    LastWriteUtcTicks
+                ) VALUES (
+                    @ModsRootPath,
+                    @PackagePath,
+                    @FingerprintKey,
+                    @Length,
+                    @LastWriteUtcTicks
+                );
+                """,
+                rows,
+                transaction,
+                cancellationToken: cancellationToken)).ConfigureAwait(false);
+        }
+
         await connection.ExecuteAsync(new CommandDefinition(
-            "DELETE FROM TrayRootManifest WHERE ModsRootPath = @ModsRootPath AND InventoryVersion = @InventoryVersion;",
-            new { ModsRootPath = modsRootPath, InventoryVersion = inventoryVersion },
-            transaction,
-            cancellationToken: cancellationToken)).ConfigureAwait(false);
-        await connection.ExecuteAsync(new CommandDefinition(
-            "DELETE FROM TrayRootManifestPackage WHERE ModsRootPath = @ModsRootPath AND InventoryVersion <> @InventoryVersion;",
-            new { ModsRootPath = modsRootPath, InventoryVersion = inventoryVersion },
-            transaction,
-            cancellationToken: cancellationToken)).ConfigureAwait(false);
-        await connection.ExecuteAsync(new CommandDefinition(
-            "DELETE FROM TrayRootManifest WHERE ModsRootPath = @ModsRootPath AND InventoryVersion <> @InventoryVersion;",
-            new { ModsRootPath = modsRootPath, InventoryVersion = inventoryVersion },
-            transaction,
+            """
+            INSERT OR IGNORE INTO TempOrphanCandidates (FingerprintKey)
+            SELECT FingerprintKey
+            FROM TempManifestInput;
+            """,
+            transaction: transaction,
             cancellationToken: cancellationToken)).ConfigureAwait(false);
 
         await connection.ExecuteAsync(new CommandDefinition(
@@ -1114,7 +1167,11 @@ public sealed class PackageIndexCache : IPackageIndexCache
                 @InventoryVersion,
                 @PackageCount,
                 @UpdatedUtcTicks
-            );
+            )
+            ON CONFLICT(ModsRootPath) DO UPDATE SET
+                InventoryVersion = excluded.InventoryVersion,
+                PackageCount = excluded.PackageCount,
+                UpdatedUtcTicks = excluded.UpdatedUtcTicks;
             """,
             new
             {
@@ -1126,30 +1183,86 @@ public sealed class PackageIndexCache : IPackageIndexCache
             transaction,
             cancellationToken: cancellationToken)).ConfigureAwait(false);
 
-        if (rows.Count > 0)
-        {
-            await connection.ExecuteAsync(new CommandDefinition(
-                """
-                INSERT INTO TrayRootManifestPackage (
-                    ModsRootPath,
-                    InventoryVersion,
-                    PackagePath,
-                    FingerprintKey,
-                    Length,
-                    LastWriteUtcTicks
-                ) VALUES (
-                    @ModsRootPath,
-                    @InventoryVersion,
-                    @PackagePath,
-                    @FingerprintKey,
-                    @Length,
-                    @LastWriteUtcTicks
+        var deletedMissingRows = await connection.ExecuteAsync(new CommandDefinition(
+            """
+            DELETE FROM TrayRootManifestPackage
+            WHERE ModsRootPath = @ModsRootPath
+              AND NOT EXISTS (
+                    SELECT 1
+                    FROM TempManifestInput src
+                    WHERE src.PackagePath = TrayRootManifestPackage.PackagePath
                 );
-                """,
-                rows,
-                transaction,
-                cancellationToken: cancellationToken)).ConfigureAwait(false);
-        }
+            """,
+            new { ModsRootPath = modsRootPath },
+            transaction,
+            cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        var updatedRows = await connection.ExecuteAsync(new CommandDefinition(
+            """
+            UPDATE TrayRootManifestPackage
+            SET FingerprintKey = (
+                    SELECT src.FingerprintKey
+                    FROM TempManifestInput src
+                    WHERE src.PackagePath = TrayRootManifestPackage.PackagePath
+                ),
+                Length = (
+                    SELECT src.Length
+                    FROM TempManifestInput src
+                    WHERE src.PackagePath = TrayRootManifestPackage.PackagePath
+                ),
+                LastWriteUtcTicks = (
+                    SELECT src.LastWriteUtcTicks
+                    FROM TempManifestInput src
+                    WHERE src.PackagePath = TrayRootManifestPackage.PackagePath
+                )
+            WHERE ModsRootPath = @ModsRootPath
+              AND EXISTS (
+                    SELECT 1
+                    FROM TempManifestInput src
+                    WHERE src.PackagePath = TrayRootManifestPackage.PackagePath
+                      AND (
+                            src.FingerprintKey <> TrayRootManifestPackage.FingerprintKey
+                            OR src.Length <> TrayRootManifestPackage.Length
+                            OR src.LastWriteUtcTicks <> TrayRootManifestPackage.LastWriteUtcTicks
+                        )
+                );
+            """,
+            new { ModsRootPath = modsRootPath },
+            transaction,
+            cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        var insertedRows = await connection.ExecuteAsync(new CommandDefinition(
+            """
+            INSERT INTO TrayRootManifestPackage (
+                ModsRootPath,
+                PackagePath,
+                FingerprintKey,
+                Length,
+                LastWriteUtcTicks
+            )
+            SELECT
+                src.ModsRootPath,
+                src.PackagePath,
+                src.FingerprintKey,
+                src.Length,
+                src.LastWriteUtcTicks
+            FROM TempManifestInput src
+            LEFT JOIN TrayRootManifestPackage existing
+                ON existing.ModsRootPath = src.ModsRootPath
+               AND existing.PackagePath = src.PackagePath
+            WHERE existing.PackagePath IS NULL;
+            """,
+            transaction: transaction,
+            cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        _logger.LogInformation(
+            "traymanifest.delta.apply modsRoot={ModsRoot} inventoryVersion={InventoryVersion} packageCount={PackageCount} inserted={InsertedCount} updated={UpdatedCount} deletedMissing={DeletedMissingCount}",
+            modsRootPath,
+            inventoryVersion,
+            rows.Count,
+            insertedRows,
+            updatedRows,
+            deletedMissingRows);
     }
 
     private static async Task CleanupOrphansAsync(
@@ -1159,19 +1272,66 @@ public sealed class PackageIndexCache : IPackageIndexCache
     {
         await connection.ExecuteAsync(new CommandDefinition(
             """
-            DELETE FROM TrayCacheEntry
-            WHERE FingerprintKey NOT IN (
-                SELECT FingerprintKey FROM TrayRootManifestPackage
+            CREATE TEMP TABLE IF NOT EXISTS TempOrphanCandidates (
+                FingerprintKey TEXT NOT NULL PRIMARY KEY
             );
+            """,
+            transaction: transaction,
+            cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            DELETE FROM TrayCacheEntry
+            WHERE FingerprintKey IN (SELECT FingerprintKey FROM TempOrphanCandidates)
+              AND NOT EXISTS (
+                    SELECT 1
+                    FROM TrayRootManifestPackage manifest
+                    WHERE manifest.FingerprintKey = TrayCacheEntry.FingerprintKey
+                );
             """,
             transaction: transaction,
             cancellationToken: cancellationToken)).ConfigureAwait(false);
         await connection.ExecuteAsync(new CommandDefinition(
             """
             DELETE FROM TrayCachePackage
-            WHERE FingerprintKey NOT IN (
-                SELECT FingerprintKey FROM TrayRootManifestPackage
+            WHERE FingerprintKey IN (SELECT FingerprintKey FROM TempOrphanCandidates)
+              AND NOT EXISTS (
+                    SELECT 1
+                    FROM TrayRootManifestPackage manifest
+                    WHERE manifest.FingerprintKey = TrayCachePackage.FingerprintKey
+                );
+            """,
+            transaction: transaction,
+            cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            DELETE FROM TrayCacheEntry
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM TrayRootManifestPackage manifest
+                WHERE manifest.FingerprintKey = TrayCacheEntry.FingerprintKey
             );
+            """,
+            transaction: transaction,
+            cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            DELETE FROM TrayCachePackage
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM TrayRootManifestPackage manifest
+                WHERE manifest.FingerprintKey = TrayCachePackage.FingerprintKey
+            );
+            """,
+            transaction: transaction,
+            cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            DROP TABLE IF EXISTS TempManifestInput;
+            DROP TABLE IF EXISTS TempOrphanCandidates;
             """,
             transaction: transaction,
             cancellationToken: cancellationToken)).ConfigureAwait(false);
@@ -1183,11 +1343,13 @@ public sealed class PackageIndexCache : IPackageIndexCache
         long inventoryVersion,
         CancellationToken cancellationToken)
     {
-        var hasManifest = await connection.ExecuteScalarAsync<long>(new CommandDefinition(
-            "SELECT COUNT(1) FROM TrayRootManifest WHERE ModsRootPath = @ModsRootPath AND InventoryVersion = @InventoryVersion;",
-            new { ModsRootPath = modsRootPath, InventoryVersion = inventoryVersion },
-            cancellationToken: cancellationToken)).ConfigureAwait(false) > 0;
-        if (!hasManifest)
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        var currentVersion = await connection.ExecuteScalarAsync<long?>(new CommandDefinition(
+            "SELECT InventoryVersion FROM TrayRootManifest WHERE ModsRootPath = @ModsRootPath LIMIT 1;",
+            new { ModsRootPath = modsRootPath },
+            transaction: transaction,
+            cancellationToken: cancellationToken)).ConfigureAwait(false);
+        if (!currentVersion.HasValue || currentVersion.Value != inventoryVersion)
         {
             return null;
         }
@@ -1196,18 +1358,19 @@ public sealed class PackageIndexCache : IPackageIndexCache
             """
             SELECT
                 ModsRootPath,
-                InventoryVersion,
                 PackagePath,
                 FingerprintKey,
                 Length,
                 LastWriteUtcTicks
             FROM TrayRootManifestPackage
             WHERE ModsRootPath = @ModsRootPath
-              AND InventoryVersion = @InventoryVersion
             ORDER BY PackagePath COLLATE NOCASE;
             """,
-            new { ModsRootPath = modsRootPath, InventoryVersion = inventoryVersion },
+            new { ModsRootPath = modsRootPath },
+            transaction: transaction,
             cancellationToken: cancellationToken)).ConfigureAwait(false)).ToArray();
+
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
 
         return new PackageIndexSnapshot
         {
@@ -1221,7 +1384,7 @@ public sealed class PackageIndexCache : IPackageIndexCache
                 Entries = EmptyEntries,
                 TypeIndexes = EmptyTypeIndexes
             }).ToArray(),
-            Lookup = new SqliteTrayDependencyLookup(_database, modsRootPath, inventoryVersion)
+            Lookup = new SqliteTrayDependencyLookup(_database, modsRootPath, inventoryVersion, _logger)
         };
     }
 
@@ -1273,17 +1436,16 @@ public sealed class PackageIndexCache : IPackageIndexCache
                 InventoryVersion INTEGER NOT NULL,
                 PackageCount INTEGER NOT NULL,
                 UpdatedUtcTicks INTEGER NOT NULL,
-                PRIMARY KEY (ModsRootPath, InventoryVersion)
+                PRIMARY KEY (ModsRootPath)
             );
 
             CREATE TABLE IF NOT EXISTS TrayRootManifestPackage (
                 ModsRootPath TEXT NOT NULL,
-                InventoryVersion INTEGER NOT NULL,
                 PackagePath TEXT NOT NULL,
                 FingerprintKey TEXT NOT NULL,
                 Length INTEGER NOT NULL,
                 LastWriteUtcTicks INTEGER NOT NULL,
-                PRIMARY KEY (ModsRootPath, InventoryVersion, PackagePath)
+                PRIMARY KEY (ModsRootPath, PackagePath)
             );
 
             CREATE INDEX IF NOT EXISTS IX_TrayCacheEntry_Exact
@@ -1298,11 +1460,14 @@ public sealed class PackageIndexCache : IPackageIndexCache
                 ON TrayCacheEntry(Instance, Type, FingerprintKey, EntryIndex)
                 WHERE IsDeleted = 0;
 
+            CREATE INDEX IF NOT EXISTS IX_TrayRootManifestPackage_ModsRoot_Fingerprint
+                ON TrayRootManifestPackage(ModsRootPath, FingerprintKey);
+
             CREATE INDEX IF NOT EXISTS IX_TrayRootManifestPackage_Fingerprint
                 ON TrayRootManifestPackage(FingerprintKey);
 
-            CREATE INDEX IF NOT EXISTS IX_TrayRootManifestPackage_RootVersionFingerprint
-                ON TrayRootManifestPackage(ModsRootPath, InventoryVersion, FingerprintKey);
+            CREATE INDEX IF NOT EXISTS IX_TrayCachePackage_ParseStatus_Fingerprint
+                ON TrayCachePackage(ParseStatus, FingerprintKey);
             """,
             cancellationToken: cancellationToken)).ConfigureAwait(false);
 
@@ -1388,6 +1553,26 @@ public sealed class PackageIndexCache : IPackageIndexCache
         return root + "|" + inventoryVersion.ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
 
+    private void CacheSnapshot(string modsRootPath, long inventoryVersion, PackageIndexSnapshot snapshot)
+    {
+        var targetKey = BuildCacheKey(modsRootPath, inventoryVersion);
+        lock (_sync)
+        {
+            var staleKeys = _states
+                .Where(state =>
+                    string.Equals(state.Value.ModsRootPath, modsRootPath, StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(state.Key, targetKey, StringComparison.OrdinalIgnoreCase))
+                .Select(state => state.Key)
+                .ToArray();
+            foreach (var staleKey in staleKeys)
+            {
+                _states.Remove(staleKey);
+            }
+
+            _states[targetKey] = snapshot;
+        }
+    }
+
     private static void Report(IProgress<TrayDependencyExportProgress>? progress, int percent, string detail)
     {
         progress?.Report(new TrayDependencyExportProgress
@@ -1428,7 +1613,6 @@ public sealed class PackageIndexCache : IPackageIndexCache
     private sealed class ManifestRow
     {
         public string ModsRootPath { get; set; } = string.Empty;
-        public long InventoryVersion { get; set; }
         public string PackagePath { get; set; } = string.Empty;
         public string FingerprintKey { get; set; } = string.Empty;
         public long Length { get; set; }
@@ -1441,36 +1625,44 @@ internal sealed class SqliteTrayDependencyLookup : ITrayDependencyLookup
     private readonly SqliteCacheDatabase _database;
     private readonly string _modsRootPath;
     private readonly long _inventoryVersion;
+    private readonly ILogger _logger;
 
-    public SqliteTrayDependencyLookup(SqliteCacheDatabase database, string modsRootPath, long inventoryVersion)
+    public SqliteTrayDependencyLookup(SqliteCacheDatabase database, string modsRootPath, long inventoryVersion, ILogger logger)
     {
         _database = database;
         _modsRootPath = modsRootPath;
         _inventoryVersion = inventoryVersion;
+        _logger = logger;
     }
 
     public ITrayDependencyLookupSession OpenSession()
     {
-        return new SqliteTrayDependencyLookupSession(_database.OpenConnection(), _modsRootPath, _inventoryVersion);
+        return new SqliteTrayDependencyLookupSession(_database.OpenConnection(), _modsRootPath, _inventoryVersion, _logger);
     }
 }
 
-internal sealed class SqliteTrayDependencyLookupSession : ITrayDependencyLookupSession
+internal sealed class SqliteTrayDependencyLookupSession : IBatchTrayDependencyLookupSession
 {
     private static readonly uint[] SupportedTypes = KnownResourceTypes.Supported;
+    private const int BatchInsertChunkSize = 200;
 
     private readonly SqliteConnection _connection;
     private readonly string _modsRootPath;
     private readonly long _inventoryVersion;
+    private readonly ILogger _logger;
+    private readonly string _sessionId = Guid.NewGuid().ToString("N");
     private readonly LruCache<TrayResourceKey, ResolvedResourceRef[]> _exactCache = new(4096);
     private readonly LruCache<TypeInstanceKey, ResolvedResourceRef[]> _typeInstanceCache = new(8192);
     private readonly LruCache<ulong, bool> _supportedCache = new(8192);
+    private bool _batchModeDisabled;
+    private bool _batchModeDisabledLogged;
 
-    public SqliteTrayDependencyLookupSession(SqliteConnection connection, string modsRootPath, long inventoryVersion)
+    public SqliteTrayDependencyLookupSession(SqliteConnection connection, string modsRootPath, long inventoryVersion, ILogger logger)
     {
         _connection = connection;
         _modsRootPath = modsRootPath;
         _inventoryVersion = inventoryVersion;
+        _logger = logger;
     }
 
     public bool TryGetExact(TrayResourceKey key, out ResolvedResourceRef[] matches)
@@ -1508,10 +1700,11 @@ internal sealed class SqliteTrayDependencyLookupSession : ITrayDependencyLookupS
             """
             SELECT COUNT(1)
             FROM TrayRootManifestPackage manifest
+            INNER JOIN TrayRootManifest root ON root.ModsRootPath = manifest.ModsRootPath
             INNER JOIN TrayCacheEntry entry ON entry.FingerprintKey = manifest.FingerprintKey
             INNER JOIN TrayCachePackage package ON package.FingerprintKey = manifest.FingerprintKey
             WHERE manifest.ModsRootPath = @ModsRootPath
-              AND manifest.InventoryVersion = @InventoryVersion
+              AND root.InventoryVersion = @InventoryVersion
               AND package.ParseStatus = 1
               AND entry.IsDeleted = 0
               AND entry.Instance = @Instance
@@ -1529,9 +1722,316 @@ internal sealed class SqliteTrayDependencyLookupSession : ITrayDependencyLookupS
         return found;
     }
 
+    public IReadOnlyDictionary<TrayResourceKey, ResolvedResourceRef[]> QueryExactBatch(IReadOnlyCollection<TrayResourceKey> keys)
+    {
+        var distinctKeys = keys
+            .Distinct()
+            .ToArray();
+        if (distinctKeys.Length == 0)
+        {
+            return new Dictionary<TrayResourceKey, ResolvedResourceRef[]>();
+        }
+
+        var hitMap = new Dictionary<TrayResourceKey, ResolvedResourceRef[]>(distinctKeys.Length);
+        var missedKeys = new List<TrayResourceKey>(distinctKeys.Length);
+        foreach (var key in distinctKeys)
+        {
+            if (_exactCache.TryGetValue(key, out var cached))
+            {
+                hitMap[key] = cached;
+                continue;
+            }
+
+            missedKeys.Add(key);
+        }
+
+        if (missedKeys.Count > 0)
+        {
+            var startedAt = DateTime.UtcNow;
+            var usedFallback = false;
+            int statementCount;
+            int insertChunkCount;
+            IReadOnlyDictionary<TrayResourceKey, ResolvedResourceRef[]> dbMap;
+            if (_batchModeDisabled)
+            {
+                LogBatchDisabled();
+                dbMap = QueryExactSingleFallback(missedKeys);
+                statementCount = missedKeys.Count;
+                insertChunkCount = 0;
+                usedFallback = true;
+            }
+            else
+            {
+                try
+                {
+                    var coreResult = QueryExactBatchCore(missedKeys);
+                    dbMap = coreResult.Map;
+                    statementCount = coreResult.StatementCount;
+                    insertChunkCount = coreResult.InsertChunkCount;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    DisableBatchMode("exact", missedKeys.Count, ex);
+                    dbMap = QueryExactSingleFallback(missedKeys);
+                    statementCount = missedKeys.Count;
+                    insertChunkCount = 0;
+                    usedFallback = true;
+                }
+            }
+
+            foreach (var key in missedKeys)
+            {
+                if (!dbMap.TryGetValue(key, out var rows))
+                {
+                    rows = Array.Empty<ResolvedResourceRef>();
+                }
+
+                _exactCache.Set(key, rows);
+                hitMap[key] = rows;
+            }
+
+            _logger.LogInformation(
+                "traylookup.batch.exact keyCount={KeyCount} dbFetchCount={DbFetchCount} matchedKeyCount={MatchedKeyCount} elapsedMs={ElapsedMs} statementCount={StatementCount} insertChunkCount={InsertChunkCount} roundTripsEstimate={RoundTripsEstimate} fallback={Fallback}",
+                distinctKeys.Length,
+                missedKeys.Count,
+                dbMap.Count(pair => pair.Value.Length > 0),
+                (DateTime.UtcNow - startedAt).TotalMilliseconds,
+                statementCount,
+                insertChunkCount,
+                statementCount,
+                usedFallback);
+        }
+
+        return hitMap;
+    }
+
+    public IReadOnlyDictionary<TypeInstanceKey, ResolvedResourceRef[]> QueryTypeInstanceBatch(IReadOnlyCollection<TypeInstanceKey> keys)
+    {
+        var distinctKeys = keys
+            .Distinct()
+            .ToArray();
+        if (distinctKeys.Length == 0)
+        {
+            return new Dictionary<TypeInstanceKey, ResolvedResourceRef[]>();
+        }
+
+        var hitMap = new Dictionary<TypeInstanceKey, ResolvedResourceRef[]>(distinctKeys.Length);
+        var missedKeys = new List<TypeInstanceKey>(distinctKeys.Length);
+        foreach (var key in distinctKeys)
+        {
+            if (_typeInstanceCache.TryGetValue(key, out var cached))
+            {
+                hitMap[key] = cached;
+                continue;
+            }
+
+            missedKeys.Add(key);
+        }
+
+        if (missedKeys.Count > 0)
+        {
+            var startedAt = DateTime.UtcNow;
+            var usedFallback = false;
+            int statementCount;
+            int insertChunkCount;
+            IReadOnlyDictionary<TypeInstanceKey, ResolvedResourceRef[]> dbMap;
+            if (_batchModeDisabled)
+            {
+                LogBatchDisabled();
+                dbMap = QueryTypeInstanceSingleFallback(missedKeys);
+                statementCount = missedKeys.Count;
+                insertChunkCount = 0;
+                usedFallback = true;
+            }
+            else
+            {
+                try
+                {
+                    var coreResult = QueryTypeInstanceBatchCore(missedKeys);
+                    dbMap = coreResult.Map;
+                    statementCount = coreResult.StatementCount;
+                    insertChunkCount = coreResult.InsertChunkCount;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    DisableBatchMode("typeinstance", missedKeys.Count, ex);
+                    dbMap = QueryTypeInstanceSingleFallback(missedKeys);
+                    statementCount = missedKeys.Count;
+                    insertChunkCount = 0;
+                    usedFallback = true;
+                }
+            }
+
+            foreach (var key in missedKeys)
+            {
+                if (!dbMap.TryGetValue(key, out var rows))
+                {
+                    rows = Array.Empty<ResolvedResourceRef>();
+                }
+
+                _typeInstanceCache.Set(key, rows);
+                hitMap[key] = rows;
+            }
+
+            _logger.LogInformation(
+                "traylookup.batch.typeinstance keyCount={KeyCount} dbFetchCount={DbFetchCount} matchedKeyCount={MatchedKeyCount} elapsedMs={ElapsedMs} statementCount={StatementCount} insertChunkCount={InsertChunkCount} roundTripsEstimate={RoundTripsEstimate} fallback={Fallback}",
+                distinctKeys.Length,
+                missedKeys.Count,
+                dbMap.Count(pair => pair.Value.Length > 0),
+                (DateTime.UtcNow - startedAt).TotalMilliseconds,
+                statementCount,
+                insertChunkCount,
+                statementCount,
+                usedFallback);
+        }
+
+        return hitMap;
+    }
+
+    public IReadOnlyDictionary<ulong, bool> QuerySupportedInstanceBatch(IReadOnlyCollection<ulong> instances)
+    {
+        var distinctInstances = instances
+            .Distinct()
+            .ToArray();
+        if (distinctInstances.Length == 0)
+        {
+            return new Dictionary<ulong, bool>();
+        }
+
+        var hitMap = new Dictionary<ulong, bool>(distinctInstances.Length);
+        var missedInstances = new List<ulong>(distinctInstances.Length);
+        foreach (var instance in distinctInstances)
+        {
+            if (_supportedCache.TryGetValue(instance, out var cached))
+            {
+                hitMap[instance] = cached;
+                continue;
+            }
+
+            missedInstances.Add(instance);
+        }
+
+        if (missedInstances.Count > 0)
+        {
+            var startedAt = DateTime.UtcNow;
+            var usedFallback = false;
+            int statementCount;
+            int insertChunkCount;
+            IReadOnlyDictionary<ulong, bool> dbMap;
+            if (_batchModeDisabled)
+            {
+                LogBatchDisabled();
+                dbMap = QuerySupportedSingleFallback(missedInstances);
+                statementCount = missedInstances.Count;
+                insertChunkCount = 0;
+                usedFallback = true;
+            }
+            else
+            {
+                try
+                {
+                    var coreResult = QuerySupportedBatchCore(missedInstances);
+                    dbMap = coreResult.Map;
+                    statementCount = coreResult.StatementCount;
+                    insertChunkCount = coreResult.InsertChunkCount;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    DisableBatchMode("supported", missedInstances.Count, ex);
+                    dbMap = QuerySupportedSingleFallback(missedInstances);
+                    statementCount = missedInstances.Count;
+                    insertChunkCount = 0;
+                    usedFallback = true;
+                }
+            }
+
+            foreach (var instance in missedInstances)
+            {
+                var found = dbMap.TryGetValue(instance, out var matched) && matched;
+                _supportedCache.Set(instance, found);
+                hitMap[instance] = found;
+            }
+
+            _logger.LogInformation(
+                "traylookup.batch.supported keyCount={KeyCount} dbFetchCount={DbFetchCount} matchedKeyCount={MatchedKeyCount} elapsedMs={ElapsedMs} statementCount={StatementCount} insertChunkCount={InsertChunkCount} roundTripsEstimate={RoundTripsEstimate} fallback={Fallback}",
+                distinctInstances.Length,
+                missedInstances.Count,
+                dbMap.Count(pair => pair.Value),
+                (DateTime.UtcNow - startedAt).TotalMilliseconds,
+                statementCount,
+                insertChunkCount,
+                statementCount,
+                usedFallback);
+        }
+
+        return hitMap;
+    }
+
     public void Dispose()
     {
         _connection.Dispose();
+    }
+
+    private void DisableBatchMode(string method, int keyCount, Exception ex)
+    {
+        if (_batchModeDisabled)
+        {
+            return;
+        }
+
+        _batchModeDisabled = true;
+        _logger.LogWarning(
+            ex,
+            "traylookup.batch.fallback reason={Reason} method={Method} keyCount={KeyCount} sessionId={SessionId}",
+            ex.GetType().Name,
+            method,
+            keyCount,
+            _sessionId);
+        LogBatchDisabled();
+    }
+
+    private void LogBatchDisabled()
+    {
+        if (_batchModeDisabledLogged)
+        {
+            return;
+        }
+
+        _batchModeDisabledLogged = true;
+        _logger.LogWarning("traylookup.batch.disabled sessionId={SessionId} inventoryVersion={InventoryVersion}", _sessionId, _inventoryVersion);
+    }
+
+    private IReadOnlyDictionary<TrayResourceKey, ResolvedResourceRef[]> QueryExactSingleFallback(IReadOnlyList<TrayResourceKey> keys)
+    {
+        var map = new Dictionary<TrayResourceKey, ResolvedResourceRef[]>(keys.Count);
+        foreach (var key in keys)
+        {
+            map[key] = QueryExact(key);
+        }
+
+        return map;
+    }
+
+    private IReadOnlyDictionary<TypeInstanceKey, ResolvedResourceRef[]> QueryTypeInstanceSingleFallback(IReadOnlyList<TypeInstanceKey> keys)
+    {
+        var map = new Dictionary<TypeInstanceKey, ResolvedResourceRef[]>(keys.Count);
+        foreach (var key in keys)
+        {
+            map[key] = QueryTypeInstance(key);
+        }
+
+        return map;
+    }
+
+    private IReadOnlyDictionary<ulong, bool> QuerySupportedSingleFallback(IReadOnlyList<ulong> instances)
+    {
+        var map = new Dictionary<ulong, bool>(instances.Count);
+        foreach (var instance in instances)
+        {
+            map[instance] = HasSupportedInstance(instance);
+        }
+
+        return map;
     }
 
     private ResolvedResourceRef[] QueryExact(TrayResourceKey key)
@@ -1549,10 +2049,11 @@ internal sealed class SqliteTrayDependencyLookupSession : ITrayDependencyLookupS
                     entry.UncompressedSize,
                     entry.CompressionType
                 FROM TrayRootManifestPackage manifest
+                INNER JOIN TrayRootManifest root ON root.ModsRootPath = manifest.ModsRootPath
                 INNER JOIN TrayCacheEntry entry ON entry.FingerprintKey = manifest.FingerprintKey
                 INNER JOIN TrayCachePackage package ON package.FingerprintKey = manifest.FingerprintKey
                 WHERE manifest.ModsRootPath = @ModsRootPath
-                  AND manifest.InventoryVersion = @InventoryVersion
+                  AND root.InventoryVersion = @InventoryVersion
                   AND package.ParseStatus = 1
                   AND entry.IsDeleted = 0
                   AND entry.Type = @Type
@@ -1587,10 +2088,11 @@ internal sealed class SqliteTrayDependencyLookupSession : ITrayDependencyLookupS
                     entry.UncompressedSize,
                     entry.CompressionType
                 FROM TrayRootManifestPackage manifest
+                INNER JOIN TrayRootManifest root ON root.ModsRootPath = manifest.ModsRootPath
                 INNER JOIN TrayCacheEntry entry ON entry.FingerprintKey = manifest.FingerprintKey
                 INNER JOIN TrayCachePackage package ON package.FingerprintKey = manifest.FingerprintKey
                 WHERE manifest.ModsRootPath = @ModsRootPath
-                  AND manifest.InventoryVersion = @InventoryVersion
+                  AND root.InventoryVersion = @InventoryVersion
                   AND package.ParseStatus = 1
                   AND entry.IsDeleted = 0
                   AND entry.Type = @Type
@@ -1606,6 +2108,242 @@ internal sealed class SqliteTrayDependencyLookupSession : ITrayDependencyLookupS
                 })
             .Select(ToResolved)
             .ToArray();
+    }
+
+    private BatchResourceLookupQueryResult<TrayResourceKey> QueryExactBatchCore(IReadOnlyList<TrayResourceKey> keys)
+    {
+        var statementCount = 0;
+        var insertChunkCount = 0;
+        _connection.Execute(
+            """
+            DROP TABLE IF EXISTS TempLookupExact;
+            CREATE TEMP TABLE TempLookupExact (
+                [Type] INTEGER NOT NULL,
+                [Group] INTEGER NOT NULL,
+                [Instance] INTEGER NOT NULL,
+                [Ordinal] INTEGER NOT NULL,
+                PRIMARY KEY ([Type], [Group], [Instance])
+            );
+            """);
+        statementCount++;
+        foreach (var chunk in ChunkBatch(keys, BatchInsertChunkSize))
+        {
+            var sql = new StringBuilder("INSERT INTO TempLookupExact ([Type], [Group], [Instance], [Ordinal]) VALUES ");
+            var parameters = new DynamicParameters();
+            for (var i = 0; i < chunk.Length; i++)
+            {
+                if (i > 0)
+                {
+                    sql.Append(", ");
+                }
+
+                sql.Append($"(@Type{i}, @Group{i}, @Instance{i}, @Ordinal{i})");
+                var key = chunk[i];
+                parameters.Add($"Type{i}", key.Type);
+                parameters.Add($"Group{i}", key.Group);
+                parameters.Add($"Instance{i}", key.Instance);
+                parameters.Add($"Ordinal{i}", insertChunkCount * BatchInsertChunkSize + i);
+            }
+
+            _connection.Execute(sql.ToString(), parameters);
+            statementCount++;
+            insertChunkCount++;
+        }
+
+        var rows = _connection.Query<BatchLookupRow>(
+            """
+            SELECT
+                key.[Type] AS KeyType,
+                key.[Group] AS KeyGroup,
+                key.[Instance] AS KeyInstance,
+                manifest.PackagePath AS FilePath,
+                entry.Type,
+                entry.[Group],
+                entry.Instance,
+                entry.IsDeleted,
+                entry.DataOffset,
+                entry.CompressedSize,
+                entry.UncompressedSize,
+                entry.CompressionType
+            FROM TempLookupExact key
+            INNER JOIN TrayCacheEntry entry
+                ON entry.Type = key.[Type]
+               AND entry.[Group] = key.[Group]
+               AND entry.Instance = key.[Instance]
+            INNER JOIN TrayRootManifestPackage manifest
+                ON manifest.FingerprintKey = entry.FingerprintKey
+            INNER JOIN TrayRootManifest root
+                ON root.ModsRootPath = manifest.ModsRootPath
+            INNER JOIN TrayCachePackage package
+                ON package.FingerprintKey = manifest.FingerprintKey
+            WHERE manifest.ModsRootPath = @ModsRootPath
+              AND root.InventoryVersion = @InventoryVersion
+              AND package.ParseStatus = 1
+              AND entry.IsDeleted = 0
+            ORDER BY key.[Ordinal], manifest.PackagePath COLLATE NOCASE, entry.EntryIndex;
+            """,
+            new
+            {
+                ModsRootPath = _modsRootPath,
+                InventoryVersion = _inventoryVersion
+            });
+        statementCount++;
+        _connection.Execute("DROP TABLE IF EXISTS TempLookupExact;");
+        statementCount++;
+        var map = rows
+            .GroupBy(row => new TrayResourceKey(row.KeyType, row.KeyGroup, row.KeyInstance))
+            .ToDictionary(
+                group => group.Key,
+                group => group.Select(ToResolved).ToArray());
+        return new BatchResourceLookupQueryResult<TrayResourceKey>(map, statementCount, insertChunkCount);
+    }
+
+    private BatchResourceLookupQueryResult<TypeInstanceKey> QueryTypeInstanceBatchCore(IReadOnlyList<TypeInstanceKey> keys)
+    {
+        var statementCount = 0;
+        var insertChunkCount = 0;
+        _connection.Execute(
+            """
+            DROP TABLE IF EXISTS TempLookupTypeInstance;
+            CREATE TEMP TABLE TempLookupTypeInstance (
+                [Type] INTEGER NOT NULL,
+                [Instance] INTEGER NOT NULL,
+                [Ordinal] INTEGER NOT NULL,
+                PRIMARY KEY ([Type], [Instance])
+            );
+            """);
+        statementCount++;
+        foreach (var chunk in ChunkBatch(keys, BatchInsertChunkSize))
+        {
+            var sql = new StringBuilder("INSERT INTO TempLookupTypeInstance ([Type], [Instance], [Ordinal]) VALUES ");
+            var parameters = new DynamicParameters();
+            for (var i = 0; i < chunk.Length; i++)
+            {
+                if (i > 0)
+                {
+                    sql.Append(", ");
+                }
+
+                sql.Append($"(@Type{i}, @Instance{i}, @Ordinal{i})");
+                var key = chunk[i];
+                parameters.Add($"Type{i}", key.Type);
+                parameters.Add($"Instance{i}", key.Instance);
+                parameters.Add($"Ordinal{i}", insertChunkCount * BatchInsertChunkSize + i);
+            }
+
+            _connection.Execute(sql.ToString(), parameters);
+            statementCount++;
+            insertChunkCount++;
+        }
+
+        var rows = _connection.Query<BatchTypeInstanceLookupRow>(
+            """
+            SELECT
+                key.[Type] AS KeyType,
+                key.[Instance] AS KeyInstance,
+                manifest.PackagePath AS FilePath,
+                entry.Type,
+                entry.[Group],
+                entry.Instance,
+                entry.IsDeleted,
+                entry.DataOffset,
+                entry.CompressedSize,
+                entry.UncompressedSize,
+                entry.CompressionType
+            FROM TempLookupTypeInstance key
+            INNER JOIN TrayCacheEntry entry
+                ON entry.Type = key.[Type]
+               AND entry.Instance = key.[Instance]
+            INNER JOIN TrayRootManifestPackage manifest
+                ON manifest.FingerprintKey = entry.FingerprintKey
+            INNER JOIN TrayRootManifest root
+                ON root.ModsRootPath = manifest.ModsRootPath
+            INNER JOIN TrayCachePackage package
+                ON package.FingerprintKey = manifest.FingerprintKey
+            WHERE manifest.ModsRootPath = @ModsRootPath
+              AND root.InventoryVersion = @InventoryVersion
+              AND package.ParseStatus = 1
+              AND entry.IsDeleted = 0
+            ORDER BY key.[Ordinal], manifest.PackagePath COLLATE NOCASE, entry.EntryIndex;
+            """,
+            new
+            {
+                ModsRootPath = _modsRootPath,
+                InventoryVersion = _inventoryVersion
+            });
+        statementCount++;
+        _connection.Execute("DROP TABLE IF EXISTS TempLookupTypeInstance;");
+        statementCount++;
+        var map = rows
+            .GroupBy(row => new TypeInstanceKey(row.KeyType, row.KeyInstance))
+            .ToDictionary(
+                group => group.Key,
+                group => group.Select(ToResolved).ToArray());
+        return new BatchResourceLookupQueryResult<TypeInstanceKey>(map, statementCount, insertChunkCount);
+    }
+
+    private BatchSupportedLookupQueryResult QuerySupportedBatchCore(IReadOnlyList<ulong> instances)
+    {
+        var statementCount = 0;
+        var insertChunkCount = 0;
+        _connection.Execute(
+            """
+            DROP TABLE IF EXISTS TempLookupSupportedInstance;
+            CREATE TEMP TABLE TempLookupSupportedInstance (
+                [Instance] INTEGER NOT NULL PRIMARY KEY
+            );
+            """);
+        statementCount++;
+        foreach (var chunk in ChunkBatch(instances, 400))
+        {
+            var sql = new StringBuilder("INSERT INTO TempLookupSupportedInstance ([Instance]) VALUES ");
+            var parameters = new DynamicParameters();
+            for (var i = 0; i < chunk.Length; i++)
+            {
+                if (i > 0)
+                {
+                    sql.Append(", ");
+                }
+
+                sql.Append($"(@Instance{i})");
+                parameters.Add($"Instance{i}", chunk[i]);
+            }
+
+            _connection.Execute(sql.ToString(), parameters);
+            statementCount++;
+            insertChunkCount++;
+        }
+
+        var rows = _connection.Query<SupportedLookupRow>(
+            """
+            SELECT
+                input.Instance,
+                CASE WHEN EXISTS (
+                    SELECT 1
+                    FROM TrayRootManifestPackage manifest
+                    INNER JOIN TrayRootManifest root ON root.ModsRootPath = manifest.ModsRootPath
+                    INNER JOIN TrayCacheEntry entry ON entry.FingerprintKey = manifest.FingerprintKey
+                    INNER JOIN TrayCachePackage package ON package.FingerprintKey = manifest.FingerprintKey
+                    WHERE manifest.ModsRootPath = @ModsRootPath
+                      AND root.InventoryVersion = @InventoryVersion
+                      AND package.ParseStatus = 1
+                      AND entry.IsDeleted = 0
+                      AND entry.Instance = input.Instance
+                      AND entry.Type IN @SupportedTypes
+                ) THEN 1 ELSE 0 END AS HasMatch
+            FROM TempLookupSupportedInstance input;
+            """,
+            new
+            {
+                ModsRootPath = _modsRootPath,
+                InventoryVersion = _inventoryVersion,
+                SupportedTypes
+            });
+        statementCount++;
+        _connection.Execute("DROP TABLE IF EXISTS TempLookupSupportedInstance;");
+        statementCount++;
+        var map = rows.ToDictionary(row => row.Instance, row => row.HasMatch != 0);
+        return new BatchSupportedLookupQueryResult(map, statementCount, insertChunkCount);
     }
 
     private static ResolvedResourceRef ToResolved(LookupRow row)
@@ -1628,6 +2366,69 @@ internal sealed class SqliteTrayDependencyLookupSession : ITrayDependencyLookupS
         };
     }
 
+    private static ResolvedResourceRef ToResolved(BatchLookupRow row)
+    {
+        return ToResolved(new LookupRow
+        {
+            FilePath = row.FilePath,
+            Type = row.Type,
+            Group = row.Group,
+            Instance = row.Instance,
+            IsDeleted = row.IsDeleted,
+            DataOffset = row.DataOffset,
+            CompressedSize = row.CompressedSize,
+            UncompressedSize = row.UncompressedSize,
+            CompressionType = row.CompressionType
+        });
+    }
+
+    private static ResolvedResourceRef ToResolved(BatchTypeInstanceLookupRow row)
+    {
+        return ToResolved(new LookupRow
+        {
+            FilePath = row.FilePath,
+            Type = row.Type,
+            Group = row.Group,
+            Instance = row.Instance,
+            IsDeleted = row.IsDeleted,
+            DataOffset = row.DataOffset,
+            CompressedSize = row.CompressedSize,
+            UncompressedSize = row.UncompressedSize,
+            CompressionType = row.CompressionType
+        });
+    }
+
+    private static IReadOnlyList<T[]> ChunkBatch<T>(IReadOnlyCollection<T> items, int chunkSize)
+    {
+        if (items.Count == 0)
+        {
+            return Array.Empty<T[]>();
+        }
+
+        var materialized = items as T[] ?? items.ToArray();
+        var chunks = new List<T[]>((materialized.Length + chunkSize - 1) / chunkSize);
+        for (var offset = 0; offset < materialized.Length; offset += chunkSize)
+        {
+            var size = Math.Min(chunkSize, materialized.Length - offset);
+            var chunk = new T[size];
+            Array.Copy(materialized, offset, chunk, 0, size);
+            chunks.Add(chunk);
+        }
+
+        return chunks;
+    }
+
+    private sealed record BatchResourceLookupQueryResult<TKey>(
+        IReadOnlyDictionary<TKey, ResolvedResourceRef[]> Map,
+        int StatementCount,
+        int InsertChunkCount)
+        where TKey : notnull;
+
+    private sealed record BatchSupportedLookupQueryResult(
+        IReadOnlyDictionary<ulong, bool> Map,
+        int StatementCount,
+        int InsertChunkCount);
+
     private sealed class LookupRow
     {
         public string FilePath { get; set; } = string.Empty;
@@ -1639,6 +2440,43 @@ internal sealed class SqliteTrayDependencyLookupSession : ITrayDependencyLookupS
         public int CompressedSize { get; set; }
         public int UncompressedSize { get; set; }
         public ushort CompressionType { get; set; }
+    }
+
+    private sealed class BatchLookupRow
+    {
+        public uint KeyType { get; set; }
+        public uint KeyGroup { get; set; }
+        public ulong KeyInstance { get; set; }
+        public string FilePath { get; set; } = string.Empty;
+        public uint Type { get; set; }
+        public uint Group { get; set; }
+        public ulong Instance { get; set; }
+        public bool IsDeleted { get; set; }
+        public long DataOffset { get; set; }
+        public int CompressedSize { get; set; }
+        public int UncompressedSize { get; set; }
+        public ushort CompressionType { get; set; }
+    }
+
+    private sealed class BatchTypeInstanceLookupRow
+    {
+        public uint KeyType { get; set; }
+        public ulong KeyInstance { get; set; }
+        public string FilePath { get; set; } = string.Empty;
+        public uint Type { get; set; }
+        public uint Group { get; set; }
+        public ulong Instance { get; set; }
+        public bool IsDeleted { get; set; }
+        public long DataOffset { get; set; }
+        public int CompressedSize { get; set; }
+        public int UncompressedSize { get; set; }
+        public ushort CompressionType { get; set; }
+    }
+
+    private sealed class SupportedLookupRow
+    {
+        public ulong Instance { get; set; }
+        public int HasMatch { get; set; }
     }
 }
 

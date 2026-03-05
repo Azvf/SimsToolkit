@@ -220,6 +220,15 @@ internal interface ITrayDependencyLookupSession : IDisposable
     bool HasSupportedInstance(ulong instance);
 }
 
+internal interface IBatchTrayDependencyLookupSession : ITrayDependencyLookupSession
+{
+    IReadOnlyDictionary<TrayResourceKey, ResolvedResourceRef[]> QueryExactBatch(IReadOnlyCollection<TrayResourceKey> keys);
+
+    IReadOnlyDictionary<TypeInstanceKey, ResolvedResourceRef[]> QueryTypeInstanceBatch(IReadOnlyCollection<TypeInstanceKey> keys);
+
+    IReadOnlyDictionary<ulong, bool> QuerySupportedInstanceBatch(IReadOnlyCollection<ulong> instances);
+}
+
 internal sealed class EmptyTrayDependencyLookup : ITrayDependencyLookup
 {
     public static EmptyTrayDependencyLookup Instance { get; } = new();
@@ -231,7 +240,7 @@ internal sealed class EmptyTrayDependencyLookup : ITrayDependencyLookup
     public ITrayDependencyLookupSession OpenSession() => EmptyTrayDependencyLookupSession.Instance;
 }
 
-internal sealed class EmptyTrayDependencyLookupSession : ITrayDependencyLookupSession
+internal sealed class EmptyTrayDependencyLookupSession : IBatchTrayDependencyLookupSession
 {
     public static EmptyTrayDependencyLookupSession Instance { get; } = new();
 
@@ -252,6 +261,21 @@ internal sealed class EmptyTrayDependencyLookupSession : ITrayDependencyLookupSe
     }
 
     public bool HasSupportedInstance(ulong instance) => false;
+
+    public IReadOnlyDictionary<TrayResourceKey, ResolvedResourceRef[]> QueryExactBatch(IReadOnlyCollection<TrayResourceKey> keys)
+    {
+        return new Dictionary<TrayResourceKey, ResolvedResourceRef[]>();
+    }
+
+    public IReadOnlyDictionary<TypeInstanceKey, ResolvedResourceRef[]> QueryTypeInstanceBatch(IReadOnlyCollection<TypeInstanceKey> keys)
+    {
+        return new Dictionary<TypeInstanceKey, ResolvedResourceRef[]>();
+    }
+
+    public IReadOnlyDictionary<ulong, bool> QuerySupportedInstanceBatch(IReadOnlyCollection<ulong> instances)
+    {
+        return new Dictionary<ulong, bool>();
+    }
 
     public void Dispose()
     {

@@ -24,7 +24,7 @@ public sealed class ModPackageInventoryServiceTests
 
         Assert.NotNull(revalidatedEntry);
         Assert.Equal(initialEntry!.InventoryVersion, revalidatedEntry!.InventoryVersion);
-        Assert.NotEqual(initialEntry.InventoryVersion, secondResult.Snapshot.InventoryVersion);
+        Assert.Equal(initialEntry.InventoryVersion, secondResult.Snapshot.InventoryVersion);
         Assert.Empty(secondResult.AddedEntries);
         Assert.Empty(secondResult.ChangedEntries);
         Assert.Empty(secondResult.RemovedPackagePaths);
@@ -54,6 +54,7 @@ public sealed class ModPackageInventoryServiceTests
         Assert.Equal(packagePath, refreshResult.ChangedEntries[0].PackagePath);
         Assert.Equal(1, CountEntries(cacheDir.Path, modsDir.Path));
         Assert.NotEqual(initialEntry!.InventoryVersion, updatedEntry!.InventoryVersion);
+        Assert.NotEqual(initialEntry.InventoryVersion, refreshResult.Snapshot.InventoryVersion);
         Assert.Equal(5, updatedEntry.FileLength);
         Assert.Equal($"{updatedEntry.FileLength}:{updatedEntry.LastWriteUtcTicks}", updatedEntry.PackageFingerprintKey);
     }
@@ -103,6 +104,20 @@ public sealed class ModPackageInventoryServiceTests
         Assert.Equal(0, rootRow!.PackageCount);
         Assert.Equal("Ready", rootRow.Status);
         Assert.Equal(0, CountEntries(cacheDir.Path, modsDir.Path));
+    }
+
+    [Fact]
+    public async Task RefreshAsync_WithEmptyModsRoot_ProducesStableInventoryVersion()
+    {
+        using var cacheDir = new TempDirectory("inventory-cache");
+        using var modsDir = new TempDirectory("inventory-mods");
+        var service = CreateService(cacheDir.Path);
+
+        var first = await service.RefreshAsync(modsDir.Path);
+        await Task.Delay(20);
+        var second = await service.RefreshAsync(modsDir.Path);
+
+        Assert.Equal(first.Snapshot.InventoryVersion, second.Snapshot.InventoryVersion);
     }
 
     private static IModPackageInventoryService CreateService(string cacheRootPath)

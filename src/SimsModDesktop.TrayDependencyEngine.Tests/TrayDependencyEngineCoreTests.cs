@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Reflection;
 using Microsoft.Data.Sqlite;
 using SimsModDesktop.PackageCore;
 using SimsModDesktop.TrayDependencyEngine;
@@ -11,6 +12,9 @@ public sealed class TrayDependencyEngineCoreTests
     private const ulong SecondInstance = 0x2222222222222222;
     private const ulong HighBitInstance = 0xF123456789ABCDEF;
     private const uint SupportedResourceType = 55242443u;
+    private const uint ObjectCatalogResourceType = 832458525u;
+    private const uint ObjectDefinitionResourceType = 3235601127u;
+    private const uint ImageResourceType = 877907861u;
 
     [Fact]
     public async Task PackageIndexCache_ReusesSnapshot_WhenPackagesAreUnchanged()
@@ -54,6 +58,9 @@ public sealed class TrayDependencyEngineCoreTests
             ChangedPackageFiles = [changedBuildFile]
         });
         var secondTicks = await LoadPackageUpdatedTicksAsync(Path.Combine(cacheRoot.Path, "cache.db"));
+        var manifestCount = await LoadManifestPackageCountAsync(Path.Combine(cacheRoot.Path, "cache.db"), modsRoot.Path);
+        var staleSnapshotInSameCache = await cache.TryLoadSnapshotAsync(modsRoot.Path, firstRequest.InventoryVersion);
+        var staleSnapshot = await new PackageIndexCache(cacheRoot.Path).TryLoadSnapshotAsync(modsRoot.Path, firstRequest.InventoryVersion);
 
         Assert.True(secondTicks.TryGetValue(Path.GetFullPath(changedPackagePath), out var changedUpdated));
         Assert.True(firstTicks.TryGetValue(Path.GetFullPath(changedPackagePath), out var changedBefore));
@@ -62,6 +69,9 @@ public sealed class TrayDependencyEngineCoreTests
         Assert.True(secondTicks.TryGetValue(Path.GetFullPath(untouchedPackagePath), out var untouchedUpdated));
         Assert.True(firstTicks.TryGetValue(Path.GetFullPath(untouchedPackagePath), out var untouchedBefore));
         Assert.Equal(untouchedBefore, untouchedUpdated);
+        Assert.Equal(2L, manifestCount);
+        Assert.Null(staleSnapshotInSameCache);
+        Assert.Null(staleSnapshot);
 
         SqliteConnection.ClearAllPools();
     }
@@ -254,6 +264,77 @@ public sealed class TrayDependencyEngineCoreTests
     }
 
     [Fact]
+    public async Task TrayDependencyExportService_ExpandsObjectCatalogSiblingStructuredDependencies()
+    {
+        using var trayRoot = new TempDirectory("tray-objectcatalog-tray");
+        using var modsRoot = new TempDirectory("tray-objectcatalog-mods");
+        using var exportRoot = new TempDirectory("tray-objectcatalog-out");
+        const ulong objectInstance = 0x3000000000000001;
+        const ulong nestedImageInstance = 0x3000000000000002;
+        const uint group = 7;
+
+        var trayItemPath = Path.Combine(trayRoot.Path, "0xobjcatalog.trayitem");
+        WriteTrayItem(trayItemPath, objectInstance);
+
+        WritePackage(
+            Path.Combine(modsRoot.Path, "objectcatalog.package"),
+            [new PackageSpec(ObjectCatalogResourceType, group, objectInstance, [0x00])]);
+        WritePackage(
+            Path.Combine(modsRoot.Path, "objectdefinition.package"),
+            [new PackageSpec(ObjectDefinitionResourceType, group, objectInstance, BuildResourceKeyBytes(ImageResourceType, group, nestedImageInstance))]);
+        WritePackage(
+            Path.Combine(modsRoot.Path, "image.package"),
+            [new PackageSpec(ImageResourceType, group, nestedImageInstance, [4, 3, 2, 1])]);
+
+        var packageIndexCache = new PackageIndexCache();
+        var preloadedSnapshot = await BuildSnapshotAsync(packageIndexCache, modsRoot.Path);
+        var service = new TrayDependencyExportService(packageIndexCache);
+        var request = new TrayDependencyExportRequest
+        {
+            ItemTitle = "ObjectCatalog",
+            TrayItemKey = "0xobjcatalog",
+            TrayRootPath = trayRoot.Path,
+            TraySourceFiles = [trayItemPath],
+            ModsRootPath = modsRoot.Path,
+            TrayExportRoot = Path.Combine(exportRoot.Path, "ObjectCatalog_0xobjcatalog", "Tray"),
+            ModsExportRoot = Path.Combine(exportRoot.Path, "ObjectCatalog_0xobjcatalog", "Mods"),
+            PreloadedSnapshot = preloadedSnapshot
+        };
+
+        var result = await service.ExportAsync(request);
+
+        Assert.True(result.Success);
+        Assert.Equal(3, result.CopiedModFileCount);
+        Assert.True(File.Exists(Path.Combine(request.ModsExportRoot, "objectcatalog.package")));
+        Assert.True(File.Exists(Path.Combine(request.ModsExportRoot, "objectdefinition.package")));
+        Assert.True(File.Exists(Path.Combine(request.ModsExportRoot, "image.package")));
+    }
+
+    [Fact]
+    public async Task PackageIndexCache_CleanupOrphans_RemovesRowsOutsideCurrentRootCandidates()
+    {
+        using var orphanRoot = new TempDirectory("tray-orphan-old-root");
+        using var activeRoot = new TempDirectory("tray-orphan-active-root");
+        using var cacheRoot = new TempDirectory("tray-orphan-cache");
+        var orphanPath = Path.Combine(orphanRoot.Path, "orphan.package");
+        var activePath = Path.Combine(activeRoot.Path, "active.package");
+        WritePackage(orphanPath, [new PackageSpec(SupportedResourceType, 0, FirstInstance, [1, 2, 3, 4])]);
+        WritePackage(activePath, [new PackageSpec(SupportedResourceType, 0, SecondInstance, [5, 6, 7, 8])]);
+
+        var cache = new PackageIndexCache(cacheRoot.Path);
+        _ = await BuildSnapshotAsync(cache, orphanRoot.Path);
+        var cacheDbPath = Path.Combine(cacheRoot.Path, "cache.db");
+        await RemoveRootManifestRowsAsync(cacheDbPath, orphanRoot.Path);
+        Assert.Equal(1L, await CountCachePackageRowsByPathAsync(cacheDbPath, orphanPath));
+
+        _ = await BuildSnapshotAsync(cache, activeRoot.Path);
+
+        Assert.Equal(0L, await CountCachePackageRowsByPathAsync(cacheDbPath, orphanPath));
+        Assert.Equal(1L, await CountCachePackageRowsByPathAsync(cacheDbPath, activePath));
+        Assert.Equal(1L, await LoadCacheEntryRowCountAsync(cacheDbPath));
+    }
+
+    [Fact]
     public async Task TrayDependencyExportService_LoadsCompanionTrayFilesByTrayKey()
     {
         using var trayRoot = new TempDirectory("tray-companion-tray");
@@ -289,6 +370,47 @@ public sealed class TrayDependencyEngineCoreTests
 
         Assert.True(result.Success);
         Assert.Equal(1, result.CopiedModFileCount);
+    }
+
+    [Fact]
+    public async Task PackageIndexCache_BatchLookup_FallsBackToSingleQueryWhenBatchFails()
+    {
+        using var modsRoot = new TempDirectory("tray-batch-fallback-mods");
+        var packagePath = Path.Combine(modsRoot.Path, "single.package");
+        WritePackage(packagePath, [new PackageSpec(SupportedResourceType, 0, FirstInstance, [1, 2, 3, 4])]);
+
+        var cache = new PackageIndexCache();
+        var snapshot = await BuildSnapshotAsync(cache, modsRoot.Path);
+        var lookup = GetSnapshotLookup(snapshot);
+        var session = OpenLookupSession(lookup);
+        try
+        {
+            var connection = GetSessionConnection(session);
+            using var pragma = connection.CreateCommand();
+            pragma.CommandText = "PRAGMA query_only = ON;";
+            _ = pragma.ExecuteNonQuery();
+
+            var exactKey = new TrayResourceKey(SupportedResourceType, 0, FirstInstance);
+            var exactResult = InvokeExactBatch(session, [exactKey]);
+            Assert.True(exactResult.TryGetValue(exactKey, out var exactMatches));
+            Assert.NotNull(exactMatches);
+            Assert.NotEmpty(exactMatches);
+
+            var typeKey = new TypeInstanceKey(SupportedResourceType, FirstInstance);
+            var typeResult = InvokeTypeInstanceBatch(session, [typeKey]);
+            Assert.True(typeResult.TryGetValue(typeKey, out var typeMatches));
+            Assert.NotNull(typeMatches);
+            Assert.NotEmpty(typeMatches);
+
+            var supportedResult = InvokeSupportedBatch(session, [FirstInstance]);
+            Assert.True(supportedResult.TryGetValue(FirstInstance, out var supported));
+            Assert.True(supported);
+        }
+        finally
+        {
+            var disposeMethod = session.GetType().GetMethod("Dispose", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            _ = disposeMethod?.Invoke(session, null);
+        }
     }
 
     [Fact]
@@ -358,6 +480,15 @@ public sealed class TrayDependencyEngineCoreTests
             BinaryPrimitives.WriteUInt64LittleEndian(buffer, instance);
             stream.Write(buffer);
         }
+    }
+
+    private static byte[] BuildResourceKeyBytes(uint type, uint group, ulong instance)
+    {
+        var data = new byte[16];
+        BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(0, 4), type);
+        BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(4, 4), group);
+        BinaryPrimitives.WriteUInt64LittleEndian(data.AsSpan(8, 8), instance);
+        return data;
     }
 
     private static void WritePackage(string path, IReadOnlyList<PackageSpec> specs)
@@ -453,6 +584,49 @@ public sealed class TrayDependencyEngineCoreTests
         return result;
     }
 
+    private static async Task<long> LoadManifestPackageCountAsync(string cacheDbPath, string modsRootPath)
+    {
+        await using var connection = new SqliteConnection($"Data Source={cacheDbPath};Mode=ReadWrite;Pooling=False;");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(1) FROM TrayRootManifestPackage WHERE ModsRootPath = @ModsRootPath;";
+        command.Parameters.AddWithValue("@ModsRootPath", Path.GetFullPath(modsRootPath));
+        return Convert.ToInt64(await command.ExecuteScalarAsync());
+    }
+
+    private static async Task RemoveRootManifestRowsAsync(string cacheDbPath, string modsRootPath)
+    {
+        await using var connection = new SqliteConnection($"Data Source={cacheDbPath};Mode=ReadWrite;Pooling=False;");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            DELETE FROM TrayRootManifestPackage WHERE ModsRootPath = @ModsRootPath;
+            DELETE FROM TrayRootManifest WHERE ModsRootPath = @ModsRootPath;
+            """;
+        command.Parameters.AddWithValue("@ModsRootPath", Path.GetFullPath(modsRootPath));
+        _ = await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task<long> CountCachePackageRowsByPathAsync(string cacheDbPath, string packagePath)
+    {
+        await using var connection = new SqliteConnection($"Data Source={cacheDbPath};Mode=ReadWrite;Pooling=False;");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(1) FROM TrayCachePackage WHERE PackagePath = @PackagePath;";
+        command.Parameters.AddWithValue("@PackagePath", Path.GetFullPath(packagePath));
+        return Convert.ToInt64(await command.ExecuteScalarAsync());
+    }
+
+    private static async Task<long> LoadCacheEntryRowCountAsync(string cacheDbPath)
+    {
+        await using var connection = new SqliteConnection($"Data Source={cacheDbPath};Mode=ReadWrite;Pooling=False;");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(1) FROM TrayCacheEntry;";
+        return Convert.ToInt64(await command.ExecuteScalarAsync());
+    }
+
     private static long ComputeInventoryVersion(IReadOnlyList<PackageIndexBuildFile> packageFiles)
     {
         unchecked
@@ -472,6 +646,60 @@ public sealed class TrayDependencyEngineCoreTests
     }
 
     private sealed record PackageSpec(uint Type, uint Group, ulong Instance, byte[] ResourceData);
+
+    private static object GetSnapshotLookup(PackageIndexSnapshot snapshot)
+    {
+        var lookupProperty = typeof(PackageIndexSnapshot).GetProperty("Lookup", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(lookupProperty);
+        var lookup = lookupProperty!.GetValue(snapshot);
+        Assert.NotNull(lookup);
+        return lookup!;
+    }
+
+    private static object OpenLookupSession(object lookup)
+    {
+        var openSessionMethod = lookup.GetType().GetMethod("OpenSession", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        Assert.NotNull(openSessionMethod);
+        var session = openSessionMethod!.Invoke(lookup, null);
+        Assert.NotNull(session);
+        return session!;
+    }
+
+    private static SqliteConnection GetSessionConnection(object session)
+    {
+        var connectionField = session.GetType().GetField("_connection", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(connectionField);
+        var value = connectionField!.GetValue(session);
+        Assert.NotNull(value);
+        return Assert.IsType<SqliteConnection>(value);
+    }
+
+    private static IReadOnlyDictionary<TrayResourceKey, ResolvedResourceRef[]> InvokeExactBatch(object session, IReadOnlyCollection<TrayResourceKey> keys)
+    {
+        var method = session.GetType().GetMethod("QueryExactBatch", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        var result = method!.Invoke(session, [keys]);
+        Assert.NotNull(result);
+        return Assert.IsAssignableFrom<IReadOnlyDictionary<TrayResourceKey, ResolvedResourceRef[]>>(result);
+    }
+
+    private static IReadOnlyDictionary<TypeInstanceKey, ResolvedResourceRef[]> InvokeTypeInstanceBatch(object session, IReadOnlyCollection<TypeInstanceKey> keys)
+    {
+        var method = session.GetType().GetMethod("QueryTypeInstanceBatch", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        var result = method!.Invoke(session, [keys]);
+        Assert.NotNull(result);
+        return Assert.IsAssignableFrom<IReadOnlyDictionary<TypeInstanceKey, ResolvedResourceRef[]>>(result);
+    }
+
+    private static IReadOnlyDictionary<ulong, bool> InvokeSupportedBatch(object session, IReadOnlyCollection<ulong> instances)
+    {
+        var method = session.GetType().GetMethod("QuerySupportedInstanceBatch", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        var result = method!.Invoke(session, [instances]);
+        Assert.NotNull(result);
+        return Assert.IsAssignableFrom<IReadOnlyDictionary<ulong, bool>>(result);
+    }
 
     private sealed class CountingResourceReader : IDbpfResourceReader
     {

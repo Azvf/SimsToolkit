@@ -1,4 +1,5 @@
 using Dapper;
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Application.TextureCompression;
@@ -8,9 +9,14 @@ namespace SimsModDesktop.Infrastructure.Mods;
 
 public sealed class SqliteModItemIndexStore : IModItemIndexStore
 {
-    private const int SchemaVersion = 4;
+    private const int SchemaVersion = 5;
+    private const int MaxCountCacheEntries = 256;
     private readonly AppCacheDatabase _database;
     private readonly ILogger<SqliteModItemIndexStore> _logger;
+    private readonly object _countCacheGate = new();
+    private readonly Dictionary<QueryCountCacheKey, int> _countCache = new();
+    private readonly Dictionary<QueryCountCacheKey, LinkedListNode<QueryCountCacheKey>> _countCacheNodes = new();
+    private readonly LinkedList<QueryCountCacheKey> _countCacheLru = new();
 
     public SqliteModItemIndexStore(ILogger<SqliteModItemIndexStore>? logger = null)
         : this(new AppCacheDatabase(), logger)
@@ -46,21 +52,41 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
             return Task.CompletedTask;
         }
 
+        var startedAt = Stopwatch.StartNew();
         using var connection = OpenConnection();
         using var transaction = connection.BeginTransaction();
+        var packagePaths = buildResults
+            .Select(result => result.PackageState.PackagePath)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(NormalizePath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        DeletePackageRowsBulk(connection, transaction, packagePaths);
+        UpsertPackageStatesBulk(connection, transaction, buildResults.Select(result => result.PackageState));
 
-        foreach (var buildResult in buildResults)
+        var allItems = buildResults
+            .SelectMany(result => result.Items)
+            .ToArray();
+        if (allItems.Length > 0)
         {
-            DeletePackageRows(connection, transaction, buildResult.PackageState.PackagePath);
-            UpsertPackageState(connection, transaction, buildResult.PackageState);
-            foreach (var item in buildResult.Items)
-            {
-                InsertItem(connection, transaction, item);
-                ReplaceTextures(connection, transaction, item);
-            }
+            connection.Execute(
+                InsertItemSql,
+                allItems.Select(CreateItemParameters),
+                transaction);
+            ReplaceItemSearchRowsBulk(connection, transaction, allItems);
+            ReplaceTexturesBulk(connection, transaction, allItems, deleteExistingPerItemRows: false);
         }
 
         transaction.Commit();
+        InvalidateCountCache();
+        startedAt.Stop();
+        _logger.LogInformation(
+            "modindex.write.setbatch Stage={Stage} PackageCount={PackageCount} ItemCount={ItemCount} TextureCount={TextureCount} ElapsedMs={ElapsedMs}",
+            "fast",
+            packagePaths.Length,
+            allItems.Length,
+            allItems.Sum(item => item.TextureCandidates.Count),
+            startedAt.ElapsedMilliseconds);
         return Task.CompletedTask;
     }
 
@@ -77,20 +103,34 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
             return Task.CompletedTask;
         }
 
+        var startedAt = Stopwatch.StartNew();
         using var connection = OpenConnection();
         using var transaction = connection.BeginTransaction();
+        UpsertPackageStatesBulk(connection, transaction, batches.Select(batch => batch.PackageState));
 
-        foreach (var batch in batches)
+        var allItems = batches
+            .SelectMany(batch => batch.Items)
+            .ToArray();
+        if (allItems.Length > 0)
         {
-            UpsertPackageState(connection, transaction, batch.PackageState);
-            foreach (var item in batch.Items)
-            {
-                UpsertItem(connection, transaction, item);
-                ReplaceTextures(connection, transaction, item);
-            }
+            connection.Execute(
+                UpsertItemSql,
+                allItems.Select(CreateItemParameters),
+                transaction);
+            ReplaceItemSearchRowsBulk(connection, transaction, allItems);
+            ReplaceTexturesBulk(connection, transaction, allItems, deleteExistingPerItemRows: true);
         }
 
         transaction.Commit();
+        InvalidateCountCache();
+        startedAt.Stop();
+        _logger.LogInformation(
+            "modindex.write.setbatch Stage={Stage} PackageCount={PackageCount} ItemCount={ItemCount} TextureCount={TextureCount} ElapsedMs={ElapsedMs}",
+            "deep",
+            batches.Count,
+            allItems.Length,
+            allItems.Sum(item => item.TextureCandidates.Count),
+            startedAt.ElapsedMilliseconds);
         return Task.CompletedTask;
     }
 
@@ -111,6 +151,7 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
         using var transaction = connection.BeginTransaction();
         DeletePackageRows(connection, transaction, NormalizePath(packagePath));
         transaction.Commit();
+        InvalidateCountCache();
         return Task.CompletedTask;
     }
 
@@ -145,6 +186,11 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
             PageSize = pageSize,
             Offset = offset
         };
+        var countCacheKey = new QueryCountCacheKey(
+            rootPrefix ?? string.Empty,
+            kindFilter ?? string.Empty,
+            subTypeFilter ?? string.Empty,
+            ftsQuery ?? string.Empty);
 
         int totalItems;
         IEnumerable<IndexedItemRow> rows;
@@ -155,13 +201,29 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
                   AND (@KindFilter IS NULL OR items.EntityKind = @KindFilter)
                   AND (@SubTypeFilter IS NULL OR items.EntitySubType = @SubTypeFilter)
                 """;
-            totalItems = connection.ExecuteScalar<int>(
+            if (!TryGetCachedCount(countCacheKey, out totalItems))
+            {
+                totalItems = connection.ExecuteScalar<int>(
+                    $"""
+                    SELECT COUNT(*)
+                    FROM ModIndexedItems items
+                    {whereClause};
+                    """,
+                    parameters);
+                SetCachedCount(countCacheKey, totalItems);
+            }
+
+            LogQueryPlan(
+                connection,
                 $"""
-                SELECT COUNT(*)
+                SELECT items.*
                 FROM ModIndexedItems items
-                {whereClause};
+                {whereClause}
+                ORDER BY {ResolveOrderBy(query.SortBy)}
+                LIMIT @PageSize OFFSET @Offset;
                 """,
-                parameters);
+                parameters,
+                "browse");
 
             rows = connection.Query<IndexedItemRow>(
                 $"""
@@ -181,14 +243,31 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
                   AND (@KindFilter IS NULL OR items.EntityKind = @KindFilter)
                   AND (@SubTypeFilter IS NULL OR items.EntitySubType = @SubTypeFilter)
                 """;
-            totalItems = connection.ExecuteScalar<int>(
+            if (!TryGetCachedCount(countCacheKey, out totalItems))
+            {
+                totalItems = connection.ExecuteScalar<int>(
+                    $"""
+                    SELECT COUNT(*)
+                    FROM ModIndexedItems items
+                    INNER JOIN ModIndexedItemsSearch search ON search.ItemKey = items.ItemKey
+                    {whereClause};
+                    """,
+                    parameters);
+                SetCachedCount(countCacheKey, totalItems);
+            }
+
+            LogQueryPlan(
+                connection,
                 $"""
-                SELECT COUNT(*)
+                SELECT items.*
                 FROM ModIndexedItems items
                 INNER JOIN ModIndexedItemsSearch search ON search.ItemKey = items.ItemKey
-                {whereClause};
+                {whereClause}
+                ORDER BY {ResolveOrderBy(query.SortBy)}
+                LIMIT @PageSize OFFSET @Offset;
                 """,
-                parameters);
+                parameters,
+                "fts");
 
             rows = connection.Query<IndexedItemRow>(
                 $"""
@@ -292,6 +371,7 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
         }
 
         transaction.Commit();
+        InvalidateCountCache();
         return Task.CompletedTask;
     }
 
@@ -317,6 +397,225 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
             """,
             new { PackagePath = NormalizePath(packagePath) },
             transaction);
+    }
+
+    private static void DeletePackageRowsBulk(
+        System.Data.IDbConnection connection,
+        System.Data.IDbTransaction transaction,
+        IReadOnlyList<string> packagePaths)
+    {
+        if (packagePaths.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var chunk in Chunk(packagePaths, 200))
+        {
+            connection.Execute(
+                """
+                DELETE FROM ModIndexedItemsSearch WHERE ItemKey IN (
+                    SELECT ItemKey FROM ModIndexedItems WHERE PackagePath IN @PackagePaths
+                );
+                DELETE FROM ModIndexedItemTextures WHERE ItemKey IN (
+                    SELECT ItemKey FROM ModIndexedItems WHERE PackagePath IN @PackagePaths
+                );
+                DELETE FROM ModIndexedItems WHERE PackagePath IN @PackagePaths;
+                DELETE FROM ModPackageIndexState WHERE PackagePath IN @PackagePaths;
+                """,
+                new { PackagePaths = chunk },
+                transaction);
+        }
+    }
+
+    private static void UpsertPackageStatesBulk(
+        System.Data.IDbConnection connection,
+        System.Data.IDbTransaction transaction,
+        IEnumerable<ModPackageIndexState> packageStates)
+    {
+        var parameters = packageStates
+            .Select(packageState => new
+            {
+                PackagePath = NormalizePath(packageState.PackagePath),
+                packageState.FileLength,
+                packageState.LastWriteUtcTicks,
+                packageState.PackageType,
+                packageState.ScopeHint,
+                packageState.IndexedUtcTicks,
+                packageState.ItemCount,
+                packageState.CasItemCount,
+                packageState.BuildBuyItemCount,
+                packageState.UnclassifiedEntityCount,
+                packageState.TextureResourceCount,
+                packageState.EditableTextureCount,
+                packageState.Status,
+                packageState.FailureMessage
+            })
+            .ToArray();
+        if (parameters.Length == 0)
+        {
+            return;
+        }
+
+        connection.Execute(
+            """
+            INSERT INTO ModPackageIndexState (
+                PackagePath, FileLength, LastWriteUtcTicks, PackageType, ScopeHint, IndexedUtcTicks, ItemCount,
+                CasItemCount, BuildBuyItemCount, UnclassifiedEntityCount, TextureResourceCount, EditableTextureCount,
+                Status, FailureMessage
+            ) VALUES (
+                @PackagePath, @FileLength, @LastWriteUtcTicks, @PackageType, @ScopeHint, @IndexedUtcTicks, @ItemCount,
+                @CasItemCount, @BuildBuyItemCount, @UnclassifiedEntityCount, @TextureResourceCount, @EditableTextureCount,
+                @Status, @FailureMessage
+            )
+            ON CONFLICT(PackagePath) DO UPDATE SET
+                FileLength = excluded.FileLength,
+                LastWriteUtcTicks = excluded.LastWriteUtcTicks,
+                PackageType = excluded.PackageType,
+                ScopeHint = excluded.ScopeHint,
+                IndexedUtcTicks = excluded.IndexedUtcTicks,
+                ItemCount = excluded.ItemCount,
+                CasItemCount = excluded.CasItemCount,
+                BuildBuyItemCount = excluded.BuildBuyItemCount,
+                UnclassifiedEntityCount = excluded.UnclassifiedEntityCount,
+                TextureResourceCount = excluded.TextureResourceCount,
+                EditableTextureCount = excluded.EditableTextureCount,
+                Status = excluded.Status,
+                FailureMessage = excluded.FailureMessage;
+            """,
+            parameters,
+            transaction);
+    }
+
+    private void ReplaceItemSearchRowsBulk(
+        System.Data.IDbConnection connection,
+        System.Data.IDbTransaction transaction,
+        IReadOnlyList<ModIndexedItemRecord> items)
+    {
+        if (items.Count == 0)
+        {
+            return;
+        }
+
+        var dedupedRows = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in items)
+        {
+            dedupedRows[item.ItemKey] = item.SearchText;
+        }
+
+        _logger.LogDebug(
+            "modindex.search.dedup inputCount={InputCount} dedupedCount={DedupedCount} duplicateCount={DuplicateCount}",
+            items.Count,
+            dedupedRows.Count,
+            items.Count - dedupedRows.Count);
+
+        var itemKeys = dedupedRows.Keys
+            .ToArray();
+        foreach (var chunk in Chunk(itemKeys, 400))
+        {
+            connection.Execute(
+                "DELETE FROM ModIndexedItemsSearch WHERE ItemKey IN @ItemKeys;",
+                new { ItemKeys = chunk },
+                transaction);
+        }
+
+        connection.Execute(
+            """
+            INSERT INTO ModIndexedItemsSearch (ItemKey, SearchText)
+            VALUES (@ItemKey, @SearchText);
+            """,
+            dedupedRows.Select(item => new
+            {
+                ItemKey = item.Key,
+                SearchText = item.Value
+            }),
+            transaction);
+    }
+
+    private static void ReplaceTexturesBulk(
+        System.Data.IDbConnection connection,
+        System.Data.IDbTransaction transaction,
+        IReadOnlyList<ModIndexedItemRecord> items,
+        bool deleteExistingPerItemRows)
+    {
+        if (items.Count == 0)
+        {
+            return;
+        }
+
+        if (deleteExistingPerItemRows)
+        {
+            var itemKeys = items
+                .Select(item => item.ItemKey)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            foreach (var chunk in Chunk(itemKeys, 400))
+            {
+                connection.Execute(
+                    "DELETE FROM ModIndexedItemTextures WHERE ItemKey IN @ItemKeys;",
+                    new { ItemKeys = chunk },
+                    transaction);
+            }
+        }
+
+        var textureRows = BuildTextureRows(items);
+        if (textureRows.Length == 0)
+        {
+            return;
+        }
+
+        connection.Execute(
+            """
+            INSERT INTO ModIndexedItemTextures (
+                ItemKey, ResourceKeyText, ContainerKind, Format, Width, Height, MipMapCount, Editable,
+                SuggestedAction, Notes, SizeBytes, IsPrimary, SortOrder, LinkRole
+            ) VALUES (
+                @ItemKey, @ResourceKeyText, @ContainerKind, @Format, @Width, @Height, @MipMapCount, @Editable,
+                @SuggestedAction, @Notes, @SizeBytes, @IsPrimary, @SortOrder, @LinkRole
+            );
+            """,
+            textureRows,
+            transaction);
+    }
+
+    private static BulkTextureRow[] BuildTextureRows(IReadOnlyList<ModIndexedItemRecord> items)
+    {
+        var rows = new List<BulkTextureRow>();
+        var dedupeIndexes = new Dictionary<TextureDedupKey, int>();
+        foreach (var item in items)
+        {
+            for (var index = 0; index < item.TextureCandidates.Count; index++)
+            {
+                var texture = item.TextureCandidates[index];
+                var row = new BulkTextureRow
+                {
+                    ItemKey = item.ItemKey,
+                    ResourceKeyText = texture.ResourceKeyText,
+                    ContainerKind = texture.ContainerKind,
+                    Format = texture.Format,
+                    Width = texture.Width,
+                    Height = texture.Height,
+                    MipMapCount = texture.MipMapCount,
+                    Editable = texture.Editable ? 1 : 0,
+                    SuggestedAction = texture.SuggestedAction,
+                    Notes = texture.Notes,
+                    SizeBytes = texture.SizeBytes,
+                    IsPrimary = string.Equals(texture.ResourceKeyText, item.PrimaryTextureResourceKey, StringComparison.OrdinalIgnoreCase) ? 1 : 0,
+                    SortOrder = index,
+                    LinkRole = string.IsNullOrWhiteSpace(texture.LinkRole) ? "Fallback" : texture.LinkRole
+                };
+                var dedupeKey = new TextureDedupKey(row.ItemKey, row.ResourceKeyText);
+                if (dedupeIndexes.TryGetValue(dedupeKey, out var existingIndex))
+                {
+                    rows[existingIndex] = row;
+                    continue;
+                }
+
+                dedupeIndexes[dedupeKey] = rows.Count;
+                rows.Add(row);
+            }
+        }
+
+        return rows.ToArray();
     }
 
     private static void UpsertPackageState(System.Data.IDbConnection connection, System.Data.IDbTransaction transaction, ModPackageIndexState packageState)
@@ -567,6 +866,110 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
         return Path.GetFullPath(path.Trim());
     }
 
+    private bool TryGetCachedCount(QueryCountCacheKey key, out int value)
+    {
+        lock (_countCacheGate)
+        {
+            if (!_countCache.TryGetValue(key, out value))
+            {
+                return false;
+            }
+
+            if (_countCacheNodes.TryGetValue(key, out var node))
+            {
+                _countCacheLru.Remove(node);
+                _countCacheLru.AddFirst(node);
+            }
+
+            return true;
+        }
+    }
+
+    private void SetCachedCount(QueryCountCacheKey key, int value)
+    {
+        lock (_countCacheGate)
+        {
+            if (_countCache.TryGetValue(key, out _))
+            {
+                _countCache[key] = value;
+                if (_countCacheNodes.TryGetValue(key, out var existingNode))
+                {
+                    _countCacheLru.Remove(existingNode);
+                    _countCacheLru.AddFirst(existingNode);
+                }
+
+                return;
+            }
+
+            if (_countCache.Count >= MaxCountCacheEntries &&
+                _countCacheLru.Last is LinkedListNode<QueryCountCacheKey> tail)
+            {
+                _countCache.Remove(tail.Value);
+                _countCacheNodes.Remove(tail.Value);
+                _countCacheLru.RemoveLast();
+            }
+
+            _countCache[key] = value;
+            var node = new LinkedListNode<QueryCountCacheKey>(key);
+            _countCacheLru.AddFirst(node);
+            _countCacheNodes[key] = node;
+        }
+    }
+
+    private void InvalidateCountCache()
+    {
+        lock (_countCacheGate)
+        {
+            _countCache.Clear();
+            _countCacheNodes.Clear();
+            _countCacheLru.Clear();
+        }
+    }
+
+    private void LogQueryPlan(System.Data.IDbConnection connection, string sql, object parameters, string mode)
+    {
+        if (!_logger.IsEnabled(LogLevel.Debug))
+        {
+            return;
+        }
+
+        var plan = connection.Query<QueryPlanRow>(
+                $"EXPLAIN QUERY PLAN {sql}",
+                parameters)
+            .Select(row => row.Detail)
+            .Where(detail => !string.IsNullOrWhiteSpace(detail))
+            .ToArray();
+        if (plan.Length == 0)
+        {
+            return;
+        }
+
+        _logger.LogDebug(
+            "modsearch.queryplan mode={Mode} detail={PlanDetail}",
+            mode,
+            string.Join(" | ", plan));
+    }
+
+    private static IReadOnlyList<T[]> Chunk<T>(IReadOnlyCollection<T> items, int chunkSize)
+    {
+        if (items.Count == 0)
+        {
+            return Array.Empty<T[]>();
+        }
+
+        var materialized = items as T[] ?? items.ToArray();
+        var chunks = new List<T[]>((materialized.Length + chunkSize - 1) / chunkSize);
+        for (var offset = 0; offset < materialized.Length; offset += chunkSize)
+        {
+            var size = Math.Min(chunkSize, materialized.Length - offset);
+            var chunk = new T[size];
+            Array.Copy(materialized, offset, chunk, 0, size);
+            chunks.Add(chunk);
+        }
+
+        return chunks;
+    }
+
     private static string ResolveOrderBy(string? sortBy)
     {
         return (sortBy ?? string.Empty).Trim() switch
@@ -712,6 +1115,10 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
             CREATE INDEX IF NOT EXISTS IX_ModIndexedItems_EntityKind_SubType ON ModIndexedItems (EntityKind, EntitySubType);
             CREATE INDEX IF NOT EXISTS IX_ModIndexedItems_SortName ON ModIndexedItems (SortName);
             CREATE INDEX IF NOT EXISTS IX_ModIndexedItems_SortKeyStable ON ModIndexedItems (SortKeyStable);
+            CREATE INDEX IF NOT EXISTS IX_ModIndexedItems_PackagePath_SortKeyStable_UpdatedUtc
+                ON ModIndexedItems (PackagePath, SortKeyStable, UpdatedUtcTicks DESC);
+            CREATE INDEX IF NOT EXISTS IX_ModIndexedItems_KindSubType_SortKeyStable_UpdatedUtc
+                ON ModIndexedItems (EntityKind, EntitySubType, SortKeyStable, UpdatedUtcTicks DESC);
             """);
 
         if (version != SchemaVersion)
@@ -950,4 +1357,37 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
         public int SizeBytes { get; set; }
         public string LinkRole { get; set; } = "Fallback";
     }
+
+    private sealed class QueryPlanRow
+    {
+        public string Detail { get; set; } = string.Empty;
+    }
+
+    private sealed class BulkTextureRow
+    {
+        public string ItemKey { get; set; } = string.Empty;
+        public string ResourceKeyText { get; set; } = string.Empty;
+        public string ContainerKind { get; set; } = string.Empty;
+        public string Format { get; set; } = string.Empty;
+        public int Width { get; set; }
+        public int Height { get; set; }
+        public int MipMapCount { get; set; }
+        public int Editable { get; set; }
+        public string SuggestedAction { get; set; } = string.Empty;
+        public string Notes { get; set; } = string.Empty;
+        public int SizeBytes { get; set; }
+        public int IsPrimary { get; set; }
+        public int SortOrder { get; set; }
+        public string LinkRole { get; set; } = "Fallback";
+    }
+
+    private readonly record struct QueryCountCacheKey(
+        string RootPrefix,
+        string KindFilter,
+        string SubTypeFilter,
+        string SearchPattern);
+
+    private readonly record struct TextureDedupKey(
+        string ItemKey,
+        string ResourceKeyText);
 }

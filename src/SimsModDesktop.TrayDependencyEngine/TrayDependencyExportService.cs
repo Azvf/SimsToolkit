@@ -1095,36 +1095,80 @@ internal sealed class DirectMatchEngine
         var matchedInstances = new HashSet<ulong>();
         var unmatchedExactKeys = new HashSet<TrayResourceKey>(keys.ResourceKeys);
 
-        foreach (var resourceKey in keys.ResourceKeys)
+        if (lookup is IBatchTrayDependencyLookupSession batchLookup)
         {
-            if (!lookup.TryGetExact(resourceKey, out var matches) || matches.Length == 0)
+            var exactLookup = batchLookup.QueryExactBatch(keys.ResourceKeys);
+            foreach (var resourceKey in keys.ResourceKeys)
             {
-                continue;
+                if (!exactLookup.TryGetValue(resourceKey, out var matches) || matches.Length == 0)
+                {
+                    continue;
+                }
+
+                Register(results, matches[0]);
+                matchedInstances.Add(resourceKey.Instance);
+                unmatchedExactKeys.Remove(resourceKey);
             }
 
-            Register(results, matches[0]);
-            matchedInstances.Add(resourceKey.Instance);
-            unmatchedExactKeys.Remove(resourceKey);
-        }
-
-        foreach (var instance in candidateInstances)
-        {
-            foreach (var supportedType in KnownResourceTypes.Supported)
+            var typeInstanceKeys = candidateInstances
+                .SelectMany(instance => KnownResourceTypes.Supported.Select(type => new TypeInstanceKey(type, instance)))
+                .ToArray();
+            var typeLookup = batchLookup.QueryTypeInstanceBatch(typeInstanceKeys);
+            foreach (var instance in candidateInstances)
             {
-                if (!lookup.TryGetTypeInstance(new TypeInstanceKey(supportedType, instance), out var candidates))
+                foreach (var supportedType in KnownResourceTypes.Supported)
+                {
+                    if (!typeLookup.TryGetValue(new TypeInstanceKey(supportedType, instance), out var candidates) ||
+                        candidates.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    var chosen = ChooseEntry(candidates, supportedType);
+                    if (chosen is null)
+                    {
+                        continue;
+                    }
+
+                    Register(results, chosen);
+                    matchedInstances.Add(instance);
+                    break;
+                }
+            }
+        }
+        else
+        {
+            foreach (var resourceKey in keys.ResourceKeys)
+            {
+                if (!lookup.TryGetExact(resourceKey, out var matches) || matches.Length == 0)
                 {
                     continue;
                 }
 
-                var chosen = ChooseEntry(candidates, supportedType);
-                if (chosen is null)
-                {
-                    continue;
-                }
+                Register(results, matches[0]);
+                matchedInstances.Add(resourceKey.Instance);
+                unmatchedExactKeys.Remove(resourceKey);
+            }
 
-                Register(results, chosen);
-                matchedInstances.Add(instance);
-                break;
+            foreach (var instance in candidateInstances)
+            {
+                foreach (var supportedType in KnownResourceTypes.Supported)
+                {
+                    if (!lookup.TryGetTypeInstance(new TypeInstanceKey(supportedType, instance), out var candidates))
+                    {
+                        continue;
+                    }
+
+                    var chosen = ChooseEntry(candidates, supportedType);
+                    if (chosen is null)
+                    {
+                        continue;
+                    }
+
+                    Register(results, chosen);
+                    matchedInstances.Add(instance);
+                    break;
+                }
             }
         }
 
@@ -1247,6 +1291,7 @@ internal sealed class DependencyExpandEngine
         ITrayDependencyLookupSession lookup,
         CancellationToken cancellationToken)
     {
+        var batchLookup = lookup as IBatchTrayDependencyLookupSession;
         var issues = new List<TrayDependencyIssue>();
         var results = new Dictionary<TrayResourceKey, ResolvedResourceRef>();
         var sessions = new Dictionary<string, DbpfPackageReadSession>(StringComparer.OrdinalIgnoreCase);
@@ -1299,12 +1344,14 @@ internal sealed class DependencyExpandEngine
                 }
 
                 var extraction = StructuredDependencyReaders.Read(match.Key, payload.WrittenSpan);
+                TrayResourceKey? siblingObjectDefinitionKey = null;
+                if (match.Key.Type == KnownResourceTypes.ObjectCatalog)
+                {
+                    siblingObjectDefinitionKey = new TrayResourceKey(KnownResourceTypes.ObjectDefinition, match.Key.Group, match.Key.Instance);
+                }
 
-                if (match.Key.Type == KnownResourceTypes.ObjectCatalog &&
-                    TryResolveExact(
-                        lookup,
-                        new TrayResourceKey(KnownResourceTypes.ObjectDefinition, match.Key.Group, match.Key.Instance),
-                        out var siblingObjectDefinition))
+                if (siblingObjectDefinitionKey is TrayResourceKey siblingKey &&
+                    TryResolveExact(lookup, exactBatch: null, siblingKey, out var siblingObjectDefinition))
                 {
                     Register(results, siblingObjectDefinition with { Parent = match });
 
@@ -1330,9 +1377,44 @@ internal sealed class DependencyExpandEngine
                     BinaryReferenceScanner.Scan(payload.WrittenSpan, extraction.FallbackIds, extraction.ExactKeys);
                 }
 
+                IReadOnlyDictionary<TrayResourceKey, ResolvedResourceRef[]>? exactBatch = null;
+                IReadOnlyDictionary<TypeInstanceKey, ResolvedResourceRef[]>? typeBatch = null;
+                IReadOnlyDictionary<ulong, bool>? supportedBatch = null;
+                if (batchLookup is not null)
+                {
+                    var exactKeys = extraction.ExactKeys
+                        .Distinct()
+                        .ToArray();
+                    if (exactKeys.Length > 0)
+                    {
+                        exactBatch = batchLookup.QueryExactBatch(exactKeys);
+                    }
+
+                    var fallbackInstances = extraction.FallbackIds
+                        .Distinct()
+                        .ToArray();
+                    if (fallbackInstances.Length > 0)
+                    {
+                        supportedBatch = batchLookup.QuerySupportedInstanceBatch(fallbackInstances);
+                    }
+
+                    var typedKeys = extraction.TypedInstances
+                        .SelectMany(typed => typed.AllowedTypes.Select(type => new TypeInstanceKey(type, typed.Instance)))
+                        .Concat(
+                            extraction.FallbackIds
+                                .Distinct()
+                                .SelectMany(instance => KnownResourceTypes.Supported.Select(type => new TypeInstanceKey(type, instance))))
+                        .Distinct()
+                        .ToArray();
+                    if (typedKeys.Length > 0)
+                    {
+                        typeBatch = batchLookup.QueryTypeInstanceBatch(typedKeys);
+                    }
+                }
+
                 foreach (var exactKey in extraction.ExactKeys)
                 {
-                    if (TryResolveExact(lookup, exactKey, out var resolved))
+                    if (TryResolveExact(lookup, exactBatch, exactKey, out var resolved))
                     {
                         Register(results, resolved with { Parent = match });
                     }
@@ -1340,7 +1422,7 @@ internal sealed class DependencyExpandEngine
 
                 foreach (var typedInstance in extraction.TypedInstances)
                 {
-                    if (TryResolveByTypes(lookup, typedInstance.Instance, typedInstance.AllowedTypes, out var resolved))
+                    if (TryResolveByTypes(lookup, typeBatch, typedInstance.Instance, typedInstance.AllowedTypes, out var resolved))
                     {
                         Register(results, resolved with { Parent = match });
                     }
@@ -1348,7 +1430,7 @@ internal sealed class DependencyExpandEngine
 
                 foreach (var id in extraction.FallbackIds)
                 {
-                    if (!TryResolveAny(lookup, id, out var resolved))
+                    if (!TryResolveAny(lookup, typeBatch, supportedBatch, id, out var resolved))
                     {
                         continue;
                     }
@@ -1379,8 +1461,24 @@ internal sealed class DependencyExpandEngine
         return new DependencyExpandResult(results.Values.OrderBy(item => item.FilePath, StringComparer.OrdinalIgnoreCase).ToArray(), issues.ToArray());
     }
 
-    private static bool TryResolveExact(ITrayDependencyLookupSession lookup, TrayResourceKey key, out ResolvedResourceRef resolved)
+    private static bool TryResolveExact(
+        ITrayDependencyLookupSession lookup,
+        IReadOnlyDictionary<TrayResourceKey, ResolvedResourceRef[]>? exactBatch,
+        TrayResourceKey key,
+        out ResolvedResourceRef resolved)
     {
+        if (exactBatch is not null)
+        {
+            if (exactBatch.TryGetValue(key, out var batchMatches) && batchMatches.Length > 0)
+            {
+                resolved = batchMatches[0];
+                return true;
+            }
+
+            resolved = null!;
+            return false;
+        }
+
         if (lookup.TryGetExact(key, out var matches) && matches.Length > 0)
         {
             resolved = matches[0];
@@ -1393,13 +1491,23 @@ internal sealed class DependencyExpandEngine
 
     private static bool TryResolveByTypes(
         ITrayDependencyLookupSession lookup,
+        IReadOnlyDictionary<TypeInstanceKey, ResolvedResourceRef[]>? typeBatch,
         ulong instance,
         IReadOnlyList<uint> allowedTypes,
         out ResolvedResourceRef resolved)
     {
         for (var typeIndex = 0; typeIndex < allowedTypes.Count; typeIndex++)
         {
-            if (!lookup.TryGetTypeInstance(new TypeInstanceKey(allowedTypes[typeIndex], instance), out var matches))
+            var key = new TypeInstanceKey(allowedTypes[typeIndex], instance);
+            ResolvedResourceRef[] matches;
+            if (typeBatch is not null)
+            {
+                if (!typeBatch.TryGetValue(key, out matches!) || matches.Length == 0)
+                {
+                    continue;
+                }
+            }
+            else if (!lookup.TryGetTypeInstance(key, out matches))
             {
                 continue;
             }
@@ -1414,9 +1522,22 @@ internal sealed class DependencyExpandEngine
         return false;
     }
 
-    private static bool TryResolveAny(ITrayDependencyLookupSession lookup, ulong instance, out ResolvedResourceRef resolved)
+    private static bool TryResolveAny(
+        ITrayDependencyLookupSession lookup,
+        IReadOnlyDictionary<TypeInstanceKey, ResolvedResourceRef[]>? typeBatch,
+        IReadOnlyDictionary<ulong, bool>? supportedBatch,
+        ulong instance,
+        out ResolvedResourceRef resolved)
     {
-        if (!lookup.HasSupportedInstance(instance))
+        if (supportedBatch is not null)
+        {
+            if (!supportedBatch.TryGetValue(instance, out var exists) || !exists)
+            {
+                resolved = null!;
+                return false;
+            }
+        }
+        else if (!lookup.HasSupportedInstance(instance))
         {
             resolved = null!;
             return false;
@@ -1424,7 +1545,16 @@ internal sealed class DependencyExpandEngine
 
         foreach (var supportedType in KnownResourceTypes.Supported)
         {
-            if (!lookup.TryGetTypeInstance(new TypeInstanceKey(supportedType, instance), out var matches))
+            var key = new TypeInstanceKey(supportedType, instance);
+            ResolvedResourceRef[] matches;
+            if (typeBatch is not null)
+            {
+                if (!typeBatch.TryGetValue(key, out matches!) || matches.Length == 0)
+                {
+                    continue;
+                }
+            }
+            else if (!lookup.TryGetTypeInstance(key, out matches))
             {
                 continue;
             }
