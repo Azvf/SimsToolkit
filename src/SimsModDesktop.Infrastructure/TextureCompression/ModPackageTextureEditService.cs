@@ -1,6 +1,8 @@
 using System.Buffers.Binary;
 using System.Buffers;
 using System.IO;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SimsModDesktop.Application.TextureProcessing;
@@ -18,17 +20,20 @@ public sealed class ModPackageTextureEditService : IModPackageTextureEditService
     private readonly ITextureTranscodePipeline _pipeline;
     private readonly IModPackageTextureEditStore _store;
     private readonly IDbpfResourceReader _resourceReader;
+    private readonly ILogger<ModPackageTextureEditService> _logger;
 
     public ModPackageTextureEditService(
         ITextureDecodeService decoder,
         ITextureTranscodePipeline pipeline,
         IModPackageTextureEditStore store,
-        IDbpfResourceReader? resourceReader = null)
+        IDbpfResourceReader? resourceReader = null,
+        ILogger<ModPackageTextureEditService>? logger = null)
     {
         _decoder = decoder;
         _pipeline = pipeline;
         _store = store;
         _resourceReader = resourceReader ?? new DbpfResourceReader();
+        _logger = logger ?? NullLogger<ModPackageTextureEditService>.Instance;
     }
 
     public async Task<ModPackageTexturePreviewResult> PreviewAsync(
@@ -389,9 +394,23 @@ public sealed class ModPackageTextureEditService : IModPackageTextureEditService
         if (!session.TryReadInto(matchedEntry, payload, out var readError))
         {
             error = readError ?? "Texture resource could not be read.";
+            _logger.LogDebug(
+                "resource.read.pooled domain={Domain} success={Success} packagePath={PackagePath} resourceKey={ResourceKey} error={Error}",
+                "texture-edit",
+                false,
+                packagePath,
+                resourceKeyText,
+                error);
             return false;
         }
 
+        _logger.LogDebug(
+            "resource.read.pooled domain={Domain} success={Success} packagePath={PackagePath} resourceKey={ResourceKey} bytesRead={BytesRead}",
+            "texture-edit",
+            true,
+            packagePath,
+            resourceKeyText,
+            payload.WrittenCount);
         bytes = payload.WrittenSpan.ToArray();
         entry = matchedEntry;
         return true;

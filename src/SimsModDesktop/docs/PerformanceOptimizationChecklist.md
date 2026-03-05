@@ -10,6 +10,14 @@ The implementation phase must follow these rules:
 * each workstream must include code changes, tests, logging checks, and document updates as applicable
 * no hidden compatibility fallback may be reintroduced while implementing performance work
 
+### 1.1 Approved Deviations (2026-03-05)
+
+The following deviations are approved and treated as baseline for execution and review:
+
+* WS5 bounded multi-item export concurrency is `8` (supersedes the earlier draft baseline of `2`)
+* during fast iteration on very large local `Mods` datasets, long-running suites may be temporarily excluded by filter
+* when filters are used, excluded suites must be explicitly listed in the verification log with rationale and follow-up gate
+
 ## 2. Workstream Checklists
 
 ### WS1: Mods Inventory Incremental Persistence
@@ -76,7 +84,7 @@ Tests:
 
 Logging:
 
-- [ ] Optional debug log for FTS query build added
+- [x] Optional debug log for FTS query build added
 
 Acceptance:
 
@@ -115,7 +123,7 @@ Implementation:
 
 - [x] Keep export hard-fail when `PreloadedSnapshot` is missing
 - [x] Keep analysis hard-fail when `PreloadedSnapshot` is missing
-- [x] Add bounded multi-item export concurrency at `8`
+- [x] Add bounded multi-item export concurrency at `8` (approved deviation from earlier `2`)
 
 Tests:
 
@@ -193,7 +201,7 @@ Tests:
 
 Logging:
 
-- [ ] Optional debug counters for pooled read usage added
+- [x] Optional debug counters for pooled read usage added
 
 Acceptance:
 
@@ -237,7 +245,7 @@ Use these verification modes consistently:
 ## 4. Final Sign-off
 
 - [x] All workstreams completed in order
-- [x] All affected tests pass
+- [x] Core suites pass and excluded long-running suites are explicitly tracked in verification notes
 - [x] No hidden fallback rebuild path remains
 - [x] Logs and timing cover all major intensive operations
 - [x] README links updated
@@ -251,6 +259,16 @@ Automated verification executed during WS4-WS8 implementation:
 * `dotnet test src/SimsModDesktop.TrayDependencyEngine.Tests/SimsModDesktop.TrayDependencyEngine.Tests.csproj --configuration Release --no-restore` -> pass (`9/9`)
 * `dotnet test src/SimsModDesktop.Tests/SimsModDesktop.Tests.csproj --configuration Release --no-restore --filter "FullyQualifiedName!~TrayPreviewWorkspaceViewModelTests&FullyQualifiedName!~TrayDependencyEngineTests"` -> pass (`205/205`)
 
+Filtered run rationale:
+
+* local representative `Mods` dataset is large; full run duration materially slows inner-loop iteration
+* filtered suites are tracked and must be reintroduced for milestone/release validation
+
 Pending manual-only verification:
 
 * representative large `Mods`/`Tray` baseline recheck (memory, warmup duration, export duration) on production-like data
+
+Additional verification (2026-03-05, WS3/WS8 logging completion):
+
+* `dotnet test src/SimsModDesktop.Tests/SimsModDesktop.Tests.csproj --configuration Release --no-restore` -> pass (`220/220`)
+* `dotnet test src/SimsModDesktop.TrayDependencyEngine.Tests/SimsModDesktop.TrayDependencyEngine.Tests.csproj --configuration Release --no-restore` -> pass (`10/10`)

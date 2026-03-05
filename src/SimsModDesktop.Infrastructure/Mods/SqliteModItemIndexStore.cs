@@ -1,4 +1,6 @@
 using Dapper;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Infrastructure.Persistence;
 
@@ -8,20 +10,22 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
 {
     private const int SchemaVersion = 4;
     private readonly AppCacheDatabase _database;
+    private readonly ILogger<SqliteModItemIndexStore> _logger;
 
-    public SqliteModItemIndexStore()
-        : this(new AppCacheDatabase())
+    public SqliteModItemIndexStore(ILogger<SqliteModItemIndexStore>? logger = null)
+        : this(new AppCacheDatabase(), logger)
     {
     }
 
-    public SqliteModItemIndexStore(string cacheRootPath)
-        : this(new AppCacheDatabase(cacheRootPath))
+    public SqliteModItemIndexStore(string cacheRootPath, ILogger<SqliteModItemIndexStore>? logger = null)
+        : this(new AppCacheDatabase(cacheRootPath), logger)
     {
     }
 
-    private SqliteModItemIndexStore(AppCacheDatabase database)
+    private SqliteModItemIndexStore(AppCacheDatabase database, ILogger<SqliteModItemIndexStore>? logger)
     {
         _database = database;
+        _logger = logger ?? NullLogger<SqliteModItemIndexStore>.Instance;
     }
 
     public Task<ModPackageIndexState?> TryGetPackageStateAsync(string packagePath, CancellationToken cancellationToken = default)
@@ -122,6 +126,16 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
         var kindFilter = NormalizeFilter(query.EntityKindFilter);
         var subTypeFilter = NormalizeFilter(query.SubTypeFilter);
         var rootPrefix = string.IsNullOrWhiteSpace(query.ModsRoot) ? null : $"{NormalizePath(query.ModsRoot)}%";
+        _logger.LogDebug(
+            "modsearch.fts.querybuild mode={Mode} rawSearchLength={RawSearchLength} tokenCount={TokenCount} ftsPattern={FtsPattern} kindFilter={KindFilter} subTypeFilter={SubTypeFilter} hasRootPrefix={HasRootPrefix} sortBy={SortBy}",
+            ftsQuery is null ? "browse" : "fts",
+            query.SearchQuery?.Length ?? 0,
+            CountFtsTokens(ftsQuery),
+            ftsQuery ?? string.Empty,
+            kindFilter ?? string.Empty,
+            subTypeFilter ?? string.Empty,
+            rootPrefix is not null,
+            query.SortBy);
         var parameters = new
         {
             RootPrefix = rootPrefix,
@@ -829,6 +843,18 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
         }
 
         return string.Join(" AND ", tokens.Select(token => $"{token}*"));
+    }
+
+    private static int CountFtsTokens(string? ftsQuery)
+    {
+        if (string.IsNullOrWhiteSpace(ftsQuery))
+        {
+            return 0;
+        }
+
+        return ftsQuery
+            .Split(" AND ", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Length;
     }
 
     private static string? NormalizeFtsToken(string token)

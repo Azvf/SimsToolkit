@@ -27,7 +27,7 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
         _packageIndexCache = packageIndexCache;
         _logger = logger ?? NullLogger<TrayDependencyExportService>.Instance;
         _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
-        _dependencyExpandEngine = new DependencyExpandEngine(resourceReader ?? new DbpfResourceReader());
+        _dependencyExpandEngine = new DependencyExpandEngine(resourceReader ?? new DbpfResourceReader(), _logger);
     }
 
     public Task<TrayDependencyExportResult> ExportAsync(
@@ -1190,10 +1190,12 @@ internal sealed record DirectMatchResult(
 internal sealed class DependencyExpandEngine
 {
     private readonly IDbpfResourceReader _resourceReader;
+    private readonly ILogger _logger;
 
-    public DependencyExpandEngine(IDbpfResourceReader resourceReader)
+    public DependencyExpandEngine(IDbpfResourceReader resourceReader, ILogger? logger = null)
     {
         _resourceReader = resourceReader;
+        _logger = logger ?? NullLogger.Instance;
     }
 
     public DependencyExpandResult Expand(
@@ -1206,6 +1208,11 @@ internal sealed class DependencyExpandEngine
         var sessions = new Dictionary<string, DbpfPackageReadSession>(StringComparer.OrdinalIgnoreCase);
         var payload = new ArrayBufferWriter<byte>();
         var siblingPayload = new ArrayBufferWriter<byte>();
+        var pooledReadAttempts = 0;
+        var pooledReadSuccess = 0;
+        var pooledReadBytes = 0L;
+        var sessionsOpened = 0;
+        var sessionReuseHits = 0;
 
         try
         {
@@ -1218,7 +1225,8 @@ internal sealed class DependencyExpandEngine
                     continue;
                 }
 
-                if (!TryReadPayload(match, sessions, payload, out var readError))
+                pooledReadAttempts++;
+                if (!TryReadPayload(match, sessions, payload, out var bytesRead, out var openedSession, out var readError))
                 {
                     if (!string.IsNullOrWhiteSpace(readError))
                     {
@@ -1235,6 +1243,17 @@ internal sealed class DependencyExpandEngine
                     continue;
                 }
 
+                pooledReadSuccess++;
+                pooledReadBytes += bytesRead;
+                if (openedSession)
+                {
+                    sessionsOpened++;
+                }
+                else
+                {
+                    sessionReuseHits++;
+                }
+
                 var extraction = StructuredDependencyReaders.Read(match.Key, payload.WrittenSpan);
 
                 if (match.Key.Type == KnownResourceTypes.ObjectCatalog &&
@@ -1245,8 +1264,19 @@ internal sealed class DependencyExpandEngine
                 {
                     Register(results, siblingObjectDefinition with { Parent = match });
 
-                    if (TryReadPayload(siblingObjectDefinition, sessions, siblingPayload, out _))
+                    pooledReadAttempts++;
+                    if (TryReadPayload(siblingObjectDefinition, sessions, siblingPayload, out var siblingBytes, out var siblingOpenedSession, out _))
                     {
+                        pooledReadSuccess++;
+                        pooledReadBytes += siblingBytes;
+                        if (siblingOpenedSession)
+                        {
+                            sessionsOpened++;
+                        }
+                        else
+                        {
+                            sessionReuseHits++;
+                        }
                         ObjectDefinitionDependencyReader.Read(siblingPayload.WrittenSpan, extraction);
                     }
                 }
@@ -1290,6 +1320,17 @@ internal sealed class DependencyExpandEngine
                 session.Dispose();
             }
         }
+
+        _logger.LogDebug(
+            "resource.read.pooled domain={Domain} readAttempts={ReadAttempts} readSuccess={ReadSuccess} readBytes={ReadBytes} sessionsOpened={SessionsOpened} sessionReuseHits={SessionReuseHits} directMatches={DirectMatches} expandedMatches={ExpandedMatches}",
+            "traydependency",
+            pooledReadAttempts,
+            pooledReadSuccess,
+            pooledReadBytes,
+            sessionsOpened,
+            sessionReuseHits,
+            directMatch.DirectMatches.Count,
+            results.Count);
 
         return new DependencyExpandResult(results.Values.OrderBy(item => item.FilePath, StringComparer.OrdinalIgnoreCase).ToArray(), issues.ToArray());
     }
@@ -1358,9 +1399,13 @@ internal sealed class DependencyExpandEngine
         ResolvedResourceRef resource,
         IDictionary<string, DbpfPackageReadSession> sessions,
         ArrayBufferWriter<byte> payload,
+        out int bytesRead,
+        out bool openedSession,
         out string? error)
     {
         payload.Clear();
+        bytesRead = 0;
+        openedSession = false;
         error = null;
 
         if (resource.Entry is null)
@@ -1373,6 +1418,7 @@ internal sealed class DependencyExpandEngine
         {
             session = _resourceReader.OpenSession(resource.FilePath);
             sessions[resource.FilePath] = session;
+            openedSession = true;
         }
 
         if (!session.TryReadInto(
@@ -1391,6 +1437,7 @@ internal sealed class DependencyExpandEngine
             return false;
         }
 
+        bytesRead = payload.WrittenCount;
         return true;
     }
 

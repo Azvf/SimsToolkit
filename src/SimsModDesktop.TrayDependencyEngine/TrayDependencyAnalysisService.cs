@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.PackageCore;
 
 namespace SimsModDesktop.TrayDependencyEngine;
@@ -29,12 +31,15 @@ public sealed class TrayDependencyAnalysisService : ITrayDependencyAnalysisServi
     private readonly DependencyExpandEngine _dependencyExpandEngine;
     private readonly ModFileExporter _fileExporter = new();
     private readonly IPathIdentityResolver _pathIdentityResolver;
+    private readonly ILogger<TrayDependencyAnalysisService> _logger;
 
     public TrayDependencyAnalysisService(
         IDbpfResourceReader? resourceReader = null,
-        IPathIdentityResolver? pathIdentityResolver = null)
+        IPathIdentityResolver? pathIdentityResolver = null,
+        ILogger<TrayDependencyAnalysisService>? logger = null)
     {
-        _dependencyExpandEngine = new DependencyExpandEngine(resourceReader ?? new DbpfResourceReader());
+        _logger = logger ?? NullLogger<TrayDependencyAnalysisService>.Instance;
+        _dependencyExpandEngine = new DependencyExpandEngine(resourceReader ?? new DbpfResourceReader(), _logger);
         _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
     }
 
