@@ -15,7 +15,7 @@ public sealed class ModPackageTextureAnalysisServiceTests
             packagePath,
             [
                 new PackageSpec(0x2F7D0004u, 0, 0x1000000000000001, [1, 2, 3, 4]), // DST
-                new PackageSpec(0x0166038Cu, 0, 0x1000000000000002, [5, 6, 7, 8])  // RLE2
+                new PackageSpec(0x3453CF95u, 0, 0x1000000000000002, [5, 6, 7, 8])  // RLE2
             ]);
 
         var service = new ModPackageTextureAnalysisService(new InMemoryAnalysisStore(), new DbpfResourceReader());

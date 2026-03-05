@@ -40,11 +40,12 @@ public sealed class CasItemDescriptorService : ICasItemDescriptorService
         {
             payload.Clear();
             if (!session.TryReadInto(entry, payload, out _) ||
-                !Sims4CasPartParser.TryParse(new DbpfResourceKey(entry.Type, entry.Group, entry.Instance), payload.WrittenSpan, out var casPart, out _))
+                !Sims4CasPartExtendedParser.TryParse(new DbpfResourceKey(entry.Type, entry.Group, entry.Instance), payload.WrittenSpan, out var casPartExtended, out _))
             {
                 continue;
             }
 
+            var casPart = casPartExtended.BaseInfo;
             var linkedTextures = ResolveTextures(casPart, textureMap, textureCandidates, entry, index.Entries.Length, totalGameItems);
             var primaryTexture = SelectPrimaryTexture(casPart, linkedTextures);
             var displayName = ResolveDisplayName(session, index, casPart, entry.Instance, out var displayNameSource);

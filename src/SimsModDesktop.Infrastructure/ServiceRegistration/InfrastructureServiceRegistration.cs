@@ -69,6 +69,10 @@ public static class InfrastructureServiceRegistration
 
         services.AddSingleton<ISaveCatalogService, SaveCatalogService>();
         services.AddSingleton<ISaveHouseholdReader, SaveHouseholdReader>();
+        services.AddSingleton<ISaveAppearanceLinkService, SaveAppearanceLinkService>();
+        services.AddSingleton<ILoadSaveWithAppearanceLinksService, LoadSaveWithAppearanceLinksService>();
+        services.AddSingleton<ITS4SimAppearanceService>(provider =>
+            (ITS4SimAppearanceService)provider.GetRequiredService<ISaveAppearanceLinkService>());
         services.AddSingleton<IHouseholdTrayExporter, HouseholdTrayExporter>();
         services.AddSingleton<ISavePreviewCacheStore, SavePreviewCacheStore>();
         services.AddSingleton<ISaveHouseholdCoordinator, SaveHouseholdCoordinator>();

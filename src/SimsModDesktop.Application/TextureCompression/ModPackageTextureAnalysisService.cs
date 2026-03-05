@@ -6,10 +6,9 @@ namespace SimsModDesktop.Application.TextureCompression;
 
 public sealed class ModPackageTextureAnalysisService : IModPackageTextureAnalysisService
 {
-    private const uint DdsTypeId = 0x00B2D882;
-    private const uint PngTypeId = 0x3453CF95;
-    private const uint DstTypeId = 0x2F7D0004;
-    private const uint Rle2TypeId = 0x0166038C;
+    private const uint DdsTypeId = Sims4ResourceTypeRegistry.Dds;
+    private const uint DstTypeId = Sims4ResourceTypeRegistry.Dst;
+    private const uint Rle2TypeId = Sims4ResourceTypeRegistry.Rle2;
     private const uint DdsMagic = 0x20534444;
     private const uint Dxt1FourCc = 0x31545844;
     private const uint Dxt5FourCc = 0x35545844;
@@ -71,7 +70,6 @@ public sealed class ModPackageTextureAnalysisService : IModPackageTextureAnalysi
 
         var index = DbpfPackageIndexReader.ReadPackageIndex(fullPath);
         var ddsCount = 0;
-        var pngCount = 0;
         var unsupportedTextureCount = 0;
         long totalTextureBytes = 0;
         var candidates = new List<ModPackageTextureCandidate>();
@@ -97,14 +95,6 @@ public sealed class ModPackageTextureAnalysisService : IModPackageTextureAnalysi
                         candidates.Add(ddsCandidate);
                     }
                     break;
-                case PngTypeId:
-                    pngCount++;
-                    totalTextureBytes += entry.CompressedSize;
-                    if (TryBuildPngCandidate(session, entry, payload, out var pngCandidate))
-                    {
-                        candidates.Add(pngCandidate);
-                    }
-                    break;
                 case DstTypeId:
                 case Rle2TypeId:
                     unsupportedTextureCount++;
@@ -123,6 +113,17 @@ public sealed class ModPackageTextureAnalysisService : IModPackageTextureAnalysi
                         SizeBytes = entry.CompressedSize
                     });
                     break;
+                default:
+                    if (entry.Type == Sims4ResourceTypeRegistry.DdsUncompressed)
+                    {
+                        ddsCount++;
+                        totalTextureBytes += entry.CompressedSize;
+                        if (TryBuildDdsCandidate(session, entry, payload, out var uncompressedDdsCandidate))
+                        {
+                            candidates.Add(uncompressedDdsCandidate);
+                        }
+                    }
+                    break;
             }
         }
 
@@ -131,11 +132,11 @@ public sealed class ModPackageTextureAnalysisService : IModPackageTextureAnalysi
             PackagePath = fullPath,
             FileLength = fileInfo.Length,
             LastWriteUtcTicks = fileInfo.LastWriteTimeUtc.Ticks,
-            TextureResourceCount = ddsCount + pngCount + unsupportedTextureCount,
+            TextureResourceCount = ddsCount + unsupportedTextureCount,
             DdsCount = ddsCount,
-            PngCount = pngCount,
+            PngCount = 0,
             UnsupportedTextureCount = unsupportedTextureCount,
-            EditableTextureCount = ddsCount + pngCount,
+            EditableTextureCount = ddsCount,
             TotalTextureBytes = totalTextureBytes,
             LastAnalyzedLocal = DateTime.Now
         };
@@ -151,53 +152,6 @@ public sealed class ModPackageTextureAnalysisService : IModPackageTextureAnalysi
 
         await _store.SaveAsync(result, cancellationToken);
         return result;
-    }
-
-    private static bool TryBuildPngCandidate(
-        DbpfPackageReadSession session,
-        DbpfIndexEntry entry,
-        ArrayBufferWriter<byte> payload,
-        out ModPackageTextureCandidate candidate)
-    {
-        candidate = null!;
-        payload.Clear();
-        if (!session.TryReadInto(entry, payload, out _))
-        {
-            return false;
-        }
-
-        var bytes = payload.WrittenSpan;
-        if (bytes.Length < 24 ||
-            bytes[0] != 0x89 ||
-            bytes[1] != 0x50 ||
-            bytes[2] != 0x4E ||
-            bytes[3] != 0x47)
-        {
-            return false;
-        }
-
-        var width = BinaryPrimitives.ReadInt32BigEndian(bytes.Slice(16, 4));
-        var height = BinaryPrimitives.ReadInt32BigEndian(bytes.Slice(20, 4));
-        var colorType = bytes.Length > 25 ? bytes[25] : (byte)6;
-        var hasAlpha = colorType is 4 or 6;
-        var suggestedAction = MaxDimension(width, height) >= 4096
-            ? (hasAlpha ? "ConvertToBC3+Downscale2048" : "ConvertToBC1+Downscale2048")
-            : (hasAlpha ? "ConvertToBC3" : "ConvertToBC1");
-
-        candidate = new ModPackageTextureCandidate
-        {
-            ResourceKeyText = FormatResourceKey(entry),
-            ContainerKind = "PNG",
-            Format = hasAlpha ? "PNG(RGBA)" : "PNG(RGB)",
-            Width = width,
-            Height = height,
-            MipMapCount = 1,
-            Editable = true,
-            SuggestedAction = suggestedAction,
-            Notes = "CPU-decoded texture; highest-value candidate for in-app recompression.",
-            SizeBytes = entry.CompressedSize
-        };
-        return true;
     }
 
     private static bool TryBuildDdsCandidate(
