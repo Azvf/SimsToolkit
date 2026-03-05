@@ -29,7 +29,7 @@ public sealed class TrayDependencyAnalysisService : ITrayDependencyAnalysisServi
     private readonly TraySearchExtractor _searchExtractor = new();
     private readonly DirectMatchEngine _directMatchEngine = new();
     private readonly DependencyExpandEngine _dependencyExpandEngine;
-    private readonly ModFileExporter _fileExporter = new();
+    private readonly ModFileExporter _fileExporter;
     private readonly IPathIdentityResolver _pathIdentityResolver;
     private readonly ILogger<TrayDependencyAnalysisService> _logger;
 
@@ -41,6 +41,7 @@ public sealed class TrayDependencyAnalysisService : ITrayDependencyAnalysisServi
         _logger = logger ?? NullLogger<TrayDependencyAnalysisService>.Instance;
         _dependencyExpandEngine = new DependencyExpandEngine(resourceReader ?? new DbpfResourceReader(), _logger);
         _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
+        _fileExporter = new ModFileExporter(_logger);
     }
 
     public Task<TrayDependencyAnalysisResult> AnalyzeAsync(
@@ -129,12 +130,14 @@ public sealed class TrayDependencyAnalysisService : ITrayDependencyAnalysisServi
                 }
 
                 matchedExportPath = Path.Combine(exportRoot, "MatchedPackages");
-                _fileExporter.CopyFiles(
+                exportedMatchedPackageCount = await _fileExporter.CopyFilesAsync(
                     matchedRows.Select(row => row.PackagePath).ToArray(),
                     matchedExportPath,
                     issues,
                     null,
-                    out exportedMatchedPackageCount);
+                    request.TrayItemKey,
+                    request.CopyWorkerCount,
+                    cancellationToken).ConfigureAwait(false);
             }
 
             string? unusedExportPath = null;
@@ -156,12 +159,14 @@ public sealed class TrayDependencyAnalysisService : ITrayDependencyAnalysisServi
                 }
 
                 unusedExportPath = Path.Combine(exportRoot, "UnusedPackages");
-                _fileExporter.CopyFiles(
+                exportedUnusedPackageCount = await _fileExporter.CopyFilesAsync(
                     unusedRows.Select(row => row.PackagePath).ToArray(),
                     unusedExportPath,
                     issues,
                     null,
-                    out exportedUnusedPackageCount);
+                    request.TrayItemKey,
+                    request.CopyWorkerCount,
+                    cancellationToken).ConfigureAwait(false);
             }
 
             Report(progress, TrayDependencyAnalysisStage.Completed, 100, "Completed.");

@@ -16,7 +16,7 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
     private readonly TraySearchExtractor _searchExtractor = new();
     private readonly DirectMatchEngine _directMatchEngine = new();
     private readonly DependencyExpandEngine _dependencyExpandEngine;
-    private readonly ModFileExporter _fileExporter = new();
+    private readonly ModFileExporter _fileExporter;
 
     public TrayDependencyExportService(
         IPackageIndexCache packageIndexCache,
@@ -28,6 +28,7 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
         _logger = logger ?? NullLogger<TrayDependencyExportService>.Instance;
         _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
         _dependencyExpandEngine = new DependencyExpandEngine(resourceReader ?? new DbpfResourceReader(), _logger);
+        _fileExporter = new ModFileExporter(_logger);
     }
 
     public Task<TrayDependencyExportResult> ExportAsync(
@@ -253,7 +254,14 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
                 85,
                 filePaths.Length);
 
-            _fileExporter.CopyFiles(filePaths, request.ModsExportRoot, issues, progress, out var copiedModFileCount);
+            var copiedModFileCount = await _fileExporter.CopyFilesAsync(
+                filePaths,
+                request.ModsExportRoot,
+                issues,
+                progress,
+                request.TrayItemKey,
+                request.CopyWorkerCount,
+                cancellationToken).ConfigureAwait(false);
 
             Report(progress, TrayDependencyExportStage.Completed, 100, "Completed.");
             var result = BuildResult(
@@ -1588,26 +1596,34 @@ internal sealed class DependencyExpandEngine
             return false;
         }
 
-        if (!sessions.TryGetValue(resource.FilePath, out var session))
+        try
         {
-            session = _resourceReader.OpenSession(resource.FilePath);
-            sessions[resource.FilePath] = session;
-            openedSession = true;
-        }
+            if (!sessions.TryGetValue(resource.FilePath, out var session))
+            {
+                session = _resourceReader.OpenSession(resource.FilePath);
+                sessions[resource.FilePath] = session;
+                openedSession = true;
+            }
 
-        if (!session.TryReadInto(
-            new DbpfIndexEntry(
-                resource.Entry.Type,
-                resource.Entry.Group,
-                resource.Entry.Instance,
-                resource.Entry.DataOffset,
-                resource.Entry.CompressedSize,
-                resource.Entry.UncompressedSize,
-                resource.Entry.CompressionType,
-                resource.Entry.IsDeleted),
-            payload,
-            out error))
+            if (!session.TryReadInto(
+                    new DbpfIndexEntry(
+                        resource.Entry.Type,
+                        resource.Entry.Group,
+                        resource.Entry.Instance,
+                        resource.Entry.DataOffset,
+                        resource.Entry.CompressedSize,
+                        resource.Entry.UncompressedSize,
+                        resource.Entry.CompressionType,
+                        resource.Entry.IsDeleted),
+                    payload,
+                    out error))
+            {
+                return false;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            error = ex.Message;
             return false;
         }
 
@@ -1654,83 +1670,36 @@ internal sealed record DependencyExpandResult(
     IReadOnlyList<ResolvedResourceRef> ExpandedMatches,
     IReadOnlyList<TrayDependencyIssue> Issues);
 
-internal sealed class ModFileExporter
-{
-    public void CopyFiles(
-        IReadOnlyList<string> sourceFiles,
-        string targetRoot,
-        List<TrayDependencyIssue> issues,
-        IProgress<TrayDependencyExportProgress>? progress,
-        out int copiedFileCount)
-    {
-        copiedFileCount = 0;
-        Directory.CreateDirectory(targetRoot);
-
-        for (var index = 0; index < sourceFiles.Count; index++)
-        {
-            var sourcePath = sourceFiles[index];
-            try
-            {
-                if (!File.Exists(sourcePath))
-                {
-                    issues.Add(new TrayDependencyIssue
-                    {
-                        Severity = TrayDependencyIssueSeverity.Warning,
-                        Kind = TrayDependencyIssueKind.MissingSourceFile,
-                        FilePath = sourcePath,
-                        Message = "Source mod file no longer exists."
-                    });
-                    continue;
-                }
-
-                var targetPath = Path.Combine(targetRoot, Path.GetFileName(sourcePath));
-                targetPath = FileNameHelpers.GetUniquePath(targetPath);
-                File.Copy(sourcePath, targetPath, overwrite: false);
-                copiedFileCount++;
-                progress?.Report(new TrayDependencyExportProgress
-                {
-                    Stage = TrayDependencyExportStage.CopyingMods,
-                    Percent = ProgressScale.Scale(85, 99, copiedFileCount, sourceFiles.Count),
-                    Detail = $"Copying referenced mods... {copiedFileCount}/{sourceFiles.Count}"
-                });
-            }
-            catch (Exception ex)
-            {
-                issues.Add(new TrayDependencyIssue
-                {
-                    Severity = TrayDependencyIssueSeverity.Error,
-                    Kind = TrayDependencyIssueKind.CopyError,
-                    FilePath = sourcePath,
-                    Message = $"Failed to copy mod file: {ex.Message}"
-                });
-                return;
-            }
-        }
-    }
-}
-
 internal static class FileNameHelpers
 {
-    public static string GetUniquePath(string targetPath)
+    public static string GetUniquePath(string targetPath, ISet<string>? reservedPaths = null)
     {
-        if (!File.Exists(targetPath) && !Directory.Exists(targetPath))
+        var fullTargetPath = Path.GetFullPath(targetPath);
+        if (!PathExists(fullTargetPath, reservedPaths))
         {
-            return targetPath;
+            return fullTargetPath;
         }
 
-        var directory = Path.GetDirectoryName(targetPath) ?? string.Empty;
-        var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(targetPath);
-        var extension = Path.GetExtension(targetPath);
+        var directory = Path.GetDirectoryName(fullTargetPath) ?? string.Empty;
+        var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(fullTargetPath);
+        var extension = Path.GetExtension(fullTargetPath);
 
         for (var suffix = 2; suffix < int.MaxValue; suffix++)
         {
             var candidate = Path.Combine(directory, $"{fileNameWithoutExtension} ({suffix}){extension}");
-            if (!File.Exists(candidate) && !Directory.Exists(candidate))
+            if (!PathExists(candidate, reservedPaths))
             {
                 return candidate;
             }
         }
 
         throw new IOException("Unable to generate a unique export filename.");
+    }
+
+    private static bool PathExists(string path, ISet<string>? reservedPaths)
+    {
+        return (reservedPaths is not null && reservedPaths.Contains(path)) ||
+               File.Exists(path) ||
+               Directory.Exists(path);
     }
 }

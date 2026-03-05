@@ -127,6 +127,79 @@ public sealed class SimsTrayPreviewServiceTests
     }
 
     [Fact]
+    public async Task BuildPageAsync_PageBuildWorkerCount_PreservesOrderAndDisplayFields()
+    {
+        using var trayDir = new TempDirectory();
+        var metadata = new Dictionary<string, TrayMetadataResult>(StringComparer.OrdinalIgnoreCase);
+        for (var index = 0; index < 40; index++)
+        {
+            var baseName = $"0x00000001!0x{(0x1000UL + (ulong)index):x16}";
+            CreateTrayFiles(trayDir.Path, baseName, ".trayitem", ".bpi");
+            var trayItemPath = Path.Combine(trayDir.Path, $"{baseName}.trayitem");
+            metadata[trayItemPath] = new TrayMetadataResult
+            {
+                TrayItemPath = trayItemPath,
+                Name = $"Build {index:D2}",
+                CreatorName = "Builder"
+            };
+        }
+
+        var service = new SimsTrayPreviewService(
+            trayThumbnailService: null,
+            trayMetadataService: new FakeTrayMetadataService(metadata));
+        var serialRequest = new SimsTrayPreviewRequest
+        {
+            TrayPath = trayDir.Path,
+            PageSize = 50,
+            PageBuildWorkerCount = 1
+        };
+        var parallelRequest = new SimsTrayPreviewRequest
+        {
+            TrayPath = trayDir.Path,
+            PageSize = 50,
+            PageBuildWorkerCount = 8
+        };
+
+        var serialPage = await service.BuildPageAsync(serialRequest, pageIndex: 1);
+        var parallelPage = await service.BuildPageAsync(parallelRequest, pageIndex: 1);
+
+        Assert.Equal(
+            serialPage.Items.Select(item => item.TrayItemKey),
+            parallelPage.Items.Select(item => item.TrayItemKey));
+        Assert.Equal(serialPage.Items.Count, parallelPage.Items.Count);
+        for (var index = 0; index < serialPage.Items.Count; index++)
+        {
+            Assert.Equal(serialPage.Items[index].DisplayTitle, parallelPage.Items[index].DisplayTitle);
+            Assert.Equal(serialPage.Items[index].DisplaySubtitle, parallelPage.Items[index].DisplaySubtitle);
+            Assert.Equal(serialPage.Items[index].DisplayPrimaryMeta, parallelPage.Items[index].DisplayPrimaryMeta);
+            Assert.Equal(serialPage.Items[index].ChildItems.Count, parallelPage.Items[index].ChildItems.Count);
+        }
+    }
+
+    [Fact]
+    public async Task BuildPageAsync_PageBuildWorkerCount_HonorsCancellation()
+    {
+        using var trayDir = new TempDirectory();
+        for (var index = 0; index < 40; index++)
+        {
+            var baseName = $"0x00000001!0x{(0x2000UL + (ulong)index):x16}";
+            CreateTrayFiles(trayDir.Path, baseName, ".trayitem", ".bpi");
+        }
+
+        var service = new SimsTrayPreviewService();
+        var request = new SimsTrayPreviewRequest
+        {
+            TrayPath = trayDir.Path,
+            PageSize = 50,
+            PageBuildWorkerCount = 8
+        };
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.BuildPageAsync(request, pageIndex: 1, cts.Token));
+    }
+
+    [Fact]
     public async Task BuildPageAsync_PopulatesThumbnailMetadataAndCleansMissingKeys()
     {
         using var trayDir = new TempDirectory();

@@ -417,6 +417,120 @@ public sealed class TrayDependencyEngineTests
     }
 
     [Fact]
+    public async Task TrayDependencyExportService_CopiesDuplicateFileNames_WithDeterministicSuffix()
+    {
+        using var trayRoot = new TempDirectory("tray-duplicate-name");
+        using var modsRoot = new TempDirectory("mods-duplicate-name");
+        using var exportRoot = new TempDirectory("out-duplicate-name");
+
+        const ulong secondInstance = KnownInstance + 1;
+        var trayItemPath = Path.Combine(trayRoot.Path, "0xdup.trayitem");
+        var blueprintPath = Path.Combine(trayRoot.Path, "0xdup.blueprint");
+        WriteTrayItem(trayItemPath, KnownInstance);
+        WriteTrayItem(blueprintPath, secondInstance);
+
+        var packageAPath = Path.Combine(modsRoot.Path, "A", "duplicate.package");
+        var packageBPath = Path.Combine(modsRoot.Path, "B", "duplicate.package");
+        Directory.CreateDirectory(Path.GetDirectoryName(packageAPath)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(packageBPath)!);
+        WritePackage(packageAPath, KnownInstance, KnownResourceType, group: 0, resourceData: [1, 2, 3, 4]);
+        WritePackage(packageBPath, secondInstance, KnownResourceType, group: 0, resourceData: [4, 3, 2, 1]);
+
+        var service = new TrayDependencyExportService(new PackageIndexCache());
+        var request = new TrayDependencyExportRequest
+        {
+            ItemTitle = "Duplicate",
+            TrayItemKey = "0xdup",
+            TrayRootPath = trayRoot.Path,
+            TraySourceFiles = [trayItemPath, blueprintPath],
+            ModsRootPath = modsRoot.Path,
+            TrayExportRoot = Path.Combine(exportRoot.Path, "Duplicate_0xdup", "Tray"),
+            ModsExportRoot = Path.Combine(exportRoot.Path, "Duplicate_0xdup", "Mods"),
+            PreloadedSnapshot = await BuildSnapshotAsync(new PackageIndexCache(), modsRoot.Path)
+        };
+
+        var result = await service.ExportAsync(request);
+
+        Assert.True(result.Success);
+        Assert.Equal(2, result.CopiedModFileCount);
+        Assert.True(File.Exists(Path.Combine(request.ModsExportRoot, "duplicate.package")));
+        Assert.True(File.Exists(Path.Combine(request.ModsExportRoot, "duplicate (2).package")));
+    }
+
+    [Fact]
+    public async Task TrayDependencyExportService_ReportsMissingSourceFileWarning_WhenMatchedPackageWasDeleted()
+    {
+        using var trayRoot = new TempDirectory("tray-missing-source");
+        using var modsRoot = new TempDirectory("mods-missing-source");
+        using var exportRoot = new TempDirectory("out-missing-source");
+
+        var trayItemPath = Path.Combine(trayRoot.Path, "0xmissing.trayitem");
+        WriteTrayItem(trayItemPath, KnownInstance);
+
+        var packagePath = Path.Combine(modsRoot.Path, "missing.package");
+        WritePackage(packagePath, KnownInstance, KnownResourceType, group: 0, resourceData: [1, 2, 3, 4]);
+        var preloadedSnapshot = await BuildSnapshotAsync(new PackageIndexCache(), modsRoot.Path);
+        File.Delete(packagePath);
+
+        var service = new TrayDependencyExportService(new PackageIndexCache());
+        var request = new TrayDependencyExportRequest
+        {
+            ItemTitle = "Missing",
+            TrayItemKey = "0xmissing",
+            TrayRootPath = trayRoot.Path,
+            TraySourceFiles = [trayItemPath],
+            ModsRootPath = modsRoot.Path,
+            TrayExportRoot = Path.Combine(exportRoot.Path, "Missing_0xmissing", "Tray"),
+            ModsExportRoot = Path.Combine(exportRoot.Path, "Missing_0xmissing", "Mods"),
+            PreloadedSnapshot = preloadedSnapshot
+        };
+
+        var result = await service.ExportAsync(request);
+
+        Assert.True(result.Success);
+        Assert.Equal(0, result.CopiedModFileCount);
+        Assert.Contains(
+            result.Issues,
+            issue => issue.Kind == TrayDependencyIssueKind.MissingSourceFile &&
+                     issue.Severity == TrayDependencyIssueSeverity.Warning);
+    }
+
+    [Fact]
+    public async Task TrayDependencyExportService_ReturnsCopyError_WhenSourceFileIsLocked()
+    {
+        using var trayRoot = new TempDirectory("tray-copy-locked");
+        using var modsRoot = new TempDirectory("mods-copy-locked");
+        using var exportRoot = new TempDirectory("out-copy-locked");
+
+        var trayItemPath = Path.Combine(trayRoot.Path, "0xlocked.trayitem");
+        WriteTrayItem(trayItemPath, KnownInstance);
+
+        var packagePath = Path.Combine(modsRoot.Path, "locked.package");
+        WritePackage(packagePath, KnownInstance, KnownResourceType, group: 0, resourceData: [5, 6, 7, 8]);
+        var preloadedSnapshot = await BuildSnapshotAsync(new PackageIndexCache(), modsRoot.Path);
+
+        using var lockStream = new FileStream(packagePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+
+        var service = new TrayDependencyExportService(new PackageIndexCache());
+        var request = new TrayDependencyExportRequest
+        {
+            ItemTitle = "Locked",
+            TrayItemKey = "0xlocked",
+            TrayRootPath = trayRoot.Path,
+            TraySourceFiles = [trayItemPath],
+            ModsRootPath = modsRoot.Path,
+            TrayExportRoot = Path.Combine(exportRoot.Path, "Locked_0xlocked", "Tray"),
+            ModsExportRoot = Path.Combine(exportRoot.Path, "Locked_0xlocked", "Mods"),
+            PreloadedSnapshot = preloadedSnapshot
+        };
+
+        var result = await service.ExportAsync(request);
+
+        Assert.False(result.Success);
+        Assert.Contains(result.Issues, issue => issue.Kind == TrayDependencyIssueKind.CopyError);
+    }
+
+    [Fact]
     public async Task TrayDependencyAnalysisService_AnalyzesAndExportsMatchedPackages_WithoutS4ti()
     {
         using var trayRoot = new TempDirectory("tray-analysis");
@@ -455,6 +569,46 @@ public sealed class TrayDependencyEngineTests
         Assert.Contains(progressEvents, progress => progress.Stage == TrayDependencyAnalysisStage.Completed && progress.Percent == 100);
         Assert.True(File.Exists(result.OutputCsvPath));
         Assert.True(File.Exists(Path.Combine(result.MatchedExportPath!, "resolved.package")));
+    }
+
+    [Fact]
+    public async Task TrayDependencyAnalysisService_ExportsMatchedPackages_WithDuplicateFileNames_UsesDeterministicSuffix()
+    {
+        using var trayRoot = new TempDirectory("tray-analysis-duplicate-name");
+        using var modsRoot = new TempDirectory("mods-analysis-duplicate-name");
+        using var outputRoot = new TempDirectory("out-analysis-duplicate-name");
+
+        const ulong secondInstance = KnownInstance + 1;
+        var trayItemPath = Path.Combine(trayRoot.Path, "0xanalysisdup.trayitem");
+        var blueprintPath = Path.Combine(trayRoot.Path, "0xanalysisdup.blueprint");
+        WriteTrayItem(trayItemPath, KnownInstance);
+        WriteTrayItem(blueprintPath, secondInstance);
+
+        var packageAPath = Path.Combine(modsRoot.Path, "A", "duplicate.package");
+        var packageBPath = Path.Combine(modsRoot.Path, "B", "duplicate.package");
+        Directory.CreateDirectory(Path.GetDirectoryName(packageAPath)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(packageBPath)!);
+        WritePackage(packageAPath, KnownInstance, KnownResourceType, group: 0, resourceData: [1, 1, 1, 1]);
+        WritePackage(packageBPath, secondInstance, KnownResourceType, group: 0, resourceData: [2, 2, 2, 2]);
+
+        var service = new TrayDependencyAnalysisService();
+        var request = new TrayDependencyAnalysisRequest
+        {
+            TrayPath = trayRoot.Path,
+            ModsRootPath = modsRoot.Path,
+            TrayItemKey = "0xanalysisdup",
+            PreloadedSnapshot = await BuildSnapshotAsync(new PackageIndexCache(), modsRoot.Path),
+            ExportMatchedPackages = true,
+            ExportTargetPath = Path.Combine(outputRoot.Path, "exports"),
+            ExportMinConfidence = "Low"
+        };
+
+        var result = await service.AnalyzeAsync(request);
+
+        Assert.True(result.Success);
+        Assert.Equal(2, result.ExportedMatchedPackageCount);
+        Assert.True(File.Exists(Path.Combine(result.MatchedExportPath!, "duplicate.package")));
+        Assert.True(File.Exists(Path.Combine(result.MatchedExportPath!, "duplicate (2).package")));
     }
 
     private static void WriteTrayItem(string path, ulong instance)

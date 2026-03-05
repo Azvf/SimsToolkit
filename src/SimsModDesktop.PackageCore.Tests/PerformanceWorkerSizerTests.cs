@@ -17,4 +17,21 @@ public sealed class PerformanceWorkerSizerTests
         Assert.Equal(12, PerformanceWorkerSizer.ResolveHashWorkers());
         Assert.Equal(64, PerformanceWorkerSizer.ResolveHashWorkers(128));
     }
+
+    [Fact]
+    public void ResolveTrayExportCopyWorkers_UsesDefaultAndClamp()
+    {
+        Assert.Equal(4, PerformanceWorkerSizer.ResolveTrayExportCopyWorkers());
+        Assert.Equal(1, PerformanceWorkerSizer.ResolveTrayExportCopyWorkers(0));
+        Assert.Equal(8, PerformanceWorkerSizer.ResolveTrayExportCopyWorkers(99));
+    }
+
+    [Fact]
+    public void ResolveTrayPreviewPageWorkers_UsesCpuBasedDefaultAndClamp()
+    {
+        var expected = Math.Clamp((int)Math.Ceiling(Environment.ProcessorCount / 2d), 2, 8);
+        Assert.Equal(expected, PerformanceWorkerSizer.ResolveTrayPreviewPageWorkers());
+        Assert.Equal(2, PerformanceWorkerSizer.ResolveTrayPreviewPageWorkers(1));
+        Assert.Equal(8, PerformanceWorkerSizer.ResolveTrayPreviewPageWorkers(99));
+    }
 }

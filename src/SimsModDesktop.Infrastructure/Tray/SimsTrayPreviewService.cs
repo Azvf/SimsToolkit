@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.PackageCore;
+using SimsModDesktop.PackageCore.Performance;
 
 namespace SimsModDesktop.Infrastructure.Tray;
 
@@ -114,7 +115,11 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
             else
             {
                 var pageDescriptors = snapshot.RowDescriptors.Skip(skip).Take(pageSize).ToList();
-                items = BuildPageItems(NormalizeTrayRootPath(request.TrayPath), pageDescriptors, cancellationToken);
+                items = BuildPageItems(
+                    NormalizeTrayRootPath(request.TrayPath),
+                    pageDescriptors,
+                    request.PageBuildWorkerCount,
+                    cancellationToken);
             }
 
             return new SimsTrayPreviewPage
@@ -453,6 +458,7 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
     private IReadOnlyList<SimsTrayPreviewItem> BuildPageItems(
         string trayPath,
         IReadOnlyList<PreviewRowDescriptor> rows,
+        int? requestedWorkerCount,
         CancellationToken cancellationToken)
     {
         if (rows.Count == 0)
@@ -460,15 +466,59 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
             return Array.Empty<SimsTrayPreviewItem>();
         }
 
+        var startedAt = Environment.TickCount64;
         var normalizedTrayRoot = NormalizeTrayRootPath(trayPath);
         var metadataByTrayItemPath = LoadMetadataByTrayItemPath(normalizedTrayRoot, rows, cancellationToken);
-        return rows
-            .Select(row => CreateAggregatePreviewItem(
-                trayPath,
-                row.Group,
-                TryGetMetadata(row.Group, metadataByTrayItemPath),
-                row.ChildGroups))
-            .ToList();
+        var workerCount = PerformanceWorkerSizer.ResolveTrayPreviewPageWorkers(requestedWorkerCount);
+        var useParallel = rows.Count >= 24 && workerCount > 1;
+        _logger.LogDebug(
+            "traypreview.pagebuild.start rowCount={RowCount} workerCount={WorkerCount} parallelEnabled={ParallelEnabled}",
+            rows.Count,
+            workerCount,
+            useParallel);
+
+        IReadOnlyList<SimsTrayPreviewItem> items;
+        if (!useParallel)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            items = rows
+                .Select(row => CreateAggregatePreviewItem(
+                    trayPath,
+                    row.Group,
+                    TryGetMetadata(row.Group, metadataByTrayItemPath),
+                    row.ChildGroups))
+                .ToList();
+        }
+        else
+        {
+            var orderedItems = new SimsTrayPreviewItem[rows.Count];
+            Parallel.For(
+                fromInclusive: 0,
+                toExclusive: rows.Count,
+                new ParallelOptions
+                {
+                    CancellationToken = cancellationToken,
+                    MaxDegreeOfParallelism = workerCount
+                },
+                index =>
+                {
+                    var row = rows[index];
+                    orderedItems[index] = CreateAggregatePreviewItem(
+                        trayPath,
+                        row.Group,
+                        TryGetMetadata(row.Group, metadataByTrayItemPath),
+                        row.ChildGroups);
+                });
+            items = orderedItems;
+        }
+
+        _logger.LogDebug(
+            "traypreview.pagebuild.done rowCount={RowCount} workerCount={WorkerCount} parallelEnabled={ParallelEnabled} elapsedMs={ElapsedMs}",
+            rows.Count,
+            workerCount,
+            useParallel,
+            Environment.TickCount64 - startedAt);
+        return items;
     }
 
     private IReadOnlyDictionary<string, TrayMetadataResult> LoadMetadataByTrayItemPath(

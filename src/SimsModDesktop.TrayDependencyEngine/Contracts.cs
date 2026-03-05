@@ -28,6 +28,7 @@ public sealed record TrayDependencyExportRequest
     public required string TrayExportRoot { get; init; }
     public required string ModsExportRoot { get; init; }
     public PackageIndexSnapshot? PreloadedSnapshot { get; init; }
+    public int? CopyWorkerCount { get; init; }
 }
 
 public sealed record TrayDependencyAnalysisRequest
@@ -36,6 +37,7 @@ public sealed record TrayDependencyAnalysisRequest
     public required string ModsRootPath { get; init; }
     public required string TrayItemKey { get; init; }
     public PackageIndexSnapshot? PreloadedSnapshot { get; init; }
+    public int? CopyWorkerCount { get; init; }
     public int? MinMatchCount { get; init; }
     public int? TopN { get; init; }
     public int? MaxPackageCount { get; init; }
