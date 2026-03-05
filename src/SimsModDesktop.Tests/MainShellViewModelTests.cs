@@ -802,6 +802,20 @@ public sealed class MainShellViewModelTests
             CallCount++;
             return Task.FromResult(NextResult);
         }
+
+        public Task<AppCacheMaintenanceResult> MaintainAsync(
+            AppCacheMaintenanceMode mode = AppCacheMaintenanceMode.Light,
+            bool includePackageIndexCache = true,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new AppCacheMaintenanceResult
+            {
+                Success = true,
+                MaintenanceMode = mode,
+                MaintainedDatabaseCount = includePackageIndexCache ? 2 : 1,
+                Message = "Maintained cache databases."
+            });
+        }
     }
 
     private sealed class FakePackageIndexCache : IPackageIndexCache
