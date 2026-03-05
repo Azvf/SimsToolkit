@@ -117,8 +117,6 @@ public sealed class AppSettings
 
     public sealed class UiStateSettings
     {
-        public bool ToolkitLogDrawerOpen { get; set; }
-        public bool TrayPreviewLogDrawerOpen { get; set; }
         public bool ToolkitAdvancedOpen { get; set; }
     }
 

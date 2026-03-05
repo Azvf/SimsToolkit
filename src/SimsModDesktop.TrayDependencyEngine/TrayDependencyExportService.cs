@@ -54,7 +54,9 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
             var expandedMatchCount = 0;
             var resolvedModsRoot = ResolveDirectory(request.ModsRootPath);
             _logger.LogInformation(
-                "Tray export start trayKey={TrayItemKey} title={ItemTitle} sourceFiles={SourceFileCount} modsPath={ModsPath} preloadedSnapshot={HasPreloadedSnapshot}",
+                "{Event} status={Status} trayItemKey={TrayItemKey} title={ItemTitle} sourceFiles={SourceFileCount} modsPath={ModsPath} preloadedSnapshot={HasPreloadedSnapshot}",
+                "trayexport.item.start",
+                "start",
                 request.TrayItemKey,
                 request.ItemTitle,
                 inputSourceFileCount,
@@ -70,6 +72,13 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
                 resolvedModsRoot.LinkTarget ?? string.Empty);
 
             Report(progress, TrayDependencyExportStage.Preparing, 0, "Copying tray files...");
+            _logger.LogInformation(
+                "{Event} status={Status} trayItemKey={TrayItemKey} stage={Stage} percent={Percent}",
+                "trayexport.item.stage",
+                "mark",
+                request.TrayItemKey,
+                TrayDependencyExportStage.Preparing,
+                0);
 
             Directory.CreateDirectory(request.TrayExportRoot);
             Directory.CreateDirectory(request.ModsExportRoot);
@@ -111,9 +120,12 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
                     Message = "Tray dependency cache is not ready. Open the Tray page and wait for cache warmup to finish before exporting."
                 });
                 _logger.LogWarning(
-                    "Tray export blocked because no preloaded snapshot was provided trayKey={TrayItemKey} modsPath={ModsPath}",
+                    "{Event} status={Status} trayItemKey={TrayItemKey} modsPath={ModsPath} reason={Reason}",
+                    "trayexport.snapshot.blocked",
+                    "blocked",
                     request.TrayItemKey,
-                    request.ModsRootPath);
+                    request.ModsRootPath,
+                    "preloaded-snapshot-missing");
                 return BuildResult(
                     copiedTrayFileCount,
                     0,
@@ -133,6 +145,13 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
 
             cancellationToken.ThrowIfCancellationRequested();
             Report(progress, TrayDependencyExportStage.ParsingTray, 35, "Parsing tray files...");
+            _logger.LogInformation(
+                "{Event} status={Status} trayItemKey={TrayItemKey} stage={Stage} percent={Percent}",
+                "trayexport.item.stage",
+                "mark",
+                request.TrayItemKey,
+                TrayDependencyExportStage.ParsingTray,
+                35);
 
             if (!_bundleLoader.TryLoad(request.TraySourceFiles, issues, out var bundle))
             {
@@ -164,6 +183,13 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
 
             cancellationToken.ThrowIfCancellationRequested();
             Report(progress, TrayDependencyExportStage.MatchingDirectReferences, 45, "Matching direct references...");
+            _logger.LogInformation(
+                "{Event} status={Status} trayItemKey={TrayItemKey} stage={Stage} percent={Percent}",
+                "trayexport.item.stage",
+                "mark",
+                request.TrayItemKey,
+                TrayDependencyExportStage.MatchingDirectReferences,
+                45);
 
             using var lookupSession = snapshot.Lookup.OpenSession();
 
@@ -183,6 +209,13 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
 
             cancellationToken.ThrowIfCancellationRequested();
             Report(progress, TrayDependencyExportStage.ExpandingDependencies, 65, "Expanding second-level references...");
+            _logger.LogInformation(
+                "{Event} status={Status} trayItemKey={TrayItemKey} stage={Stage} percent={Percent}",
+                "trayexport.item.stage",
+                "mark",
+                request.TrayItemKey,
+                TrayDependencyExportStage.ExpandingDependencies,
+                65);
 
             var expansion = _dependencyExpandEngine.Expand(
                 directMatch,
@@ -211,6 +244,14 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
 
             cancellationToken.ThrowIfCancellationRequested();
             Report(progress, TrayDependencyExportStage.CopyingMods, 85, $"Copying referenced mods ({filePaths.Length})...");
+            _logger.LogInformation(
+                "{Event} status={Status} trayItemKey={TrayItemKey} stage={Stage} percent={Percent} fileCount={FileCount}",
+                "trayexport.item.stage",
+                "mark",
+                request.TrayItemKey,
+                TrayDependencyExportStage.CopyingMods,
+                85,
+                filePaths.Length);
 
             _fileExporter.CopyFiles(filePaths, request.ModsExportRoot, issues, progress, out var copiedModFileCount);
 
@@ -229,12 +270,15 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
                     directMatchCount,
                     expandedMatchCount));
             _logger.LogInformation(
-                "Tray export completed trayKey={TrayItemKey} success={Success} trayFiles={CopiedTrayFiles} modFiles={CopiedModFiles} issues={IssueCount} elapsedMs={ElapsedMs}",
+                "{Event} status={Status} trayItemKey={TrayItemKey} success={Success} copiedTrayFiles={CopiedTrayFiles} copiedModFiles={CopiedModFiles} warnings={Warnings} failures={Failures} elapsedMs={ElapsedMs}",
+                result.Success ? "trayexport.item.done" : "trayexport.item.fail",
+                result.Success ? "done" : "fail",
                 request.TrayItemKey,
                 result.Success,
                 result.CopiedTrayFileCount,
                 result.CopiedModFileCount,
-                result.Issues.Count,
+                result.Issues.Count(issue => issue.Severity == TrayDependencyIssueSeverity.Warning),
+                result.Issues.Count(issue => issue.Severity == TrayDependencyIssueSeverity.Error),
                 timing.ElapsedMilliseconds);
             return result;
         }, cancellationToken);

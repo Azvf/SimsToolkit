@@ -35,7 +35,7 @@ public sealed class MainWindowLifecycleController
             return;
         }
 
-        var timing = PerformanceLogScope.Begin(_logger, "workspace.initialize", host.AppendLog);
+        var timing = PerformanceLogScope.Begin(_logger, "workspace.initialize");
 
         await _recoveryController.InitializeAsync();
         timing.Mark("recovery.initialized");
@@ -60,8 +60,6 @@ public sealed class MainWindowLifecycleController
         host.ModPreview.SortBy = resolved.ModPreview.SortBy;
         host.ModPreview.SearchQuery = resolved.ModPreview.SearchQuery;
         host.ModPreview.ShowOverridesOnly = resolved.ModPreview.ShowOverridesOnly;
-        host.SetIsToolkitLogDrawerOpen(resolved.UiState.ToolkitLogDrawerOpen);
-        host.SetIsTrayPreviewLogDrawerOpen(resolved.UiState.TrayPreviewLogDrawerOpen);
         host.SetIsToolkitAdvancedOpen(resolved.UiState.ToolkitAdvancedOpen);
 
         _toolkitActionPlanner.LoadModuleSettings(settings);
@@ -122,7 +120,7 @@ public sealed class MainWindowLifecycleController
                     FailureMessage = ex.Message
                 });
 
-            host.AppendLog("[recovery] " + ex.Message);
+            _logger.LogError(ex, "Recovery resume failed");
             host.SetStatus("Failed to resume the previous task.");
             await host.ShowErrorPopupAsync("Failed to resume the previous task.");
         }
@@ -157,8 +155,6 @@ public sealed class MainWindowLifecycleController
         };
         settings.UiState = new AppSettings.UiStateSettings
         {
-            ToolkitLogDrawerOpen = host.GetIsToolkitLogDrawerOpen(),
-            TrayPreviewLogDrawerOpen = host.GetIsTrayPreviewLogDrawerOpen(),
             ToolkitAdvancedOpen = host.GetIsToolkitAdvancedOpen()
         };
         settings.ModPreview = new AppSettings.ModPreviewSettings

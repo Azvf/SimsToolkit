@@ -1,25 +1,55 @@
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Recovery;
+using Microsoft.Extensions.Logging;
+using SimsModDesktop.Presentation.Diagnostics;
 
 namespace SimsModDesktop.Presentation.ViewModels;
 
 public sealed partial class MainWindowViewModel
 {
-    private Task RunToolkitAsync() =>
-        _executionController.RunToolkitAsync(CreateExecutionHost());
+    private Task RunToolkitAsync()
+    {
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} command={Command} action={Action} workspace={Workspace}",
+            LogEvents.UiCommandInvoke,
+            "invoke",
+            "main-window",
+            "RunToolkit",
+            SelectedAction,
+            Workspace);
+        return _executionController.RunToolkitAsync(CreateExecutionHost());
+    }
 
     private Task RunToolkitPlanAsync(CliExecutionPlan cliPlan, string? existingOperationId) =>
         _executionController.RunToolkitPlanAsync(CreateExecutionHost(), cliPlan, existingOperationId);
 
-    private Task RunTextureCompressionAsync() =>
-        _executionController.RunTextureCompressionAsync(CreateExecutionHost());
+    private Task RunTextureCompressionAsync()
+    {
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} command={Command} action={Action}",
+            LogEvents.UiCommandInvoke,
+            "invoke",
+            "main-window",
+            "RunTextureCompression",
+            SimsAction.TextureCompress);
+        return _executionController.RunTextureCompressionAsync(CreateExecutionHost());
+    }
 
     private Task RunTextureCompressionAsync(TextureCompressionExecutionPlan plan) =>
         _executionController.RunTextureCompressionAsync(CreateExecutionHost(), plan);
 
-    private Task RunTrayDependenciesAsync() =>
-        _executionController.RunTrayDependenciesAsync(CreateExecutionHost());
+    private Task RunTrayDependenciesAsync()
+    {
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} command={Command} action={Action}",
+            LogEvents.UiCommandInvoke,
+            "invoke",
+            "main-window",
+            "RunTrayDependencies",
+            SimsAction.TrayDependencies);
+        return _executionController.RunTrayDependenciesAsync(CreateExecutionHost());
+    }
 
     private Task RunTrayDependenciesPlanAsync(TrayDependenciesExecutionPlan plan, string? existingOperationId) =>
         _executionController.RunTrayDependenciesPlanAsync(CreateExecutionHost(), plan, existingOperationId);
@@ -55,8 +85,16 @@ public sealed partial class MainWindowViewModel
     private Task SaveResultHistoryAsync(SimsAction action, string source, string summary, string? relatedOperationId) =>
         _recoveryController.SaveResultHistoryAsync(action, source, summary, relatedOperationId);
 
-    private void CancelExecution() =>
+    private void CancelExecution()
+    {
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} command={Command}",
+            LogEvents.UiCommandInvoke,
+            "invoke",
+            "main-window",
+            "CancelExecution");
         _executionController.CancelExecution(CreateExecutionHost());
+    }
 
     private MainWindowExecutionHost CreateExecutionHost()
     {
@@ -106,12 +144,17 @@ public sealed partial class MainWindowViewModel
 
     private void ClearLog()
     {
-        ExecuteOnUi(_statusController.ClearLog);
+        // UI text log has been removed; retain host contract for controller compatibility.
     }
 
     private void AppendLog(string message)
     {
-        ExecuteOnUi(() => _statusController.AppendLog(message));
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        _logger.LogInformation("{UiMessage}", message.Trim());
     }
 
     public void AppendSystemLog(string message)

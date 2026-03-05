@@ -285,7 +285,7 @@ public sealed class MainWindowTrayPreviewController
         var startedAt = DateTimeOffset.Now;
         _trayPreviewCoordinator.Reset();
         host.ClearLog();
-        var timing = PerformanceLogScope.Begin(_logger, "traypreview.load", host.AppendLog);
+        var timing = PerformanceLogScope.Begin(_logger, "traypreview.load");
         ClearTrayPreview(host);
         host.SetBusy(true);
         host.SetTrayPreviewPageLoading(true);
@@ -391,7 +391,7 @@ public sealed class MainWindowTrayPreviewController
 
         CancelTrayPreviewThumbnailLoading();
         host.SetTrayPreviewPageLoading(true);
-        var timing = PerformanceLogScope.Begin(_logger, "traypreview.page.load", host.AppendLog, ("pageIndex", requestedPageIndex));
+        var timing = PerformanceLogScope.Begin(_logger, "traypreview.page.load", ("pageIndex", requestedPageIndex));
         try
         {
             var result = await _trayPreviewCoordinator.LoadPageAsync(requestedPageIndex);
@@ -485,7 +485,6 @@ public sealed class MainWindowTrayPreviewController
         var timing = PerformanceLogScope.Begin(
             _logger,
             "traypreview.thumbnails.batch",
-            host.AppendLog,
             ("stage", stageLabel),
             ("pageIndex", pageIndex),
             ("count", items.Count));

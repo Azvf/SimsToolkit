@@ -144,11 +144,6 @@ public sealed partial class MainWindowViewModel
         private set => _statusController.StatusMessage = value;
     }
 
-    public string LogText
-    {
-        get => _statusController.LogText;
-    }
-
     public string PreviewSummaryText
     {
         get => _trayPreviewStateController.SummaryText;
@@ -195,34 +190,6 @@ public sealed partial class MainWindowViewModel
             }
 
             _trayPreviewStateController.JumpPageText = value;
-        }
-    }
-
-    public bool IsToolkitLogDrawerOpen
-    {
-        get => _isToolkitLogDrawerOpen;
-        set
-        {
-            if (!SetProperty(ref _isToolkitLogDrawerOpen, value))
-            {
-                return;
-            }
-
-            NotifyCommandStates();
-        }
-    }
-
-    public bool IsTrayPreviewLogDrawerOpen
-    {
-        get => _isTrayPreviewLogDrawerOpen;
-        set
-        {
-            if (!SetProperty(ref _isTrayPreviewLogDrawerOpen, value))
-            {
-                return;
-            }
-
-            NotifyCommandStates();
         }
     }
 

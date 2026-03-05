@@ -14,6 +14,7 @@ public partial class App : Avalonia.Application
 {
     private ServiceProvider? _serviceProvider;
     private ILogger<App>? _logger;
+    internal static IServiceProvider? Services => (Current as App)?._serviceProvider;
 
     public override void Initialize()
     {
@@ -28,6 +29,7 @@ public partial class App : Avalonia.Application
         {
             _serviceProvider = BuildServiceProvider();
             _logger = _serviceProvider.GetRequiredService<ILogger<App>>();
+            AppStartupTelemetry.BindLogger(_logger);
             AppStartupTelemetry.RecordMilestone("service_provider.ready", _logger);
             var themeService = _serviceProvider.GetRequiredService<IAppThemeService>();
             var requestedTheme = themeService.LoadRequestedThemeAsync().GetAwaiter().GetResult();

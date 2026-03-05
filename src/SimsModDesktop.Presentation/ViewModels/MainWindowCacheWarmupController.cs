@@ -80,7 +80,6 @@ public sealed class MainWindowCacheWarmupController
             using var timing = PerformanceLogScope.Begin(
                 _logger,
                 "modcache.fastindex",
-                host.AppendLog,
                 ("modsRoot", normalizedRoot),
                 ("inventoryVersion", inventory.Snapshot.InventoryVersion),
                 ("changedCount", changedPackages.Length),
@@ -265,7 +264,6 @@ public sealed class MainWindowCacheWarmupController
         using var timing = PerformanceLogScope.Begin(
             _logger,
             "traycache.snapshot",
-            host.AppendLog,
             ("modsRoot", normalizedRoot),
             ("inventoryVersion", inventory.Snapshot.InventoryVersion),
             ("packageCount", inventory.Snapshot.Entries.Count));
@@ -273,7 +271,6 @@ public sealed class MainWindowCacheWarmupController
         using var loadTiming = PerformanceLogScope.Begin(
             _logger,
             "traycache.snapshot.load",
-            host.AppendLog,
             ("modsRoot", normalizedRoot),
             ("inventoryVersion", inventory.Snapshot.InventoryVersion));
         try
@@ -317,7 +314,6 @@ public sealed class MainWindowCacheWarmupController
         using var buildTiming = PerformanceLogScope.Begin(
             _logger,
             "traycache.snapshot.build",
-            host.AppendLog,
             ("modsRoot", normalizedRoot),
             ("inventoryVersion", inventory.Snapshot.InventoryVersion),
             ("packageCount", inventory.Snapshot.Entries.Count));
@@ -525,7 +521,6 @@ public sealed class MainWindowCacheWarmupController
         using var timing = PerformanceLogScope.Begin(
             _logger,
             "modcache.inventory",
-            host.AppendLog,
             ("modsRoot", normalizedRoot));
         host.AppendLog($"[modcache.inventory.start] modsRoot={normalizedRoot}");
 

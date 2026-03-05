@@ -226,7 +226,7 @@ public sealed class MainShellViewModel : ObservableObject
             return;
         }
 
-        var timing = PerformanceLogScope.Begin(_logger, "shell.initialize", _workspaceVm.AppendSystemLog);
+        var timing = PerformanceLogScope.Begin(_logger, "shell.initialize");
 
         await _workspaceVm.InitializeAsync();
         timing.Mark("workspace.initialized");
@@ -269,17 +269,46 @@ public sealed class MainShellViewModel : ObservableObject
     {
         if (string.IsNullOrWhiteSpace(sectionKey))
         {
+            _logger.LogWarning(
+                "{Event} status={Status} domain={Domain} section={Section} reason={Reason}",
+                LogEvents.UiPageSwitchBlocked,
+                "blocked",
+                "shell",
+                "<empty>",
+                "section-key-empty");
             return;
         }
 
         if (!Enum.TryParse<AppSection>(sectionKey, ignoreCase: true, out var section))
         {
+            _logger.LogWarning(
+                "{Event} status={Status} domain={Domain} section={Section} reason={Reason}",
+                LogEvents.UiPageSwitchBlocked,
+                "blocked",
+                "shell",
+                sectionKey,
+                "invalid-section-key");
             return;
         }
 
+        var previousSection = SelectedSection;
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} fromSection={FromSection} toSection={ToSection}",
+            LogEvents.UiPageSwitchStart,
+            "start",
+            "shell",
+            previousSection,
+            section);
         _navigation.SelectSection(section);
         SelectedSection = _navigation.SelectedSection;
         ApplyNavigationToWorkspace();
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} fromSection={FromSection} toSection={ToSection}",
+            LogEvents.UiPageSwitchDone,
+            "done",
+            "shell",
+            previousSection,
+            SelectedSection);
     }
 
     private void ApplyNavigationToWorkspace()
@@ -305,6 +334,12 @@ public sealed class MainShellViewModel : ObservableObject
 
     private async Task LaunchGameAsync()
     {
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} command={Command}",
+            LogEvents.UiCommandInvoke,
+            "invoke",
+            "shell",
+            "LaunchGame");
         await _systemOperationsController.LaunchGameAsync(GameExecutablePath);
     }
 
@@ -323,15 +358,35 @@ public sealed class MainShellViewModel : ObservableObject
     {
         if (HasAllCorePathsValid)
         {
+            _logger.LogInformation(
+                "{Event} status={Status} domain={Domain} command={Command} reason={Reason}",
+                LogEvents.UiCommandBlocked,
+                "blocked",
+                "shell",
+                "NavigateToSettingsForPathFix",
+                "all-paths-valid");
             return;
         }
 
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} command={Command}",
+            LogEvents.UiCommandInvoke,
+            "invoke",
+            "shell",
+            "NavigateToSettingsForPathFix");
         SelectSection(nameof(AppSection.Settings));
         Ts4RootFocusRequested?.Invoke(this, EventArgs.Empty);
     }
 
     private async Task ClearCacheAsync()
     {
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} command={Command} section={Section}",
+            LogEvents.UiCommandInvoke,
+            "invoke",
+            "shell",
+            "ClearCache",
+            SelectedSection);
         await _systemOperationsController.ClearCacheAsync(SelectedSection == AppSection.Tray);
     }
 

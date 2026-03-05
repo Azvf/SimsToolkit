@@ -7,19 +7,16 @@ internal sealed class PerformanceLogScope : IDisposable
 {
     private readonly ILogger _logger;
     private readonly string _operation;
-    private readonly Action<string>? _appendUiLog;
     private readonly Stopwatch _stopwatch;
     private bool _completed;
 
     private PerformanceLogScope(
         ILogger logger,
         string operation,
-        Action<string>? appendUiLog,
         IReadOnlyList<(string Key, object? Value)> tags)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _operation = string.IsNullOrWhiteSpace(operation) ? "unknown" : operation.Trim();
-        _appendUiLog = appendUiLog;
         _stopwatch = Stopwatch.StartNew();
 
         Write("start", null, tags);
@@ -32,10 +29,9 @@ internal sealed class PerformanceLogScope : IDisposable
     public static PerformanceLogScope Begin(
         ILogger logger,
         string operation,
-        Action<string>? appendUiLog = null,
         params (string Key, object? Value)[] tags)
     {
-        return new PerformanceLogScope(logger, operation, appendUiLog, tags ?? []);
+        return new PerformanceLogScope(logger, operation, tags ?? []);
     }
 
     public void Success(string? message = null, params (string Key, object? Value)[] tags)
@@ -124,28 +120,6 @@ internal sealed class PerformanceLogScope : IDisposable
                 context);
         }
 
-        if (_appendUiLog is null)
-        {
-            return;
-        }
-
-        var text = $"[timing][{status}] operation={_operation}";
-        if (_stopwatch.ElapsedMilliseconds > 0 || !string.Equals(status, "start", StringComparison.Ordinal))
-        {
-            text += $" elapsedMs={_stopwatch.ElapsedMilliseconds}";
-        }
-
-        if (!string.IsNullOrWhiteSpace(context))
-        {
-            text += " " + context;
-        }
-
-        if (exception is not null)
-        {
-            text += " error=" + exception.Message;
-        }
-
-        _appendUiLog(text);
     }
 
     private static IReadOnlyList<(string Key, object? Value)> CombineTags(

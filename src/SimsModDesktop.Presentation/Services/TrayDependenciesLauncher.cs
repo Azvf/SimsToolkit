@@ -1,3 +1,6 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using SimsModDesktop.Presentation.Diagnostics;
 using SimsModDesktop.Presentation.ViewModels;
 using SimsModDesktop.Presentation.ViewModels.Panels;
 
@@ -8,15 +11,18 @@ public sealed class TrayDependenciesLauncher : ITrayDependenciesLauncher
     private readonly MainWindowViewModel _workspaceVm;
     private readonly TrayDependenciesPanelViewModel _trayDependencies;
     private readonly INavigationService _navigation;
+    private readonly ILogger<TrayDependenciesLauncher> _logger;
 
     public TrayDependenciesLauncher(
         MainWindowViewModel workspaceVm,
         TrayDependenciesPanelViewModel trayDependencies,
-        INavigationService navigation)
+        INavigationService navigation,
+        ILogger<TrayDependenciesLauncher>? logger = null)
     {
         _workspaceVm = workspaceVm;
         _trayDependencies = trayDependencies;
         _navigation = navigation;
+        _logger = logger ?? NullLogger<TrayDependenciesLauncher>.Instance;
     }
 
     public async Task RunForTrayItemAsync(
@@ -38,6 +44,14 @@ public sealed class TrayDependenciesLauncher : ITrayDependenciesLauncher
 
         _trayDependencies.TrayPath = Path.GetFullPath(trayRootPath.Trim());
         _trayDependencies.TrayItemKey = trayItemKey.Trim();
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} source={Source} target={Target} trayItemKey={TrayItemKey}",
+            LogEvents.UiPageSwitchMark,
+            "mark",
+            "traydependencies",
+            "TrayPreview",
+            AppSection.Mods,
+            _trayDependencies.TrayItemKey);
         _navigation.SelectSection(AppSection.Mods);
         await _workspaceVm.RunTrayDependenciesForTrayItemAsync(_trayDependencies.TrayPath, _trayDependencies.TrayItemKey);
     }

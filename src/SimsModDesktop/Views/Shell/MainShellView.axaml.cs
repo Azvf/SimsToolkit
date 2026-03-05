@@ -3,6 +3,9 @@ using Avalonia.Data.Converters;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Threading;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Diagnostics;
 using SimsModDesktop.Presentation.ViewModels.Shell;
 
@@ -10,12 +13,15 @@ namespace SimsModDesktop.Views.Shell;
 
 public partial class MainShellView : UserControl
 {
+    private const string UiInteractionEvent = "ui.interaction.invoke";
     private MainShellViewModel? _shellVm;
     private bool _hasQueuedFirstContentVisible;
+    private readonly ILogger<MainShellView> _logger;
 
     public MainShellView()
     {
         InitializeComponent();
+        _logger = App.Services?.GetService<ILogger<MainShellView>>() ?? NullLogger<MainShellView>.Instance;
         DataContextChanged += OnDataContextChanged;
         AttachedToVisualTree += (_, _) => QueueFirstContentVisible();
     }
@@ -44,6 +50,15 @@ public partial class MainShellView : UserControl
     {
         if (e.Source is not Control sourceControl)
         {
+            _logger.LogDebug(
+                "{Event} status={Status} domain={Domain} control={Control} action={Action} handled={Handled} hasDataContextKey={HasDataContextKey}",
+                UiInteractionEvent,
+                "invoke",
+                "shell",
+                "ShellRoot",
+                "FocusRoot",
+                false,
+                _shellVm is not null);
             ShellRoot.Focus();
             return;
         }
@@ -54,6 +69,15 @@ public partial class MainShellView : UserControl
         {
             if (current is TextBox or ComboBox)
             {
+                _logger.LogDebug(
+                    "{Event} status={Status} domain={Domain} control={Control} action={Action} handled={Handled} hasDataContextKey={HasDataContextKey}",
+                    UiInteractionEvent,
+                    "invoke",
+                    "shell",
+                    current.GetType().Name,
+                    "KeepInputFocus",
+                    false,
+                    _shellVm is not null);
                 return;
             }
 
@@ -61,6 +85,15 @@ public partial class MainShellView : UserControl
         }
 
         ShellRoot.Focus();
+        _logger.LogDebug(
+            "{Event} status={Status} domain={Domain} control={Control} action={Action} handled={Handled} hasDataContextKey={HasDataContextKey}",
+            UiInteractionEvent,
+            "invoke",
+            "shell",
+            sourceControl.GetType().Name,
+            "FocusRoot",
+            false,
+            _shellVm is not null);
     }
 
     private void OnPathHealthPointerPressed(object? sender, PointerPressedEventArgs e)
@@ -72,6 +105,15 @@ public partial class MainShellView : UserControl
         }
 
         shellVm.NavigateToSettingsForPathFixCommand.Execute(null);
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} control={Control} action={Action} handled={Handled} hasDataContextKey={HasDataContextKey}",
+            UiInteractionEvent,
+            "invoke",
+            "shell",
+            "PathHealthBanner",
+            "NavigateToSettingsForPathFix",
+            true,
+            true);
         e.Handled = true;
     }
 

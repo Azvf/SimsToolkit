@@ -1,6 +1,9 @@
 using System.Collections.ObjectModel;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Application.Settings;
 using SimsModDesktop.PackageCore;
+using SimsModDesktop.Presentation.Diagnostics;
 using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 using SimsModDesktop.Presentation.ViewModels.Saves;
@@ -19,6 +22,7 @@ public sealed class ShellSettingsController : ObservableObject
     private readonly IAppThemeService _appThemeService;
     private readonly ITS4PathDiscoveryService _pathDiscovery;
     private readonly IPathIdentityResolver _pathIdentityResolver;
+    private readonly ILogger<ShellSettingsController> _logger;
     private readonly Dictionary<string, DebugConfigToggleItemViewModel> _debugConfigItemsByKey =
         new(StringComparer.OrdinalIgnoreCase);
 
@@ -42,7 +46,8 @@ public sealed class ShellSettingsController : ObservableObject
         IDebugConfigStore debugConfigStore,
         IAppThemeService appThemeService,
         ITS4PathDiscoveryService pathDiscovery,
-        IPathIdentityResolver? pathIdentityResolver = null)
+        IPathIdentityResolver? pathIdentityResolver = null,
+        ILogger<ShellSettingsController>? logger = null)
     {
         _workspaceVm = workspaceVm;
         _savesVm = savesVm;
@@ -52,6 +57,7 @@ public sealed class ShellSettingsController : ObservableObject
         _appThemeService = appThemeService;
         _pathDiscovery = pathDiscovery;
         _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
+        _logger = logger ?? NullLogger<ShellSettingsController>.Instance;
 
         DebugConfigItems = new ObservableCollection<DebugConfigToggleItemViewModel>();
         InitializeDebugConfigItems();
@@ -279,10 +285,23 @@ public sealed class ShellSettingsController : ObservableObject
 
     public async Task BrowseTs4RootAsync()
     {
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} command={Command}",
+            LogEvents.UiCommandInvoke,
+            "invoke",
+            "shell",
+            "BrowseTs4Root");
         var selectedPaths = await _fileDialogService.PickFolderPathsAsync("Select The Sims 4 Root", allowMultiple: false);
         var selectedPath = selectedPaths.FirstOrDefault();
         if (string.IsNullOrWhiteSpace(selectedPath))
         {
+            _logger.LogInformation(
+                "{Event} status={Status} domain={Domain} command={Command} reason={Reason}",
+                LogEvents.UiCommandBlocked,
+                "blocked",
+                "shell",
+                "BrowseTs4Root",
+                "no-selection");
             return;
         }
 
@@ -320,6 +339,12 @@ public sealed class ShellSettingsController : ObservableObject
             return;
         }
 
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} ts4Root={Ts4Root}",
+            LogEvents.ShellOpsPathsApplyStart,
+            "start",
+            "shell",
+            Ts4RootPath);
         _isApplyingDerivedPaths = true;
         try
         {
@@ -343,6 +368,15 @@ public sealed class ShellSettingsController : ObservableObject
                 _lastDerivedModsPath = string.Empty;
                 _lastDerivedTrayPath = string.Empty;
                 _lastDerivedSavesPath = string.Empty;
+                _logger.LogInformation(
+                    "{Event} status={Status} domain={Domain} ts4Root={Ts4Root} modsPath={ModsPath} trayPath={TrayPath} savesPath={SavesPath}",
+                    LogEvents.ShellOpsPathsApplyDone,
+                    "done",
+                    "shell",
+                    string.Empty,
+                    ModsPath,
+                    TrayPath,
+                    SavesPath);
                 return;
             }
 
@@ -353,6 +387,26 @@ public sealed class ShellSettingsController : ObservableObject
             ModsPath = _lastDerivedModsPath;
             TrayPath = _lastDerivedTrayPath;
             SavesPath = _lastDerivedSavesPath;
+            _logger.LogInformation(
+                "{Event} status={Status} domain={Domain} ts4Root={Ts4Root} modsPath={ModsPath} trayPath={TrayPath} savesPath={SavesPath}",
+                LogEvents.ShellOpsPathsApplyDone,
+                "done",
+                "shell",
+                Ts4RootPath,
+                ModsPath,
+                TrayPath,
+                SavesPath);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "{Event} status={Status} domain={Domain} ts4Root={Ts4Root}",
+                LogEvents.ShellOpsPathsApplyFail,
+                "fail",
+                "shell",
+                Ts4RootPath);
+            throw;
         }
         finally
         {

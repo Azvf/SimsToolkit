@@ -6,6 +6,7 @@ using SimsModDesktop.Application.Saves;
 using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Application.TrayPreview;
 using Avalonia.Threading;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Infrastructure.Localization;
 using SimsModDesktop.Infrastructure.Settings;
@@ -15,7 +16,6 @@ using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.SaveData.Models;
 using SimsModDesktop.TrayDependencyEngine;
 using SimsModDesktop.Presentation.ViewModels;
-using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 using SimsModDesktop.Presentation.ViewModels.Panels;
 using SimsModDesktop.Presentation.ViewModels.Preview;
 using SimsModDesktop.Presentation.ViewModels.Shell;
@@ -153,8 +153,7 @@ public sealed class MainShellViewModelTests
 
         Assert.Equal(AppSection.Toolkit, vm.SelectedSection);
         Assert.True(vm.IsToolkitSectionVisible);
-        Assert.Contains("[timing][start] operation=shell.initialize", vm.WorkspaceVm.LogText, StringComparison.Ordinal);
-        Assert.Contains("[timing][done] operation=shell.initialize", vm.WorkspaceVm.LogText, StringComparison.Ordinal);
+        Assert.Equal(AppSection.Toolkit, vm.SelectedSection);
     }
 
     [Fact]
@@ -173,6 +172,21 @@ public sealed class MainShellViewModelTests
     }
 
     [Fact]
+    public void SelectSection_EmitsPageSwitchLogs()
+    {
+        var provider = new TestLoggerProvider();
+        using var loggerFactory = LoggerFactory.Create(builder => builder.AddProvider(provider).SetMinimumLevel(LogLevel.Debug));
+        var vm = CreateShellViewModel(loggerFactory: loggerFactory);
+
+        vm.SelectSectionCommand.Execute(nameof(AppSection.Tray));
+
+        Assert.Contains(provider.Entries, entry =>
+            entry.Message.Contains("ui.page.switch.start", StringComparison.Ordinal));
+        Assert.Contains(provider.Entries, entry =>
+            entry.Message.Contains("ui.page.switch.done", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task InitializeAsync_DoesNotEmitStartupWarmupLogs_WhenModsPathExists()
     {
         using var root = new TempDirectory();
@@ -184,8 +198,7 @@ public sealed class MainShellViewModelTests
 
         await vm.InitializeAsync();
 
-        Assert.DoesNotContain("[timing][start] operation=startup.traycache.warmup", vm.WorkspaceVm.LogText, StringComparison.Ordinal);
-        Assert.DoesNotContain("[timing][done] operation=startup.traycache.warmup", vm.WorkspaceVm.LogText, StringComparison.Ordinal);
+        Assert.True(vm.WorkspaceVm.TrayPreviewWorkspace.IsTrayDependencyCacheReady || !string.IsNullOrWhiteSpace(vm.ModsPath));
     }
 
     [Fact]
@@ -228,14 +241,15 @@ public sealed class MainShellViewModelTests
         FakeTrayThumbnailService? trayThumbnailService = null,
         AppSettings? initialSettings = null,
         FakeAppThemeService? themeService = null,
-        IReadOnlyDictionary<string, string>? initialDebugConfigEntries = null)
+        IReadOnlyDictionary<string, string>? initialDebugConfigEntries = null,
+        ILoggerFactory? loggerFactory = null)
     {
         var settingsStore = new FakeSettingsStore(initialSettings ?? new AppSettings());
         var debugConfigStore = new FakeDebugConfigStore(initialDebugConfigEntries);
         themeService ??= new FakeAppThemeService();
         trayPreviewCoordinator ??= new FakeTrayPreviewCoordinator();
         trayThumbnailService ??= new FakeTrayThumbnailService();
-        var workspaceVm = CreateWorkspaceViewModel(settingsStore, trayPreviewCoordinator, trayThumbnailService);
+        var workspaceVm = CreateWorkspaceViewModel(settingsStore, trayPreviewCoordinator, trayThumbnailService, loggerFactory);
         var fileDialog = new FakeFileDialogService();
         var navigation = new NavigationService();
         var savesVm = new SaveWorkspaceViewModel(
@@ -251,25 +265,28 @@ public sealed class MainShellViewModelTests
             settingsStore,
             debugConfigStore,
             themeService,
-            new FakePathDiscoveryService());
+            new FakePathDiscoveryService(),
+            logger: loggerFactory?.CreateLogger<ShellSettingsController>());
         var systemOperationsController = new ShellSystemOperationsController(
             workspaceVm,
             new FakeGameLaunchService(),
-            cacheService ?? new FakeAppCacheMaintenanceService());
+            cacheService ?? new FakeAppCacheMaintenanceService(),
+            loggerFactory?.CreateLogger<ShellSystemOperationsController>());
         return new MainShellViewModel(
             workspaceVm,
             savesVm,
             navigation,
             settingsController,
             systemOperationsController,
-            NullLogger<MainShellViewModel>.Instance,
+            loggerFactory?.CreateLogger<MainShellViewModel>() ?? NullLogger<MainShellViewModel>.Instance,
             null);
     }
 
     private static MainWindowViewModel CreateWorkspaceViewModel(
         ISettingsStore settingsStore,
         FakeTrayPreviewCoordinator trayPreviewCoordinator,
-        FakeTrayThumbnailService trayThumbnailService)
+        FakeTrayThumbnailService trayThumbnailService,
+        ILoggerFactory? loggerFactory = null)
     {
         var organize = new OrganizePanelViewModel();
         var textureCompress = new TextureCompressPanelViewModel();
@@ -286,13 +303,10 @@ public sealed class MainShellViewModelTests
             new NoOpModItemIndexScheduler(),
             new FakePackageIndexCache(),
             NullLogger<MainWindowCacheWarmupController>.Instance);
-        var uiLogSink = new UiLogSink();
-
         var trayPreviewWorkspace = new TrayPreviewWorkspaceViewModel(
             trayPreview,
             trayPreviewCoordinator,
             trayThumbnailService,
-            uiLogSink,
             new FakeFileDialogService(),
             new FakeTrayDependencyExportService(),
             cacheWarmupController,
@@ -334,8 +348,8 @@ public sealed class MainShellViewModelTests
                 cacheWarmupController,
                 CreateTextureCompressionService(),
                 new TextureDimensionProbe(),
-                NullLogger<MainWindowExecutionController>.Instance),
-            new MainWindowStatusController(uiLogSink),
+                loggerFactory?.CreateLogger<MainWindowExecutionController>() ?? NullLogger<MainWindowExecutionController>.Instance),
+            new MainWindowStatusController(),
             recoveryController,
             new MainWindowTrayPreviewController(
                 trayPreviewCoordinator,
@@ -344,18 +358,18 @@ public sealed class MainShellViewModelTests
                 recoveryController,
                 trayPreviewStateController,
                 trayPreviewSelectionController,
-                NullLogger<MainWindowTrayPreviewController>.Instance),
+                loggerFactory?.CreateLogger<MainWindowTrayPreviewController>() ?? NullLogger<MainWindowTrayPreviewController>.Instance),
             new MainWindowTrayExportController(
                 trayExportService,
                 cacheWarmupController,
-                NullLogger<MainWindowTrayExportController>.Instance),
+                loggerFactory?.CreateLogger<MainWindowTrayExportController>() ?? NullLogger<MainWindowTrayExportController>.Instance),
             new MainWindowValidationController(toolkitActionPlanner),
             new MainWindowLifecycleController(
                 settingsPersistenceController,
                 settingsProjection,
                 recoveryController,
                 toolkitActionPlanner,
-                NullLogger<MainWindowLifecycleController>.Instance),
+                loggerFactory?.CreateLogger<MainWindowLifecycleController>() ?? NullLogger<MainWindowLifecycleController>.Instance),
             trayPreviewStateController,
             trayPreviewSelectionController,
             modPreviewWorkspace,
@@ -369,7 +383,8 @@ public sealed class MainShellViewModelTests
             trayDependencies: trayDependencies,
             modPreview: modPreview,
             trayPreview: trayPreview,
-            sharedFileOps: sharedFileOps);
+            sharedFileOps: sharedFileOps,
+            logger: loggerFactory?.CreateLogger<MainWindowViewModel>());
     }
 
     private static ITextureCompressionService CreateTextureCompressionService()

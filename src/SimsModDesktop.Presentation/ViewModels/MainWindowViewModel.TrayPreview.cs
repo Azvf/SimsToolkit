@@ -1,5 +1,7 @@
 using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Requests;
+using SimsModDesktop.Presentation.Diagnostics;
+using Microsoft.Extensions.Logging;
 using SimsModDesktop.Presentation.ViewModels.Panels;
 using SimsModDesktop.Presentation.ViewModels.Preview;
 
@@ -7,20 +9,55 @@ namespace SimsModDesktop.Presentation.ViewModels;
 
 public sealed partial class MainWindowViewModel
 {
-    private Task RunTrayPreviewAsync(TrayPreviewInput? explicitInput = null) =>
-        _trayPreviewController.RunTrayPreviewAsync(CreateTrayPreviewHost(), explicitInput);
+    private Task RunTrayPreviewAsync(TrayPreviewInput? explicitInput = null)
+    {
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} command={Command} workspace={Workspace} hasExplicitInput={HasExplicitInput}",
+            LogEvents.UiCommandInvoke,
+            "invoke",
+            "main-window",
+            "RunTrayPreview",
+            Workspace,
+            explicitInput is not null);
+        return _trayPreviewController.RunTrayPreviewAsync(CreateTrayPreviewHost(), explicitInput);
+    }
 
     private Task RunTrayPreviewCoreAsync(TrayPreviewInput? explicitInput = null, string? existingOperationId = null) =>
         _trayPreviewController.RunTrayPreviewCoreAsync(CreateTrayPreviewHost(), explicitInput, existingOperationId);
 
-    private Task LoadPreviousTrayPreviewPageAsync() =>
-        _trayPreviewController.LoadPreviousTrayPreviewPageAsync(CreateTrayPreviewHost());
+    private Task LoadPreviousTrayPreviewPageAsync()
+    {
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} command={Command}",
+            LogEvents.UiCommandInvoke,
+            "invoke",
+            "main-window",
+            "LoadPreviousTrayPreviewPage");
+        return _trayPreviewController.LoadPreviousTrayPreviewPageAsync(CreateTrayPreviewHost());
+    }
 
-    private Task LoadNextTrayPreviewPageAsync() =>
-        _trayPreviewController.LoadNextTrayPreviewPageAsync(CreateTrayPreviewHost());
+    private Task LoadNextTrayPreviewPageAsync()
+    {
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} command={Command}",
+            LogEvents.UiCommandInvoke,
+            "invoke",
+            "main-window",
+            "LoadNextTrayPreviewPage");
+        return _trayPreviewController.LoadNextTrayPreviewPageAsync(CreateTrayPreviewHost());
+    }
 
-    private Task JumpToTrayPreviewPageAsync() =>
-        _trayPreviewController.JumpToTrayPreviewPageAsync(CreateTrayPreviewHost());
+    private Task JumpToTrayPreviewPageAsync()
+    {
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} command={Command} jumpText={JumpText}",
+            LogEvents.UiCommandInvoke,
+            "invoke",
+            "main-window",
+            "JumpTrayPreviewPage",
+            PreviewJumpPageText);
+        return _trayPreviewController.JumpToTrayPreviewPageAsync(CreateTrayPreviewHost());
+    }
 
     private static bool TryParsePreviewJumpPage(string? rawValue, out int page)
     {

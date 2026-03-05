@@ -27,7 +27,7 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
     private bool _isBuildingCache;
     private string _statusText = "Set a valid Saves path to scan save slots.";
     private string _cacheStatusText = "No save selected.";
-    private string _exportLogText = "Save preview ready.";
+    private string _exportSummaryText = "Save preview ready.";
     private IReadOnlyList<SaveFileEntry> _saveFiles = Array.Empty<SaveFileEntry>();
     private SaveFileEntry? _selectedSave;
     private SaveHouseholdSnapshot? _currentSnapshot;
@@ -50,7 +50,7 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
         Filter = new SavePreviewFilterViewModel();
         Surface = new TrayLikePreviewSurfaceViewModel(trayPreviewCoordinator, trayThumbnailService);
         Surface.Configure(Filter, ResolveCurrentCacheRoot, PreviewSurfaceSelectionMode.Single);
-        Surface.SetFooter("Save Preview Log", ExportLogText);
+        Surface.SetFooter("Save Preview", ExportSummaryText);
         Surface.PropertyChanged += OnSurfacePropertyChanged;
 
         RefreshSavesCommand = new AsyncRelayCommand(RefreshSavesAsync, () => !IsBusy);
@@ -189,17 +189,17 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
         private set => SetProperty(ref _cacheStatusText, value);
     }
 
-    public string ExportLogText
+    public string ExportSummaryText
     {
-        get => _exportLogText;
+        get => _exportSummaryText;
         private set
         {
-            if (!SetProperty(ref _exportLogText, value))
+            if (!SetProperty(ref _exportSummaryText, value))
             {
                 return;
             }
 
-            Surface.SetFooter("Save Preview Log", value);
+            Surface.SetFooter("Save Preview", value);
         }
     }
 
@@ -701,7 +701,7 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
                 StatusText = string.IsNullOrWhiteSpace(result.Error)
                     ? "Export failed."
                     : result.Error;
-                ExportLogText = StatusText;
+                ExportSummaryText = StatusText;
                 return;
             }
 
@@ -722,7 +722,7 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
                 lines.AddRange(result.Warnings);
             }
 
-            ExportLogText = string.Join(Environment.NewLine, lines);
+            ExportSummaryText = string.Join(Environment.NewLine, lines);
         }
         finally
         {

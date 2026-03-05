@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.ComponentModel;
 using Avalonia.Threading;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.PackageCore;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Presentation.Dialogs;
@@ -12,15 +14,12 @@ namespace SimsModDesktop.Presentation.ViewModels.Preview;
 
 public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
 {
-    private const string TrayPreviewLogSource = "TrayPreview";
-    private const string TrayCacheLogSource = "TrayCache";
-
-    private readonly IUiLogSink _uiLogSink;
     private readonly IFileDialogService _fileDialogService;
     private readonly ITrayDependencyExportService _trayDependencyExportService;
     private readonly MainWindowCacheWarmupController _cacheWarmupController;
     private readonly TrayDependenciesPanelViewModel _trayDependencies;
     private readonly IPathIdentityResolver _pathIdentityResolver;
+    private readonly ILogger<TrayPreviewWorkspaceViewModel> _logger;
     private bool _isActive;
     private bool _hasPendingRefresh = true;
     private int _isExportRunning;
@@ -31,28 +30,26 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
     private int _trayDependencyCacheWarmupPercent;
     private string _trayDependencyCacheWarmupStageText = string.Empty;
     private string _trayDependencyCacheWarmupDetail = string.Empty;
-    private string _lastPersistedLogText = string.Empty;
-    private string _logText = "Tray preview ready.";
 
     public TrayPreviewWorkspaceViewModel(
         TrayPreviewPanelViewModel filter,
         ITrayPreviewCoordinator trayPreviewCoordinator,
         ITrayThumbnailService trayThumbnailService,
-        IUiLogSink uiLogSink,
         IFileDialogService fileDialogService,
         ITrayDependencyExportService trayDependencyExportService,
         MainWindowCacheWarmupController cacheWarmupController,
         TrayDependenciesPanelViewModel trayDependencies,
-        IPathIdentityResolver? pathIdentityResolver = null)
+        IPathIdentityResolver? pathIdentityResolver = null,
+        ILogger<TrayPreviewWorkspaceViewModel>? logger = null)
     {
         Filter = filter;
         Surface = new TrayLikePreviewSurfaceViewModel(trayPreviewCoordinator, trayThumbnailService);
-        _uiLogSink = uiLogSink;
         _fileDialogService = fileDialogService;
         _trayDependencyExportService = trayDependencyExportService;
         _cacheWarmupController = cacheWarmupController;
         _trayDependencies = trayDependencies;
         _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
+        _logger = logger ?? NullLogger<TrayPreviewWorkspaceViewModel>.Instance;
 
         OpenSelectedCommand = new RelayCommand(OpenSelected, () => Surface.HasSelection);
         ExportSelectedCommand = new AsyncRelayCommand(
@@ -69,7 +66,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
             new PreviewSurfaceActionButtonViewModel { Label = "Export Selected", Command = ExportSelectedCommand },
             new PreviewSurfaceActionButtonViewModel { Label = "Clear", Command = Surface.ClearSelectionCommand }
         ]);
-        Surface.SetFooter("Tray Preview Log", LogText);
+        Surface.SetFooter("Tray Preview", "Tray preview workspace ready.");
 
         Filter.PropertyChanged += OnFilterPropertyChanged;
         _trayDependencies.PropertyChanged += OnTrayDependenciesPropertyChanged;
@@ -192,21 +189,6 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         }
     }
 
-    public string LogText
-    {
-        get => _logText;
-        private set
-        {
-            if (!SetProperty(ref _logText, value))
-            {
-                return;
-            }
-
-            Surface.SetFooter("Tray Preview Log", value);
-            PersistTrayPreviewLog(value);
-        }
-    }
-
     private void OnFilterPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         if (string.Equals(e.PropertyName, nameof(TrayPreviewPanelViewModel.TrayRoot), StringComparison.Ordinal))
@@ -264,7 +246,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
             if (sourcePaths.Length == 1)
             {
                 LaunchExplorer(sourcePaths[0], selectFile: true);
-                LogText = $"Opened selected tray file location.{Environment.NewLine}{sourcePaths[0]}";
+                _logger.LogInformation("Opened selected tray source path={SourcePath}", sourcePaths[0]);
                 return;
             }
 
@@ -276,11 +258,11 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
                 LaunchExplorer(directory!, selectFile: false);
             }
 
-            LogText = $"Opened {sourcePaths.Length} selected tray source files.";
+            _logger.LogInformation("Opened selected tray source directories count={DirectoryCount}", sourcePaths.Length);
         }
         catch (Exception ex)
         {
-            LogText = "Failed to open selected tray path." + Environment.NewLine + ex.Message;
+            _logger.LogError(ex, "Failed to open selected tray path");
         }
     }
 
@@ -338,7 +320,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
                     0,
                     "Missing Mods Path",
                     "Set a valid Mods Path in Settings before using Tray dependency export.");
-                LogText = "Tray dependency cache is unavailable: Mods Path is missing.";
+                _logger.LogWarning("Tray workspace warmup skipped because Mods Path is missing");
             }).ConfigureAwait(false);
             return;
         }
@@ -397,7 +379,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
                     0,
                     "Warmup Failed",
                     "Tray dependency cache warmup failed.");
-                LogText = "Tray dependency cache warmup failed." + Environment.NewLine + ex.Message;
+                _logger.LogError(ex, "Tray dependency cache warmup failed");
             }).ConfigureAwait(false);
         }
     }
@@ -406,7 +388,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
     {
         if (Interlocked.Exchange(ref _isExportRunning, 1) == 1)
         {
-            LogText = "Export is already running. Please wait for completion.";
+            _logger.LogInformation("Tray export request ignored because export is already running");
             return;
         }
 
@@ -421,13 +403,13 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
             var modsPath = ResolveDirectoryPath(_trayDependencies.ModsPath ?? string.Empty);
             if (string.IsNullOrWhiteSpace(modsPath) || !Directory.Exists(modsPath))
             {
-                LogText = "Mods Path is missing. Set a valid Mods Path before exporting referenced mods.";
+                _logger.LogWarning("Tray export blocked because Mods Path is missing");
                 return;
             }
 
             if (!_cacheWarmupController.TryGetReadyTraySnapshot(modsPath, out var preloadedSnapshot))
             {
-                LogText = "Tray dependency cache is not ready. Re-open the Tray page and wait for cache warmup to finish.";
+                _logger.LogWarning("Tray export blocked because tray dependency cache is not ready");
                 return;
             }
 
@@ -523,7 +505,11 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
             }
 
             messages.Add($"Summary: selected={selectedItems.Count}, exportedItems={exportedItemCount}, exportedMods={exportedModsTotal}");
-            LogText = string.Join(Environment.NewLine, messages);
+            _logger.LogInformation(
+                "Tray workspace export summary selected={SelectedCount} exportedItems={ExportedItems} exportedMods={ExportedMods}",
+                selectedItems.Count,
+                exportedItemCount,
+                exportedModsTotal);
         }
         finally
         {
@@ -620,38 +606,6 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         return SupportedTrayExportExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
     }
 
-    private void PersistTrayPreviewLog(string text)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
-            _lastPersistedLogText = string.Empty;
-            return;
-        }
-
-        if (_lastPersistedLogText.Length == 0)
-        {
-            _uiLogSink.Append(TrayPreviewLogSource, text);
-            _lastPersistedLogText = text;
-            return;
-        }
-
-        if (text.StartsWith(_lastPersistedLogText, StringComparison.Ordinal))
-        {
-            var delta = text[_lastPersistedLogText.Length..];
-            if (!string.IsNullOrWhiteSpace(delta))
-            {
-                _uiLogSink.Append(TrayPreviewLogSource, delta);
-            }
-
-            _lastPersistedLogText = text;
-            return;
-        }
-
-        _uiLogSink.Append(TrayPreviewLogSource, "[log-reset]");
-        _uiLogSink.Append(TrayPreviewLogSource, text);
-        _lastPersistedLogText = text;
-    }
-
     private MainWindowCacheWarmupHost CreateCacheWarmupHost(int operationId, CancellationToken cancellationToken)
     {
         return new MainWindowCacheWarmupHost
@@ -678,7 +632,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
 
                 if (!string.IsNullOrWhiteSpace(message))
                 {
-                    _uiLogSink.Append(TrayCacheLogSource, message);
+                    _logger.LogInformation("{WarmupMessage}", message);
                 }
             }
         };

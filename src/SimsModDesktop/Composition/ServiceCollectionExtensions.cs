@@ -5,6 +5,7 @@ using SimsModDesktop.Application.ServiceRegistration;
 using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.Infrastructure.ServiceRegistration;
 using SimsModDesktop.Infrastructure.Windowing;
+using SimsModDesktop.Logging;
 using SimsModDesktop.PackageCore;
 using SimsModDesktop.Presentation.ServiceRegistration;
 using SimsModDesktop.TrayDependencyEngine;
@@ -21,6 +22,7 @@ internal static class ServiceCollectionExtensions
         services.AddLogging(builder =>
         {
             builder.AddConsole();
+            builder.AddProvider(new StructuredFileLoggerProvider(new StructuredFileLoggerOptions()));
             builder.SetMinimumLevel(LogLevel.Information);
         });
 

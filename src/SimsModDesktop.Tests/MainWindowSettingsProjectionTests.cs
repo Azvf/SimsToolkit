@@ -20,7 +20,7 @@ public sealed class MainWindowSettingsProjectionTests
             },
             UiState = new AppSettings.UiStateSettings
             {
-                ToolkitLogDrawerOpen = true
+                ToolkitAdvancedOpen = true
             }
         };
 
@@ -31,6 +31,6 @@ public sealed class MainWindowSettingsProjectionTests
         Assert.Equal(AppWorkspace.TrayPreview, resolved.Workspace);
         Assert.True(resolved.WhatIf);
         Assert.True(resolved.SharedFileOps.SkipPruneEmptyDirs);
-        Assert.True(resolved.UiState.ToolkitLogDrawerOpen);
+        Assert.True(resolved.UiState.ToolkitAdvancedOpen);
     }
 }

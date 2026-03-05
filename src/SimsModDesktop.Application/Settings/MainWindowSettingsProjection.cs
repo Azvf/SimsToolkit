@@ -70,8 +70,6 @@ public sealed class MainWindowSettingsProjection : IMainWindowSettingsProjection
         var source = value ?? new AppSettings.UiStateSettings();
         return new AppSettings.UiStateSettings
         {
-            ToolkitLogDrawerOpen = source.ToolkitLogDrawerOpen,
-            TrayPreviewLogDrawerOpen = source.TrayPreviewLogDrawerOpen,
             ToolkitAdvancedOpen = source.ToolkitAdvancedOpen
         };
     }

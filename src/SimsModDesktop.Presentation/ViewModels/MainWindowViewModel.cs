@@ -6,6 +6,8 @@ using System.Diagnostics;
 using System.Text.Json;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Localization;
 using SimsModDesktop.Application.Modules;
@@ -17,6 +19,7 @@ using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Application.TextureProcessing;
 using SimsModDesktop.Application.Validation;
 using SimsModDesktop.Presentation.Dialogs;
+using SimsModDesktop.Presentation.Diagnostics;
 using SimsModDesktop.TrayDependencyEngine;
 using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 using SimsModDesktop.Presentation.ViewModels.Panels;
@@ -39,6 +42,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private readonly MainWindowLifecycleController _lifecycleController;
     private readonly MainWindowTrayPreviewStateController _trayPreviewStateController;
     private readonly MainWindowTrayPreviewSelectionController _trayPreviewSelectionController;
+    private readonly ILogger<MainWindowViewModel> _logger;
 
     private readonly MainWindowStatusController _statusController;
     private CancellationTokenSource? _executionCts;
@@ -50,8 +54,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private bool _whatIf;
     private string _validationSummaryText = string.Empty;
     private bool _hasValidationErrors;
-    private bool _isToolkitLogDrawerOpen;
-    private bool _isTrayPreviewLogDrawerOpen;
     private bool _isToolkitAdvancedOpen;
     private bool _isInitialized;
     private bool _isTrayExportQueueExpanded = true;
@@ -81,7 +83,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         TrayDependenciesPanelViewModel trayDependencies,
         ModPreviewPanelViewModel modPreview,
         TrayPreviewPanelViewModel trayPreview,
-        SharedFileOpsPanelViewModel sharedFileOps)
+        SharedFileOpsPanelViewModel sharedFileOps,
+        ILogger<MainWindowViewModel>? logger = null)
     {
         _fileDialogService = fileDialogService;
         _confirmationDialogService = confirmationDialogService;
@@ -96,6 +99,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _lifecycleController = lifecycleController;
         _trayPreviewStateController = trayPreviewStateController;
         _trayPreviewSelectionController = trayPreviewSelectionController;
+        _logger = logger ?? NullLogger<MainWindowViewModel>.Instance;
         ModPreviewWorkspace = modPreviewWorkspace;
         TrayPreviewWorkspace = trayPreviewWorkspace;
 
@@ -154,7 +158,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
         GoBackTrayPreviewDetailCommand = new RelayCommand(GoBackTrayPreviewDetails, () => CanGoBackTrayPreviewDetail);
         CloseTrayPreviewDetailCommand = new RelayCommand(CloseTrayPreviewDetails, () => IsTrayPreviewDetailVisible);
         ToggleToolkitAdvancedCommand = new RelayCommand(() => IsToolkitAdvancedOpen = !IsToolkitAdvancedOpen, () => IsToolkitWorkspace);
-        ClearLogCommand = new RelayCommand(ClearLog, () => !string.IsNullOrWhiteSpace(LogText));
 
         _localization.PropertyChanged += OnLocalizationPropertyChanged;
         _statusController.PropertyChanged += OnStatusControllerPropertyChanged;
@@ -239,7 +242,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public RelayCommand GoBackTrayPreviewDetailCommand { get; }
     public RelayCommand CloseTrayPreviewDetailCommand { get; }
     public RelayCommand ToggleToolkitAdvancedCommand { get; }
-    public RelayCommand ClearLogCommand { get; }
 
     private void NotifyCommandStates()
     {
@@ -266,7 +268,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
         PreviewNextPageCommand.NotifyCanExecuteChanged();
         PreviewJumpPageCommand.NotifyCanExecuteChanged();
         ToggleToolkitAdvancedCommand.NotifyCanExecuteChanged();
-        ClearLogCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(HasValidModPreviewPath));
         OnPropertyChanged(nameof(ModPreviewPathHintText));
         OnPropertyChanged(nameof(HasValidTrayPreviewPath));
@@ -295,9 +296,24 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         if (string.IsNullOrWhiteSpace(target))
         {
+            _logger.LogWarning(
+                "{Event} status={Status} domain={Domain} command={Command} reason={Reason}",
+                LogEvents.UiCommandBlocked,
+                "blocked",
+                "main-window",
+                "BrowseFolder",
+                "target-empty");
             ReportUnsupportedBrowseTarget("folder", target);
             return;
         }
+
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} command={Command} target={Target}",
+            LogEvents.UiCommandInvoke,
+            "invoke",
+            "main-window",
+            "BrowseFolder",
+            target);
 
         switch (target)
         {
@@ -335,9 +351,25 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         if (!string.Equals(target, "FindDupOutputCsv", StringComparison.Ordinal))
         {
+            _logger.LogWarning(
+                "{Event} status={Status} domain={Domain} command={Command} target={Target} reason={Reason}",
+                LogEvents.UiCommandBlocked,
+                "blocked",
+                "main-window",
+                "BrowseCsv",
+                target ?? string.Empty,
+                "unsupported-target");
             ReportUnsupportedBrowseTarget("csv", target);
             return;
         }
+
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} command={Command} target={Target}",
+            LogEvents.UiCommandInvoke,
+            "invoke",
+            "main-window",
+            "BrowseCsv",
+            target);
 
         var path = await _fileDialogService.PickCsvSavePathAsync("Select OutputCsv path", "finddup-duplicates.csv");
         if (!string.IsNullOrWhiteSpace(path))
@@ -350,7 +382,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         var normalizedTarget = string.IsNullOrWhiteSpace(target) ? "<empty>" : target.Trim();
         StatusMessage = LF("status.unsupportedBrowseTarget", kind, normalizedTarget);
-        AppendLog($"[ui] unsupported {kind} browse target: {normalizedTarget}");
+        _logger.LogInformation("UI unsupported browse target kind={Kind} target={Target}", kind, normalizedTarget);
     }
 
     private async Task BrowseSingleFolderAsync(string title, Action<string> setter)
@@ -359,7 +391,25 @@ public sealed partial class MainWindowViewModel : ObservableObject
         if (paths.Count > 0)
         {
             setter(paths[0]);
+            _logger.LogInformation(
+                "{Event} status={Status} domain={Domain} command={Command} title={Title} selectedPath={SelectedPath}",
+                LogEvents.UiCommandInvoke,
+                "done",
+                "main-window",
+                "BrowseFolder",
+                title,
+                paths[0]);
+            return;
         }
+
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} command={Command} title={Title} reason={Reason}",
+            LogEvents.UiCommandBlocked,
+            "blocked",
+            "main-window",
+            "BrowseFolder",
+            title,
+            "no-selection");
     }
 
     private void AddMergeSourcePath(MergeSourcePathEntryViewModel? anchorEntry)
@@ -407,7 +457,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         if (!confirmed)
         {
             StatusMessage = L("status.dangerCancelled");
-            AppendLog("[cancel] cleanup confirmation rejected");
+            _logger.LogInformation("UI cleanup confirmation rejected action={Action}", SelectedAction);
             return false;
         }
 
@@ -433,7 +483,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            AppendLog("[ui] failed to show error dialog: " + ex.Message);
+            _logger.LogError(ex, "UI failed to show error dialog");
         }
     }
 

@@ -65,6 +65,13 @@ public sealed class MainWindowExecutionController
 
         if (!_toolkitActionPlanner.TryBuildToolkitCliPlan(host.CreatePlanBuilderState(), out var cliPlan, out var error))
         {
+            _logger.LogWarning(
+                "{Event} status={Status} domain={Domain} command={Command} reason={Reason}",
+                LogEvents.UiCommandBlocked,
+                "blocked",
+                "main-window",
+                "RunToolkit",
+                error);
             host.SetStatus(error);
             host.AppendLog("[validation] " + error);
             await host.ShowErrorPopupAsync(host.Localize("status.validationFailed"));
@@ -86,6 +93,13 @@ public sealed class MainWindowExecutionController
 
         if (host.GetExecutionCts() is not null)
         {
+            _logger.LogWarning(
+                "{Event} status={Status} domain={Domain} command={Command} reason={Reason}",
+                LogEvents.UiCommandBlocked,
+                "blocked",
+                "main-window",
+                "RunToolkitPlan",
+                "execution-already-running");
             host.SetStatus(host.Localize("status.executionAlreadyRunning"));
             return;
         }
@@ -102,7 +116,6 @@ public sealed class MainWindowExecutionController
         var timing = PerformanceLogScope.Begin(
             _logger,
             "toolkit.execute",
-            host.AppendLog,
             ("action", input.Action.ToString()));
         host.SetBusy(true);
         host.SetProgress(true, 0, host.Localize("progress.preparing"));
@@ -201,6 +214,13 @@ public sealed class MainWindowExecutionController
 
         if (!_toolkitActionPlanner.TryBuildTextureCompressionPlan(host.CreatePlanBuilderState(), out var plan, out var error))
         {
+            _logger.LogWarning(
+                "{Event} status={Status} domain={Domain} command={Command} reason={Reason}",
+                LogEvents.UiCommandBlocked,
+                "blocked",
+                "main-window",
+                "RunTextureCompression",
+                error);
             host.SetStatus(error);
             host.AppendLog("[validation] " + error);
             await host.ShowErrorPopupAsync(host.Localize("status.validationFailed"));
@@ -217,13 +237,20 @@ public sealed class MainWindowExecutionController
 
         if (host.GetExecutionCts() is not null)
         {
+            _logger.LogWarning(
+                "{Event} status={Status} domain={Domain} command={Command} reason={Reason}",
+                LogEvents.UiCommandBlocked,
+                "blocked",
+                "main-window",
+                "RunTextureCompression",
+                "execution-already-running");
             host.SetStatus(host.Localize("status.executionAlreadyRunning"));
             return;
         }
 
         using var executionCts = new CancellationTokenSource();
         host.SetExecutionCts(executionCts);
-        var timing = PerformanceLogScope.Begin(_logger, "texture.compress", host.AppendLog);
+        var timing = PerformanceLogScope.Begin(_logger, "texture.compress");
         host.SetBusy(true);
         host.SetProgress(true, 0, "Compressing texture...");
         host.SetStatus(host.Localize("status.running"));
@@ -234,6 +261,14 @@ public sealed class MainWindowExecutionController
             var request = plan.Request;
             if (request.WhatIf)
             {
+                _logger.LogInformation(
+                    "{Event} status={Status} domain={Domain} source={Source} target={Target} preferredFormat={PreferredFormat}",
+                    LogEvents.TextureCompressWhatIf,
+                    "mark",
+                    "texture",
+                    request.SourcePath,
+                    request.OutputPath,
+                    request.PreferredFormat?.ToString() ?? string.Empty);
                 host.TextureCompress.LastOutputPath = request.OutputPath;
                 host.TextureCompress.LastRunSummary = $"WhatIf: would compress '{Path.GetFileName(request.SourcePath)}' to '{Path.GetFileName(request.OutputPath)}'.";
                 host.AppendLog("[whatif] source=" + request.SourcePath);
@@ -243,7 +278,7 @@ public sealed class MainWindowExecutionController
                 return;
             }
 
-            using var readTiming = PerformanceLogScope.Begin(_logger, "texture.compress.read-source", host.AppendLog);
+            using var readTiming = PerformanceLogScope.Begin(_logger, "texture.compress.read-source");
             var sourceBytes = await File.ReadAllBytesAsync(request.SourcePath, executionCts.Token);
             readTiming.Success(null, ("bytes", sourceBytes.Length));
             if (!TryResolveTextureContainerKind(request.SourcePath, out var containerKind, out var containerError))
@@ -251,14 +286,14 @@ public sealed class MainWindowExecutionController
                 throw new InvalidOperationException(containerError);
             }
 
-            using var probeTiming = PerformanceLogScope.Begin(_logger, "texture.compress.probe-dimensions", host.AppendLog);
+            using var probeTiming = PerformanceLogScope.Begin(_logger, "texture.compress.probe-dimensions");
             if (!_textureDimensionProbe.TryGetDimensions(containerKind, sourceBytes, out var sourceWidth, out var sourceHeight, out var probeError))
             {
                 throw new InvalidOperationException(probeError);
             }
             probeTiming.Success(null, ("width", sourceWidth), ("height", sourceHeight));
 
-            using var compressTiming = PerformanceLogScope.Begin(_logger, "texture.compress.compress", host.AppendLog);
+            using var compressTiming = PerformanceLogScope.Begin(_logger, "texture.compress.compress");
             var result = _textureCompressionService.Compress(new TextureCompressionRequest
             {
                 Source = new TextureSourceDescriptor
@@ -291,7 +326,7 @@ public sealed class MainWindowExecutionController
                 Directory.CreateDirectory(outputDirectory);
             }
 
-            using var writeTiming = PerformanceLogScope.Begin(_logger, "texture.compress.write-output", host.AppendLog);
+            using var writeTiming = PerformanceLogScope.Begin(_logger, "texture.compress.write-output");
             await File.WriteAllBytesAsync(request.OutputPath, result.TranscodeResult.EncodedBytes, executionCts.Token);
             writeTiming.Success(null, ("bytes", result.TranscodeResult.EncodedBytes.Length));
 
@@ -313,6 +348,16 @@ public sealed class MainWindowExecutionController
         }
         catch (Exception ex)
         {
+            _logger.LogError(
+                ex,
+                "{Event} status={Status} domain={Domain} source={Source} target={Target} preferredFormat={PreferredFormat} exceptionType={ExceptionType}",
+                "texture.compress.fail",
+                "fail",
+                "texture",
+                plan.Request.SourcePath,
+                plan.Request.OutputPath,
+                plan.Request.PreferredFormat?.ToString() ?? string.Empty,
+                ex.GetType().Name);
             host.AppendLog("[error] " + ex.Message);
             host.SetStatus("Texture compression failed.");
             host.SetProgress(false, 0, "Texture compression failed.");
@@ -333,6 +378,13 @@ public sealed class MainWindowExecutionController
 
         if (!_toolkitActionPlanner.TryBuildTrayDependenciesPlan(host.CreatePlanBuilderState(), out var plan, out var error))
         {
+            _logger.LogWarning(
+                "{Event} status={Status} domain={Domain} command={Command} reason={Reason}",
+                LogEvents.UiCommandBlocked,
+                "blocked",
+                "main-window",
+                "RunTrayDependencies",
+                error);
             host.SetStatus(error);
             host.AppendLog("[validation] " + error);
             await host.ShowErrorPopupAsync(host.Localize("status.validationFailed"));
@@ -349,6 +401,13 @@ public sealed class MainWindowExecutionController
 
         if (host.GetExecutionCts() is not null)
         {
+            _logger.LogWarning(
+                "{Event} status={Status} domain={Domain} command={Command} reason={Reason}",
+                LogEvents.UiCommandBlocked,
+                "blocked",
+                "main-window",
+                "RunTrayDependencies",
+                "execution-already-running");
             host.SetStatus(host.Localize("status.executionAlreadyRunning"));
             return;
         }
@@ -360,7 +419,7 @@ public sealed class MainWindowExecutionController
         var recoveryCompleted = false;
 
         host.ClearLog();
-        var timing = PerformanceLogScope.Begin(_logger, "traydependencies.analyze", host.AppendLog);
+        var timing = PerformanceLogScope.Begin(_logger, "traydependencies.analyze");
         host.SetBusy(true);
         host.SetProgress(true, 0, "Preparing tray dependency analysis...");
         host.AppendLog("[start] " + startedAt.ToString("yyyy-MM-dd HH:mm:ss"));

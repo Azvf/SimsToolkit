@@ -20,10 +20,6 @@ internal sealed class MainWindowLifecycleHost
     public required Action<SimsAction> SetSelectedAction { get; init; }
     public required Func<AppWorkspace> GetWorkspace { get; init; }
     public required Action<AppWorkspace> SetWorkspace { get; init; }
-    public required Func<bool> GetIsToolkitLogDrawerOpen { get; init; }
-    public required Action<bool> SetIsToolkitLogDrawerOpen { get; init; }
-    public required Func<bool> GetIsTrayPreviewLogDrawerOpen { get; init; }
-    public required Action<bool> SetIsTrayPreviewLogDrawerOpen { get; init; }
     public required Func<bool> GetIsToolkitAdvancedOpen { get; init; }
     public required Action<bool> SetIsToolkitAdvancedOpen { get; init; }
     public required IReadOnlyList<SimsAction> AvailableToolkitActions { get; init; }

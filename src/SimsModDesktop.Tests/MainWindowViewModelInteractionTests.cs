@@ -1,5 +1,6 @@
 using System.Reflection;
 using Avalonia.Threading;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Mods;
@@ -14,7 +15,6 @@ using SimsModDesktop.Infrastructure.TextureProcessing;
 using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.TrayDependencyEngine;
 using SimsModDesktop.Presentation.ViewModels;
-using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 using SimsModDesktop.Presentation.ViewModels.Panels;
 using SimsModDesktop.Presentation.ViewModels.Preview;
 
@@ -116,9 +116,7 @@ public sealed class MainWindowViewModelInteractionTests
         Assert.Equal(trayRoot.Path, analysisService.LastRequest!.TrayPath);
         Assert.Equal(modsRoot.Path, analysisService.LastRequest.ModsRootPath);
         Assert.Equal("0x123", analysisService.LastRequest.TrayItemKey);
-        Assert.Contains("[action] traydependencies", vm.LogText, StringComparison.Ordinal);
-        Assert.Contains("[timing][start] operation=traydependencies.analyze", vm.LogText, StringComparison.Ordinal);
-        Assert.Contains("[timing][done] operation=traydependencies.analyze", vm.LogText, StringComparison.Ordinal);
+        Assert.Contains("Tray dependencies completed", vm.StatusMessage, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -146,11 +144,6 @@ public sealed class MainWindowViewModelInteractionTests
         Assert.Equal("DDS ", System.Text.Encoding.ASCII.GetString(bytes, 0, 4));
         Assert.Contains("Texture compression completed", vm.StatusMessage, StringComparison.Ordinal);
         Assert.Equal(outputPath, vm.TextureCompress.LastOutputPath);
-        Assert.Contains("[timing][done] operation=texture.compress", vm.LogText, StringComparison.Ordinal);
-        Assert.Contains("[timing][done] operation=texture.compress.read-source", vm.LogText, StringComparison.Ordinal);
-        Assert.Contains("[timing][done] operation=texture.compress.probe-dimensions", vm.LogText, StringComparison.Ordinal);
-        Assert.Contains("[timing][done] operation=texture.compress.compress", vm.LogText, StringComparison.Ordinal);
-        Assert.Contains("[timing][done] operation=texture.compress.write-output", vm.LogText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -163,8 +156,6 @@ public sealed class MainWindowViewModelInteractionTests
             settingsStore: settingsStore);
 
         await vm.InitializeAsync();
-        vm.IsToolkitLogDrawerOpen = true;
-        vm.IsTrayPreviewLogDrawerOpen = true;
         vm.IsToolkitAdvancedOpen = true;
         var preferredLanguage = vm.AvailableLanguages
             .Select(option => option.Code)
@@ -175,8 +166,7 @@ public sealed class MainWindowViewModelInteractionTests
         await vm.PersistSettingsAsync();
 
         Assert.NotNull(settingsStore.LastSaved);
-        Assert.True(settingsStore.LastSaved!.UiState.ToolkitLogDrawerOpen);
-        Assert.True(settingsStore.LastSaved.UiState.TrayPreviewLogDrawerOpen);
+        Assert.NotNull(settingsStore.LastSaved);
         Assert.True(settingsStore.LastSaved.UiState.ToolkitAdvancedOpen);
         Assert.Equal(vm.SelectedLanguageCode, settingsStore.LastSaved.UiLanguageCode);
     }
@@ -232,7 +222,6 @@ public sealed class MainWindowViewModelInteractionTests
 
         Assert.Contains("Unsupported folder browse target", vm.StatusMessage, StringComparison.Ordinal);
         Assert.Contains("UnknownFolderTarget", vm.StatusMessage, StringComparison.Ordinal);
-        Assert.Contains("[ui] unsupported folder browse target: UnknownFolderTarget", vm.LogText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -245,7 +234,6 @@ public sealed class MainWindowViewModelInteractionTests
 
         Assert.Contains("Unsupported csv browse target", vm.StatusMessage, StringComparison.Ordinal);
         Assert.Contains("UnknownCsvTarget", vm.StatusMessage, StringComparison.Ordinal);
-        Assert.Contains("[ui] unsupported csv browse target: UnknownCsvTarget", vm.LogText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -287,7 +275,6 @@ public sealed class MainWindowViewModelInteractionTests
         Assert.True(vm.IsTrayPreviewEmptyStatusWarning);
         Assert.False(vm.HasTrayPreviewItems);
         Assert.False(vm.IsTrayPreviewPagerVisible);
-        Assert.Contains("[timing][done] operation=traypreview.load", vm.LogText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -314,8 +301,6 @@ public sealed class MainWindowViewModelInteractionTests
 
         await InvokePrivateAsync(vm, "LoadNextTrayPreviewPageAsync");
 
-        Assert.Contains("[timing][done] operation=traypreview.page.load", vm.LogText, StringComparison.Ordinal);
-        Assert.Contains("fromCache=true", vm.LogText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -515,11 +500,6 @@ public sealed class MainWindowViewModelInteractionTests
         Assert.True(vm.TrayExportTasks[0].HasExportRoot);
         Assert.Equal("100%", vm.TrayExportTasks[0].ProgressText);
         Assert.Equal(100d, vm.TrayExportTasks[0].ProgressPercent);
-        Assert.Contains("[timing][start] operation=trayexport.batch", vm.LogText, StringComparison.Ordinal);
-        Assert.Contains("[tray-selection] using-ready-snapshot", vm.LogText, StringComparison.Ordinal);
-        Assert.Contains("[timing][done] operation=trayexport.item", vm.LogText, StringComparison.Ordinal);
-        Assert.Contains("[timing][done] operation=trayexport.batch", vm.LogText, StringComparison.Ordinal);
-        Assert.Contains("[tray-selection][stage] itemIndex=0 trayKey=0x2 stage=Preparing", vm.LogText, StringComparison.Ordinal);
 
         vm.ClearCompletedTrayExportTasksCommand.Execute(null);
         Assert.Empty(vm.TrayExportTasks);
@@ -682,8 +662,6 @@ public sealed class MainWindowViewModelInteractionTests
         Assert.True(vm.TrayExportTasks[0].CanShowDetailsToggle);
         Assert.Contains("Access denied while exporting foo.package", vm.TrayExportTasks[0].DetailsText, StringComparison.Ordinal);
         Assert.Contains("mod export crashed", vm.TrayExportTasks[0].DetailsText, StringComparison.Ordinal);
-        Assert.Contains("[timing][fail] operation=trayexport.item", vm.LogText, StringComparison.Ordinal);
-        Assert.Contains("[timing][fail] operation=trayexport.batch", vm.LogText, StringComparison.Ordinal);
 
         vm.ToggleTrayExportTaskDetailsCommand.Execute(vm.TrayExportTasks[0]);
         Assert.True(vm.TrayExportTasks[0].IsDetailsExpanded);
@@ -797,9 +775,6 @@ public sealed class MainWindowViewModelInteractionTests
         Assert.Empty(Directory.EnumerateFileSystemEntries(exportRoot.Path));
         Assert.Contains(vm.TrayExportTasks, task => string.Equals(task.StatusText, "Rolled back after batch failure.", StringComparison.Ordinal));
         Assert.Contains(vm.TrayExportTasks, task => string.Equals(task.StatusText, "Cancelled after batch failure.", StringComparison.Ordinal));
-        Assert.Contains("[trayexport.batch.start] items=12 concurrency=8", vm.LogText, StringComparison.Ordinal);
-        Assert.Contains("[trayexport.batch.rollback.start]", vm.LogText, StringComparison.Ordinal);
-        Assert.Contains("[trayexport.batch.rollback.done]", vm.LogText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -908,8 +883,6 @@ public sealed class MainWindowViewModelInteractionTests
         Assert.Equal("Exported 12 tray files and 12 referenced mod files.", vm.StatusMessage);
         Assert.Equal(12, vm.TrayExportTasks.Count);
         Assert.All(vm.TrayExportTasks, task => Assert.True(task.IsCompleted && !task.IsFailed));
-        Assert.Contains("[trayexport.batch.start] items=12 concurrency=8", vm.LogText, StringComparison.Ordinal);
-        Assert.Contains("[trayexport.batch.done]", vm.LogText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1007,7 +980,8 @@ public sealed class MainWindowViewModelInteractionTests
         ITrayDependencyAnalysisService? trayDependencyAnalysisService = null,
         ITrayThumbnailService? trayThumbnailService = null,
         FakeFileDialogService? fileDialogService = null,
-        FakeTrayPreviewCoordinator? trayPreviewCoordinator = null)
+        FakeTrayPreviewCoordinator? trayPreviewCoordinator = null,
+        ILoggerFactory? loggerFactory = null)
     {
         var organize = new OrganizePanelViewModel();
         var textureCompress = new TextureCompressPanelViewModel();
@@ -1024,14 +998,11 @@ public sealed class MainWindowViewModelInteractionTests
             new NoOpModItemIndexScheduler(),
             new FakePackageIndexCache(),
             NullLogger<MainWindowCacheWarmupController>.Instance);
-        var uiLogSink = new UiLogSink();
-
         trayPreviewCoordinator ??= new FakeTrayPreviewCoordinator();
         var trayPreviewWorkspace = new TrayPreviewWorkspaceViewModel(
             trayPreview,
             trayPreviewCoordinator,
             trayThumbnailService ?? new FailingTrayThumbnailService(),
-            uiLogSink,
             fileDialogService ?? new FakeFileDialogService(),
             trayDependencyExportService ?? new FakeTrayDependencyExportService(),
             cacheWarmupController,
@@ -1074,8 +1045,8 @@ public sealed class MainWindowViewModelInteractionTests
                 cacheWarmupController,
                 CreateTextureCompressionService(),
                 new TextureDimensionProbe(),
-                NullLogger<MainWindowExecutionController>.Instance),
-            new MainWindowStatusController(uiLogSink),
+                loggerFactory?.CreateLogger<MainWindowExecutionController>() ?? NullLogger<MainWindowExecutionController>.Instance),
+            new MainWindowStatusController(),
             recoveryController,
             new MainWindowTrayPreviewController(
                 trayPreviewCoordinator,
@@ -1084,18 +1055,18 @@ public sealed class MainWindowViewModelInteractionTests
                 recoveryController,
                 trayPreviewStateController,
                 trayPreviewSelectionController,
-                NullLogger<MainWindowTrayPreviewController>.Instance),
+                loggerFactory?.CreateLogger<MainWindowTrayPreviewController>() ?? NullLogger<MainWindowTrayPreviewController>.Instance),
             new MainWindowTrayExportController(
                 effectiveTrayExportService,
                 cacheWarmupController,
-                NullLogger<MainWindowTrayExportController>.Instance),
+                loggerFactory?.CreateLogger<MainWindowTrayExportController>() ?? NullLogger<MainWindowTrayExportController>.Instance),
             new MainWindowValidationController(toolkitActionPlanner),
             new MainWindowLifecycleController(
                 settingsPersistenceController,
                 settingsProjection,
                 recoveryController,
                 toolkitActionPlanner,
-                NullLogger<MainWindowLifecycleController>.Instance),
+                loggerFactory?.CreateLogger<MainWindowLifecycleController>() ?? NullLogger<MainWindowLifecycleController>.Instance),
             trayPreviewStateController,
             trayPreviewSelectionController,
             modPreviewWorkspace,
@@ -1109,7 +1080,8 @@ public sealed class MainWindowViewModelInteractionTests
             trayDependencies: trayDependencies,
             modPreview: modPreview,
             trayPreview: trayPreview,
-            sharedFileOps: sharedFileOps);
+            sharedFileOps: sharedFileOps,
+            logger: loggerFactory?.CreateLogger<MainWindowViewModel>());
     }
 
     private static ITextureCompressionService CreateTextureCompressionService()

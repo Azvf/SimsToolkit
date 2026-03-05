@@ -90,6 +90,13 @@ public sealed class MainWindowTrayExportController
             .Select(item => item.Item.TrayItemKey?.Trim())
             .Where(key => !string.IsNullOrWhiteSpace(key))
             .ToArray();
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} batchSize={BatchSize} trayKeys={TrayKeys}",
+            LogEvents.TrayExportBatchStart,
+            "start",
+            "trayexport",
+            selectedItems.Count,
+            string.Join(",", selectedTrayKeys));
         host.AppendLog(
             $"[trayexport.click] selectedItems={selectedItems.Count} selectedSources={GetSelectedTrayPreviewSourceFilePaths(host, selectedItems).Count} trayKeys={string.Join(",", selectedTrayKeys)}");
 
@@ -97,11 +104,23 @@ public sealed class MainWindowTrayExportController
         var exportRoot = pickedFolders.FirstOrDefault();
         if (string.IsNullOrWhiteSpace(exportRoot))
         {
+            _logger.LogInformation(
+                "{Event} status={Status} domain={Domain} reason={Reason}",
+                LogEvents.UiCommandBlocked,
+                "blocked",
+                "trayexport",
+                "export-root-not-selected");
             return;
         }
 
         if (!TryBuildTrayDependencyExportRequests(host, selectedItems, exportRoot, out var dependencyRequests, out var error))
         {
+            _logger.LogWarning(
+                "{Event} status={Status} domain={Domain} reason={Reason}",
+                LogEvents.TrayExportSnapshotBlocked,
+                "blocked",
+                "trayexport",
+                error);
             var setupTask = EnqueueTrayExportTask(host, "Export setup");
             setupTask.SetExportRoot(exportRoot);
             setupTask.MarkFailed(error);
@@ -120,13 +139,21 @@ public sealed class MainWindowTrayExportController
         using var batchTiming = PerformanceLogScope.Begin(
             _logger,
             "trayexport.batch",
-            host.AppendLog,
             ("items", queueEntries.Length),
             ("concurrency", MaxConcurrentItemExports),
             ("target", exportRoot),
             ("modsPath", queueEntries[0].Request.ModsRootPath));
         var batchStopwatch = Stopwatch.StartNew();
         host.SetStatus($"Preparing tray export for {queueEntries.Length} selected item(s)...");
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} batchSize={BatchSize} concurrency={Concurrency} modsPath={ModsPath} target={Target}",
+            LogEvents.TrayExportBatchStart,
+            "start",
+            "trayexport",
+            queueEntries.Length,
+            MaxConcurrentItemExports,
+            queueEntries[0].Request.ModsRootPath,
+            exportRoot);
         host.AppendLog(
             $"[trayexport.batch.start] items={queueEntries.Length} concurrency={MaxConcurrentItemExports} target={exportRoot} modsPath={queueEntries[0].Request.ModsRootPath}");
         host.AppendLog(
@@ -143,6 +170,13 @@ public sealed class MainWindowTrayExportController
 
         if (!_cacheWarmupController.TryGetReadyTraySnapshot(queueEntries[0].Request.ModsRootPath, out var preloadedSnapshot))
         {
+            _logger.LogWarning(
+                "{Event} status={Status} domain={Domain} modsPath={ModsPath} reason={Reason}",
+                LogEvents.TrayExportSnapshotBlocked,
+                "blocked",
+                "trayexport",
+                queueEntries[0].Request.ModsRootPath,
+                "cache-not-ready");
             for (var index = 0; index < queueEntries.Length; index++)
             {
                 var exportTask = queueEntries[index].Task;
@@ -159,6 +193,15 @@ public sealed class MainWindowTrayExportController
         }
         if (preloadedSnapshot.Packages.Count == 0)
         {
+            _logger.LogWarning(
+                "{Event} status={Status} domain={Domain} modsPath={ModsPath} inventoryVersion={InventoryVersion} snapshotPackages={SnapshotPackages} reason={Reason}",
+                LogEvents.TrayExportSnapshotBlocked,
+                "blocked",
+                "trayexport",
+                queueEntries[0].Request.ModsRootPath,
+                preloadedSnapshot.InventoryVersion,
+                preloadedSnapshot.Packages.Count,
+                "snapshot-empty");
             const string blockedMessage = "Export blocked: tray dependency cache is empty (0 packages). Verify Mods Path points to your real The Sims 4 Mods folder and wait for warmup to finish.";
             for (var index = 0; index < queueEntries.Length; index++)
             {
@@ -218,6 +261,14 @@ public sealed class MainWindowTrayExportController
                 }).ConfigureAwait(false);
                 host.AppendLog(
                     $"[trayexport.item.fail] itemIndex={queueEntry.ItemIndex} trayKey={queueEntry.Request.TrayItemKey} title={queueEntry.Request.ItemTitle} reason={ex.Message}");
+                _logger.LogError(
+                    ex,
+                    "{Event} status={Status} domain={Domain} itemIndex={ItemIndex} trayItemKey={TrayItemKey}",
+                    LogEvents.TrayExportItemFail,
+                    "fail",
+                    "trayexport",
+                    queueEntry.ItemIndex,
+                    queueEntry.Request.TrayItemKey);
                 itemResults[queueEntry.ItemIndex] = new ItemRunResult(
                     ItemRunResultKind.Failed,
                     0,
@@ -290,9 +341,24 @@ public sealed class MainWindowTrayExportController
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
             var rollbackStopwatch = Stopwatch.StartNew();
+            _logger.LogWarning(
+                "{Event} status={Status} domain={Domain} reason={Reason} createdRoots={CreatedRoots}",
+                LogEvents.TrayExportRollbackStart,
+                "start",
+                "trayexport",
+                reason,
+                rollbackRoots.Length);
             host.AppendLog(
                 $"[trayexport.batch.rollback.start] createdRoots={rollbackRoots.Length} reason={reason}");
             await Task.Run(() => RollbackTraySelectionExports(rollbackRoots)).ConfigureAwait(false);
+            _logger.LogInformation(
+                "{Event} status={Status} domain={Domain} reason={Reason} createdRoots={CreatedRoots} elapsedMs={ElapsedMs}",
+                LogEvents.TrayExportRollbackDone,
+                "done",
+                "trayexport",
+                reason,
+                rollbackRoots.Length,
+                rollbackStopwatch.ElapsedMilliseconds);
             host.AppendLog(
                 $"[trayexport.batch.rollback.done] createdRoots={rollbackRoots.Length} elapsedMs={rollbackStopwatch.ElapsedMilliseconds} reason={reason}");
 
@@ -331,6 +397,18 @@ public sealed class MainWindowTrayExportController
 
             host.AppendLog(
                 $"[trayexport.batch.done] successCount=0 failedCount={queueEntries.Length} rolledBackCount={rolledBackCount} elapsedMs={batchStopwatch.ElapsedMilliseconds}");
+            _logger.LogError(
+                "{Event} status={Status} domain={Domain} batchSize={BatchSize} successCount={SuccessCount} failedCount={FailedCount} cancelledCount={CancelledCount} rolledBackCount={RolledBackCount} elapsedMs={ElapsedMs} reason={Reason}",
+                LogEvents.TrayExportBatchFail,
+                "fail",
+                "trayexport",
+                queueEntries.Length,
+                successCount,
+                failedCount,
+                cancelledCount,
+                rolledBackCount,
+                batchStopwatch.ElapsedMilliseconds,
+                reason);
             batchTiming.Fail(
                 new InvalidOperationException(reason),
                 "batch aborted after item failure",
@@ -354,6 +432,18 @@ public sealed class MainWindowTrayExportController
             $"[tray-selection] export tray={copiedTrayFileCount} mods={copiedModFileCount} items={dependencyRequests.Count} warnings={warningCount} target={exportRoot}");
         host.AppendLog(
             $"[trayexport.batch.done] successCount={successCount} failedCount={failedCount} rolledBackCount=0 elapsedMs={batchStopwatch.ElapsedMilliseconds}");
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} batchSize={BatchSize} concurrency={Concurrency} copiedTrayFiles={CopiedTrayFiles} copiedModFiles={CopiedModFiles} warnings={Warnings} failures={Failures} elapsedMs={ElapsedMs}",
+            LogEvents.TrayExportBatchDone,
+            "done",
+            "trayexport",
+            queueEntries.Length,
+            MaxConcurrentItemExports,
+            copiedTrayFileCount,
+            copiedModFileCount,
+            warningCount,
+            failedCount,
+            batchStopwatch.ElapsedMilliseconds);
         batchTiming.Success(
             "batch completed",
             ("trayFiles", copiedTrayFileCount),
@@ -487,13 +577,22 @@ public sealed class MainWindowTrayExportController
         using var itemTiming = PerformanceLogScope.Begin(
             _logger,
             "trayexport.item",
-            host.AppendLog,
             ("itemIndex", queueEntry.ItemIndex),
             ("trayKey", queueEntry.Request.TrayItemKey),
             ("title", queueEntry.Request.ItemTitle));
 
         host.AppendLog(
             $"[trayexport.item.start] itemIndex={queueEntry.ItemIndex} trayKey={queueEntry.Request.TrayItemKey} title={queueEntry.Request.ItemTitle}");
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} itemIndex={ItemIndex} trayItemKey={TrayItemKey} itemTitle={ItemTitle} snapshotPackages={SnapshotPackages} sourceFiles={SourceFiles}",
+            LogEvents.TrayExportItemStart,
+            "start",
+            "trayexport",
+            queueEntry.ItemIndex,
+            queueEntry.Request.TrayItemKey,
+            queueEntry.Request.ItemTitle,
+            preloadedSnapshot.Packages.Count,
+            queueEntry.Request.TraySourceFiles.Count);
         host.AppendLog(
             $"[tray-selection][item] trayKey={queueEntry.Request.TrayItemKey} export-begin title={queueEntry.Request.ItemTitle}");
         host.AppendLog(
@@ -514,6 +613,16 @@ public sealed class MainWindowTrayExportController
                         lastStage = progress.Stage;
                         host.AppendLog(
                             $"[tray-selection][stage] itemIndex={queueEntry.ItemIndex} trayKey={queueEntry.Request.TrayItemKey} stage={progress.Stage} percent={progress.Percent} detail={detail}");
+                        _logger.LogInformation(
+                            "{Event} status={Status} domain={Domain} itemIndex={ItemIndex} trayItemKey={TrayItemKey} stage={Stage} percent={Percent} detail={Detail}",
+                            LogEvents.TrayExportItemStage,
+                            "mark",
+                            "trayexport",
+                            queueEntry.ItemIndex,
+                            queueEntry.Request.TrayItemKey,
+                            progress.Stage,
+                            progress.Percent,
+                            detail);
                         itemTiming.Mark(
                             "stage",
                             ("itemIndex", queueEntry.ItemIndex),
@@ -560,6 +669,14 @@ public sealed class MainWindowTrayExportController
             }).ConfigureAwait(false);
             host.AppendLog(
                 $"[trayexport.item.fail] itemIndex={queueEntry.ItemIndex} trayKey={queueEntry.Request.TrayItemKey} title={queueEntry.Request.ItemTitle} reason=cancelled");
+            _logger.LogWarning(
+                "{Event} status={Status} domain={Domain} itemIndex={ItemIndex} trayItemKey={TrayItemKey} reason={Reason}",
+                LogEvents.TrayExportItemCancel,
+                "cancel",
+                "trayexport",
+                queueEntry.ItemIndex,
+                queueEntry.Request.TrayItemKey,
+                "cancelled-after-batch-failure");
             itemTiming.Cancel("export-cancelled");
             return new ItemRunResult(
                 ItemRunResultKind.Cancelled,
@@ -579,6 +696,14 @@ public sealed class MainWindowTrayExportController
             host.AppendLog($"[tray-selection][internal] export failed for trayKey={queueEntry.Request.TrayItemKey}: {ex.Message}");
             host.AppendLog(
                 $"[trayexport.item.fail] itemIndex={queueEntry.ItemIndex} trayKey={queueEntry.Request.TrayItemKey} title={queueEntry.Request.ItemTitle} reason={ex.Message}");
+            _logger.LogError(
+                ex,
+                "{Event} status={Status} domain={Domain} itemIndex={ItemIndex} trayItemKey={TrayItemKey}",
+                LogEvents.TrayExportItemFail,
+                "fail",
+                "trayexport",
+                queueEntry.ItemIndex,
+                queueEntry.Request.TrayItemKey);
             signalFailure(ex.Message);
             itemTiming.Fail(ex, "export crashed");
             return new ItemRunResult(
@@ -642,6 +767,17 @@ public sealed class MainWindowTrayExportController
             }).ConfigureAwait(false);
             host.AppendLog(
                 $"[trayexport.item.fail] itemIndex={queueEntry.ItemIndex} trayKey={queueEntry.Request.TrayItemKey} title={queueEntry.Request.ItemTitle} reason={failure}");
+            _logger.LogError(
+                "{Event} status={Status} domain={Domain} itemIndex={ItemIndex} trayItemKey={TrayItemKey} failure={Failure} warnings={Warnings} copiedTrayFiles={CopiedTrayFiles} copiedModFiles={CopiedModFiles}",
+                LogEvents.TrayExportItemFail,
+                "fail",
+                "trayexport",
+                queueEntry.ItemIndex,
+                queueEntry.Request.TrayItemKey,
+                failure,
+                result.Issues.Count,
+                result.CopiedTrayFileCount,
+                result.CopiedModFileCount);
             signalFailure(failure);
             itemTiming.Fail(new InvalidOperationException(failure), "export completed with errors");
             return new ItemRunResult(
@@ -660,6 +796,16 @@ public sealed class MainWindowTrayExportController
             }).ConfigureAwait(false);
             host.AppendLog(
                 $"[trayexport.item.done] itemIndex={queueEntry.ItemIndex} trayKey={queueEntry.Request.TrayItemKey} title={queueEntry.Request.ItemTitle} success=true warnings=true tray={result.CopiedTrayFileCount} mods={result.CopiedModFileCount}");
+            _logger.LogInformation(
+                "{Event} status={Status} domain={Domain} itemIndex={ItemIndex} trayItemKey={TrayItemKey} warnings={Warnings} copiedTrayFiles={CopiedTrayFiles} copiedModFiles={CopiedModFiles}",
+                LogEvents.TrayExportItemDone,
+                "done",
+                "trayexport",
+                queueEntry.ItemIndex,
+                queueEntry.Request.TrayItemKey,
+                result.Issues.Count,
+                result.CopiedTrayFileCount,
+                result.CopiedModFileCount);
             itemTiming.Success(
                 "completed with warnings",
                 ("itemIndex", queueEntry.ItemIndex),
@@ -680,6 +826,16 @@ public sealed class MainWindowTrayExportController
         }).ConfigureAwait(false);
         host.AppendLog(
             $"[trayexport.item.done] itemIndex={queueEntry.ItemIndex} trayKey={queueEntry.Request.TrayItemKey} title={queueEntry.Request.ItemTitle} success=true warnings=false tray={result.CopiedTrayFileCount} mods={result.CopiedModFileCount}");
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} itemIndex={ItemIndex} trayItemKey={TrayItemKey} copiedTrayFiles={CopiedTrayFiles} copiedModFiles={CopiedModFiles} warnings={Warnings}",
+            LogEvents.TrayExportItemDone,
+            "done",
+            "trayexport",
+            queueEntry.ItemIndex,
+            queueEntry.Request.TrayItemKey,
+            result.CopiedTrayFileCount,
+            result.CopiedModFileCount,
+            0);
         itemTiming.Success(
             "completed",
             ("itemIndex", queueEntry.ItemIndex),

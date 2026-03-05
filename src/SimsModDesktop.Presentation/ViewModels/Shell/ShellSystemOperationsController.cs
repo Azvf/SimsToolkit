@@ -1,3 +1,6 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using SimsModDesktop.Presentation.Diagnostics;
 using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 
 namespace SimsModDesktop.Presentation.ViewModels.Shell;
@@ -7,6 +10,7 @@ public sealed class ShellSystemOperationsController : ObservableObject
     private readonly MainWindowViewModel _workspaceVm;
     private readonly IGameLaunchService _gameLaunchService;
     private readonly IAppCacheMaintenanceService _appCacheMaintenanceService;
+    private readonly ILogger<ShellSystemOperationsController> _logger;
 
     private string _launchGameStatus = string.Empty;
     private string _cacheMaintenanceStatus = string.Empty;
@@ -14,11 +18,13 @@ public sealed class ShellSystemOperationsController : ObservableObject
     public ShellSystemOperationsController(
         MainWindowViewModel workspaceVm,
         IGameLaunchService gameLaunchService,
-        IAppCacheMaintenanceService appCacheMaintenanceService)
+        IAppCacheMaintenanceService appCacheMaintenanceService,
+        ILogger<ShellSystemOperationsController>? logger = null)
     {
         _workspaceVm = workspaceVm;
         _gameLaunchService = gameLaunchService;
         _appCacheMaintenanceService = appCacheMaintenanceService;
+        _logger = logger ?? NullLogger<ShellSystemOperationsController>.Instance;
     }
 
     public string LaunchGameStatus
@@ -35,6 +41,12 @@ public sealed class ShellSystemOperationsController : ObservableObject
 
     public async Task LaunchGameAsync(string gameExecutablePath)
     {
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} executablePath={ExecutablePath}",
+            LogEvents.ShellOpsLaunchGameStart,
+            "start",
+            "shell",
+            gameExecutablePath ?? string.Empty);
         var request = new LaunchGameRequest
         {
             ExecutablePath = gameExecutablePath,
@@ -43,25 +55,73 @@ public sealed class ShellSystemOperationsController : ObservableObject
                 : Path.GetDirectoryName(gameExecutablePath)
         };
 
-        var result = _gameLaunchService.Launch(request);
-        LaunchGameStatus = result.Message;
-        await Task.CompletedTask;
+        try
+        {
+            var result = _gameLaunchService.Launch(request);
+            LaunchGameStatus = result.Message;
+            _logger.LogInformation(
+                "{Event} status={Status} domain={Domain} success={Success} message={Message}",
+                LogEvents.ShellOpsLaunchGameDone,
+                "done",
+                "shell",
+                result.Success,
+                result.Message);
+            await Task.CompletedTask;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "{Event} status={Status} domain={Domain} executablePath={ExecutablePath}",
+                LogEvents.ShellOpsLaunchGameFail,
+                "fail",
+                "shell",
+                gameExecutablePath ?? string.Empty);
+            throw;
+        }
     }
 
     public async Task ClearCacheAsync(bool isTraySectionActive)
     {
+        _logger.LogInformation(
+            "{Event} status={Status} domain={Domain} isTraySectionActive={IsTraySectionActive}",
+            LogEvents.ShellOpsClearCacheStart,
+            "start",
+            "shell",
+            isTraySectionActive);
         CacheMaintenanceStatus = "Clearing disk cache...";
-        var result = await _appCacheMaintenanceService.ClearAsync();
-        if (result.Success)
+        try
         {
-            _workspaceVm.ModPreviewWorkspace.ResetAfterCacheClear();
-            _workspaceVm.TrayPreviewWorkspace.ResetAfterCacheClear();
-            if (isTraySectionActive)
+            var result = await _appCacheMaintenanceService.ClearAsync();
+            if (result.Success)
             {
-                await _workspaceVm.TrayPreviewWorkspace.EnsureLoadedAsync(forceReload: true);
+                _workspaceVm.ModPreviewWorkspace.ResetAfterCacheClear();
+                _workspaceVm.TrayPreviewWorkspace.ResetAfterCacheClear();
+                if (isTraySectionActive)
+                {
+                    await _workspaceVm.TrayPreviewWorkspace.EnsureLoadedAsync(forceReload: true);
+                }
             }
-        }
 
-        CacheMaintenanceStatus = result.Message;
+            CacheMaintenanceStatus = result.Message;
+            _logger.LogInformation(
+                "{Event} status={Status} domain={Domain} success={Success} removedDirectories={RemovedDirectoryCount} message={Message}",
+                LogEvents.ShellOpsClearCacheDone,
+                "done",
+                "shell",
+                result.Success,
+                result.RemovedDirectoryCount,
+                result.Message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "{Event} status={Status} domain={Domain}",
+                LogEvents.ShellOpsClearCacheFail,
+                "fail",
+                "shell");
+            throw;
+        }
     }
 }

@@ -4,6 +4,9 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Presentation.ViewModels.Panels;
 using SimsModDesktop.Presentation.ViewModels.Preview;
 
@@ -11,11 +14,15 @@ namespace SimsModDesktop.Views.Preview;
 
 public partial class TrayLikePreviewSurfaceView : UserControl
 {
+    private const string UiInteractionEvent = "ui.interaction.invoke";
+    private const string UiShortcutEvent = "ui.shortcut.invoke";
     private TrayLikePreviewSurfaceViewModel? _boundViewModel;
+    private readonly ILogger<TrayLikePreviewSurfaceView> _logger;
 
     public TrayLikePreviewSurfaceView()
     {
         InitializeComponent();
+        _logger = App.Services?.GetService<ILogger<TrayLikePreviewSurfaceView>>() ?? NullLogger<TrayLikePreviewSurfaceView>.Instance;
         AddHandler(KeyDownEvent, OnSurfaceKeyDown, RoutingStrategies.Tunnel | RoutingStrategies.Bubble, handledEventsToo: true);
         DataContextChanged += OnDataContextChanged;
         BindToViewModel(DataContext as TrayLikePreviewSurfaceViewModel);
@@ -76,6 +83,15 @@ public partial class TrayLikePreviewSurfaceView : UserControl
             item,
             modifiers.HasFlag(KeyModifiers.Control),
             modifiers.HasFlag(KeyModifiers.Shift));
+        _logger.LogDebug(
+            "{Event} status={Status} domain={Domain} control={Control} action={Action} handled={Handled} hasDataContextKey={HasDataContextKey}",
+            UiInteractionEvent,
+            "invoke",
+            "traypreview",
+            sender is CheckBox ? "PreviewSelectCheckbox" : "PreviewSelectItem",
+            "ApplySelection",
+            true,
+            !string.IsNullOrWhiteSpace(item.Item.TrayItemKey));
         e.Handled = true;
     }
 
@@ -90,6 +106,15 @@ public partial class TrayLikePreviewSurfaceView : UserControl
 
         _boundViewModel.OpenDetail(item);
         FocusDetailOverlay();
+        _logger.LogDebug(
+            "{Event} status={Status} domain={Domain} control={Control} action={Action} handled={Handled} hasDataContextKey={HasDataContextKey}",
+            UiInteractionEvent,
+            "invoke",
+            "traypreview",
+            "PreviewOpenDetails",
+            "OpenDetail",
+            true,
+            !string.IsNullOrWhiteSpace(item.Item.TrayItemKey));
         e.Handled = true;
     }
 
@@ -105,6 +130,14 @@ public partial class TrayLikePreviewSurfaceView : UserControl
             if (_boundViewModel.CloseDetailCommand.CanExecute(null) && e.Key == Key.Escape)
             {
                 _boundViewModel.CloseDetailCommand.Execute(null);
+                _logger.LogDebug(
+                    "{Event} status={Status} domain={Domain} shortcut={Shortcut} action={Action} handled={Handled}",
+                    UiShortcutEvent,
+                    "invoke",
+                    "traypreview",
+                    "Escape",
+                    "CloseDetail",
+                    true);
                 e.Handled = true;
             }
 
@@ -118,6 +151,14 @@ public partial class TrayLikePreviewSurfaceView : UserControl
             _boundViewModel.SelectAllPageCommand.CanExecute(null))
         {
             _boundViewModel.SelectAllPageCommand.Execute(null);
+            _logger.LogDebug(
+                "{Event} status={Status} domain={Domain} shortcut={Shortcut} action={Action} handled={Handled}",
+                UiShortcutEvent,
+                "invoke",
+                "traypreview",
+                "Ctrl+A",
+                "SelectAllPage",
+                true);
             e.Handled = true;
         }
     }

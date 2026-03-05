@@ -45,10 +45,6 @@ public sealed partial class MainWindowViewModel
             case nameof(MainWindowStatusController.ProgressMessage):
                 OnPropertyChanged(nameof(ProgressMessage));
                 return;
-            case nameof(MainWindowStatusController.LogText):
-                OnPropertyChanged(nameof(LogText));
-                ClearLogCommand.NotifyCanExecuteChanged();
-                return;
         }
     }
 

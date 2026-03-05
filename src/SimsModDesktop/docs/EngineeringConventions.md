@@ -301,13 +301,13 @@ View 代码隐藏仅承担：
 使用原则：
 
 * `ILogger<T>` 用于结构化日志
-* `MainWindowStatusController` / `IUiLogSink` 用于 UI 文本日志
-* 两者可以并存，但职责不同
+* UI 页面不再承载通用日志文本，UI 只展示主动控制的状态与进度
+* 诊断与排障日志统一写入 `ILogger`
 
 建议：
 
 * 控制台/诊断日志承载结构化字段
-* UI 日志承载用户可读的摘要文本
+* 关键业务节点优先记录结构化字段而不是拼接字符串
 
 ### 7.2 诊断代码放置
 
@@ -376,8 +376,8 @@ View 代码隐藏仅承担：
 
 对于 UI 控制器：
 
-* 允许通过 `LogText` / 状态字段做断言
-* 不要求为每个结构化 `ILogger` 单独造测试 logger，除非该日志本身是业务契约
+* 通过状态字段（`StatusMessage` / `ProgressMessage` / Busy 状态）做行为断言
+* 如需验证日志内容，使用测试 logger provider，不依赖 UI 文本日志
 
 ### 9.3 架构回归
 

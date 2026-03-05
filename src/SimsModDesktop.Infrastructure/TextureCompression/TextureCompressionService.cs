@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Application.TextureProcessing;
 
 namespace SimsModDesktop.Infrastructure.TextureCompression;
@@ -6,13 +8,16 @@ public sealed class TextureCompressionService : ITextureCompressionService
 {
     private readonly ITextureDecodeService _decodeService;
     private readonly ITextureTranscodePipeline _pipeline;
+    private readonly ILogger<TextureCompressionService> _logger;
 
     public TextureCompressionService(
         ITextureDecodeService decodeService,
-        ITextureTranscodePipeline pipeline)
+        ITextureTranscodePipeline pipeline,
+        ILogger<TextureCompressionService>? logger = null)
     {
         _decodeService = decodeService;
         _pipeline = pipeline;
+        _logger = logger ?? NullLogger<TextureCompressionService>.Instance;
     }
 
     public TextureCompressionResult Compress(TextureCompressionRequest request)
@@ -27,6 +32,13 @@ public sealed class TextureCompressionService : ITextureCompressionService
         {
             if (!_decodeService.TryDecode(request.Source.ContainerKind, request.SourceBytes, out var decoded, out var decodeError))
             {
+                _logger.LogError(
+                    "{Event} status={Status} domain={Domain} container={Container} error={Error}",
+                    "texture.compress.decode.fail",
+                    "fail",
+                    "texture",
+                    request.Source.ContainerKind,
+                    decodeError ?? string.Empty);
                 return new TextureCompressionResult
                 {
                     Success = false,
@@ -35,6 +47,14 @@ public sealed class TextureCompressionService : ITextureCompressionService
                 };
             }
 
+            _logger.LogInformation(
+                "{Event} status={Status} domain={Domain} container={Container} width={Width} height={Height}",
+                "texture.compress.decode.done",
+                "done",
+                "texture",
+                request.Source.ContainerKind,
+                decoded.Width,
+                decoded.Height);
             targetWidth ??= decoded.Width;
             targetHeight ??= decoded.Height;
         }
