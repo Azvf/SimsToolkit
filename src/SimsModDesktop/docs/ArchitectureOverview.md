@@ -36,9 +36,12 @@ src/
 - `ToolkitActionPlanner`
 - `ExecutionCoordinator`
 - module-level service interfaces such as:
-  - `ITrayPreviewCoordinator`
+  - `IPreviewQueryService`
   - `IModItemCatalogService`
   - `ISaveHouseholdCoordinator`
+  - `IModsWarmupService`
+  - `ITrayWarmupService`
+  - `ISaveWarmupService`
 
 This layer should not know about Avalonia, SQLite, or shell-specific concerns.
 
@@ -48,7 +51,8 @@ This layer should not know about Avalonia, SQLite, or shell-specific concerns.
 
 - workspace view models for Toolkit, Mods, Tray, Save
 - shell view models and navigation state
-- controllers for execution, validation, recovery, tray preview, export, and cache warmup
+- controllers for execution, validation, recovery, tray preview, and export
+- warmup services for mods, tray, save, and startup prewarm
 - background prewarm scheduling and UI activity tracking
 
 This layer owns page behavior and state, but delegates real work to Application/Infrastructure services.
@@ -121,8 +125,9 @@ Used for `Organize`, `Flatten`, `Normalize`, `Merge`, and `FindDuplicates`.
 ### 4.3 Tray Flow
 
 - `TrayPreviewWorkspaceViewModel` drives page activation and export-ready behavior.
-- `MainWindowCacheWarmupController` ensures tray dependency snapshot readiness.
-- `SimsTrayPreviewService` builds preview summaries/pages.
+- `ITrayWarmupService` is the tray-facing warmup boundary consumed by the workspace.
+- `IPreviewQueryService` is the preview-facing paging boundary consumed by preview surfaces.
+- `PreviewQueryService` is the infrastructure implementation for tray/save projection and delegates tray-root source reading, projection/filtering, page materialization, metadata coordination, and save-descriptor source loading to dedicated helpers.
 - `TrayPreviewRootSnapshotStore`, `TrayMetadataIndexStore`, and `TrayThumbnailCacheStore` back preview caching.
 - `TrayDependencyEngine` handles dependency analysis and package export.
 
@@ -157,14 +162,25 @@ Backed separately by `%AppData%/SimsModDesktop/Cache/TrayDependencyPackageIndex/
 
 ### 5.3 Warmup / Prewarm
 
-`MainWindowCacheWarmupController` owns blocking and reusable warmup sessions.
+Warmup is now consumed through domain-facing interfaces:
+
+- `IModsWarmupService`
+- `ITrayWarmupService`
+- `ISaveWarmupService`
+- `IStartupPrewarmService`
+
+`MainWindowCacheWarmupController` is now an internal runtime/helper shell for shared inventory refresh, path normalization, file watchers, gates, and warmup session plumbing. Page and shell callers only depend on the domain-facing warmup services.
+
+- `ModsWarmupService`
+- `TrayWarmupService`
+- `SaveWarmupService`
 
 - Mods catalog readiness
 - Tray dependency readiness
 - Save preview descriptor readiness
 - Save preview artifact readiness
 
-`AppIdlePrewarmBootstrapper` schedules low-priority startup idle work for:
+`IStartupPrewarmService` schedules low-priority startup idle work through those domain-facing warmup interfaces for:
 
 - tray dependency prewarm
 - mods query prime
@@ -175,9 +191,11 @@ Backed separately by `%AppData%/SimsModDesktop/Cache/TrayDependencyPackageIndex/
 
 The most important extension seams are:
 
-- `ITrayPreviewCoordinator` for preview-facing paging behavior
-- `ISimsTrayPreviewService` for tray/save descriptor projection logic
+- `IPreviewQueryService` for preview-facing paging behavior
+- `IPreviewQueryService` for tray/save descriptor projection logic
+- `TrayRootPreviewSourceReader`, `PreviewProjectionEngine`, `PreviewPageBuilder`, `PreviewMetadataFacade`, `TrayPreviewSnapshotPersistence`, and `SaveDescriptorPreviewSourceReader` as the internal seams behind `PreviewQueryService`
 - `IListQueryCache` for future list-based query acceleration
+- `IModsWarmupService` / `ITrayWarmupService` / `ISaveWarmupService` for domain warmup boundaries
 - `IBackgroundCachePrewarmCoordinator` for additional idle/background jobs
 - `ISavePreviewDescriptorStore` and `ISavePreviewArtifactProvider` for future save acceleration work
 - `ITrayBundleAnalysisCache` for repeated tray dependency analysis/export reuse

@@ -101,7 +101,7 @@
 * `ToolkitActionPlanner`
 * `ExecutionCoordinator`
 * `IExecutionCoordinator`
-* `ITrayPreviewCoordinator`
+* `IPreviewQueryService`
 * 各类 `Input` / `Plan` / `Result`
 
 不应放内容：

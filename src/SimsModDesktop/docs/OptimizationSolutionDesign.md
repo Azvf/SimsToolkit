@@ -51,7 +51,7 @@
 当前高风险文件（行数）：
 
 * `PackageIndexCache.cs` 2540
-* `SimsTrayPreviewService.cs` 2118
+* `PreviewQueryService.cs` 2118
 * `TrayDependencyExportService.cs` 1736
 * `SqliteModItemIndexStore.cs` 1393
 
@@ -186,7 +186,7 @@ dotnet build SimsDesktopTools.sln \
 
 ### 4.4.2 收敛原则
 
-* 以现有真实应用服务接口作为主边界（`IExecutionCoordinator`、`ITrayPreviewCoordinator`、`IModItemCatalogService`、`IGameLaunchService` 等）。
+* 以现有真实应用服务接口作为主边界（`IExecutionCoordinator`、`IPreviewQueryService`、`IModItemCatalogService`、`IGameLaunchService` 等）。
 * 下线无业务承载价值的 NoOp UseCase 套件。
 
 ### 4.4.3 迁移步骤
@@ -208,7 +208,7 @@ dotnet build SimsDesktopTools.sln \
 ### 4.5.1 拆分优先级
 
 1. `PackageIndexCache.cs`
-2. `SimsTrayPreviewService.cs`
+2. `PreviewQueryService.cs`
 3. `TrayDependencyExportService.cs`
 4. `SqliteModItemIndexStore.cs`
 
@@ -222,7 +222,7 @@ dotnet build SimsDesktopTools.sln \
 * `SqliteTrayDependencyLookup*`（查询会话）
 * `LruCache` 独立工具文件
 
-`SimsTrayPreviewService.cs`：
+`PreviewQueryService.cs`：
 
 * Root snapshot 构建
 * 过滤/分页投影
@@ -265,7 +265,7 @@ dotnet build SimsDesktopTools.sln \
 3. `PR-3`：`IAppCacheMaintenanceService.MaintainAsync` + SQLite 维护实现 + 测试
 4. `PR-4`：移除 NoOp UseCase + 更新 DI 与测试 + 守卫测试
 5. `PR-5`：`PackageIndexCache` 拆分
-6. `PR-6`：`SimsTrayPreviewService` 拆分
+6. `PR-6`：`PreviewQueryService` 拆分
 7. `PR-7`：`TrayDependencyExportService` + `SqliteModItemIndexStore` 拆分
 8. `PR-8`：大文件门禁脚本与 CI
 

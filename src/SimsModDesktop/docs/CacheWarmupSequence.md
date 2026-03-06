@@ -4,14 +4,18 @@ This document captures the current page-level cache warmup flow after the cache 
 
 Current baseline:
 
-* There is no startup-time Tray dependency warmup.
-* `Mods` and `Tray` use page-triggered blocking warmup.
-* `MainWindowCacheWarmupController` uses a keyed per-root gate to serialize warmup per `ModsRoot`.
+* `Mods` and `Tray` still use page-triggered blocking warmup.
+* startup idle prewarm is scheduled through `IStartupPrewarmService`, which delegates to domain warmup services.
+* shared inventory/runtime helpers still use a keyed per-root gate to serialize work per `ModsRoot`.
 * Tray export and Tray dependency analysis both consume a preloaded ready snapshot.
 * `TrayDependencyEngine` no longer performs hidden `Mods` directory validation for export or analysis.
 
 Relevant implementation anchors:
 
+* `src/SimsModDesktop.Presentation/Warmup/ModsWarmupService.cs`
+* `src/SimsModDesktop.Presentation/Warmup/TrayWarmupService.cs`
+* `src/SimsModDesktop.Presentation/Warmup/SaveWarmupService.cs`
+* `src/SimsModDesktop.Presentation/Services/StartupPrewarmService.cs`
 * `src/SimsModDesktop.Presentation/ViewModels/MainWindowCacheWarmupController.cs`
 * `src/SimsModDesktop.Presentation/ViewModels/Preview/ModPreviewWorkspaceViewModel.cs`
 * `src/SimsModDesktop.Presentation/ViewModels/Preview/TrayPreviewWorkspaceViewModel.cs`
@@ -29,21 +33,22 @@ sequenceDiagram
     participant Shell as MainShellViewModel
     participant ModsVM as ModPreviewWorkspaceViewModel
     participant TrayVM as TrayPreviewWorkspaceViewModel
-    participant Warmup as MainWindowCacheWarmupController
+    participant ModsWarmup as IModsWarmupService
+    participant TrayWarmup as ITrayWarmupService
 
     User->>Shell: Switch to Mods or Tray section
     Shell->>ModsVM: SetIsActive(true) for Mods
     Shell->>TrayVM: SetIsActive(true) for Tray
 
     alt Mods section
-        ModsVM->>Warmup: EnsureModsWorkspaceReadyAsync(modsRoot)
-        Warmup-->>ModsVM: validated and ready
+        ModsVM->>ModsWarmup: EnsureWorkspaceReadyAsync(modsRoot)
+        ModsWarmup-->>ModsVM: validated and ready
     else Tray section
-        TrayVM->>Warmup: EnsureTrayWorkspaceReadyAsync(modsRoot)
-        Warmup-->>TrayVM: validated and ready snapshot
+        TrayVM->>TrayWarmup: EnsureDependencyReadyAsync(modsRoot)
+        TrayWarmup-->>TrayVM: validated and ready snapshot
     end
 
-    Note over Warmup: A keyed SemaphoreSlim gate\nserializes blocking warmup per ModsRoot
+    Note over ModsWarmup,TrayWarmup: Shared runtime helpers still use a keyed SemaphoreSlim gate\nper ModsRoot, but page callers only see domain warmup services
 ```
 
 ---
@@ -54,7 +59,7 @@ sequenceDiagram
 sequenceDiagram
     participant User
     participant ModsVM as ModPreviewWorkspaceViewModel
-    participant Warmup as MainWindowCacheWarmupController
+    participant Warmup as IModsWarmupService
     participant Inventory as IModPackageInventoryService
     participant AppCache as app-cache.db
     participant Indexer as IModItemIndexScheduler
@@ -62,7 +67,7 @@ sequenceDiagram
 
     User->>ModsVM: Open Mods page
     ModsVM->>ModsVM: Enter blocking loading state
-    ModsVM->>Warmup: EnsureModsWorkspaceReadyAsync(modsRoot)
+    ModsVM->>Warmup: EnsureWorkspaceReadyAsync(modsRoot)
 
     Warmup->>Warmup: Wait for serial gate
     Warmup->>Inventory: RefreshAsync(modsRoot, progress)
@@ -97,16 +102,16 @@ sequenceDiagram
 sequenceDiagram
     participant User
     participant TrayVM as TrayPreviewWorkspaceViewModel
-    participant Warmup as MainWindowCacheWarmupController
+    participant Warmup as ITrayWarmupService
     participant Inventory as IModPackageInventoryService
     participant AppCache as app-cache.db
     participant PkgCache as IPackageIndexCache
     participant TrayCache as TrayDependencyPackageIndex/cache.db
-    participant TrayPreview as ITrayPreviewCoordinator
+    participant TrayPreview as IPreviewQueryService
 
     User->>TrayVM: Open Tray page
     TrayVM->>TrayVM: Enter blocking loading state
-    TrayVM->>Warmup: EnsureTrayWorkspaceReadyAsync(modsRoot)
+    TrayVM->>Warmup: EnsureDependencyReadyAsync(modsRoot)
 
     Warmup->>Warmup: Wait for serial gate
     Warmup->>Inventory: RefreshAsync(modsRoot, progress)
@@ -143,11 +148,11 @@ sequenceDiagram
 sequenceDiagram
     participant User
     participant ExportCtl as MainWindowTrayExportController
-    participant Warmup as MainWindowCacheWarmupController
+    participant Warmup as ITrayWarmupService
     participant ExportSvc as TrayDependencyExportService
 
     User->>ExportCtl: Export selected Tray items
-    ExportCtl->>Warmup: TryGetReadyTraySnapshot(modsRoot)
+    ExportCtl->>Warmup: TryGetReadySnapshot(modsRoot)
 
     alt Snapshot is not ready
         Warmup-->>ExportCtl: false
@@ -170,11 +175,11 @@ sequenceDiagram
 sequenceDiagram
     participant User
     participant ExecCtl as MainWindowExecutionController
-    participant Warmup as MainWindowCacheWarmupController
+    participant Warmup as ITrayWarmupService
     participant AnalyzeSvc as TrayDependencyAnalysisService
 
     User->>ExecCtl: Run Tray Dependencies
-    ExecCtl->>Warmup: EnsureTrayWorkspaceReadyAsync(modsRoot)
+    ExecCtl->>Warmup: EnsureDependencyReadyAsync(modsRoot)
     Warmup-->>ExecCtl: ready snapshot
 
     ExecCtl->>AnalyzeSvc: AnalyzeAsync(request with PreloadedSnapshot)
@@ -196,27 +201,31 @@ sequenceDiagram
     participant CacheSvc as IAppCacheMaintenanceService
     participant ModsVM as ModPreviewWorkspaceViewModel
     participant TrayVM as TrayPreviewWorkspaceViewModel
-    participant Warmup as MainWindowCacheWarmupController
+    participant ModsWarmup as IModsWarmupService
+    participant TrayWarmup as ITrayWarmupService
+    participant SaveWarmup as ISaveWarmupService
 
     User->>ShellOps: Clear Cache
     ShellOps->>CacheSvc: ClearAsync()
     CacheSvc-->>ShellOps: Disk cache folders cleared
 
     ShellOps->>ModsVM: ResetAfterCacheClear()
-    ModsVM->>Warmup: Reset()
+    ModsVM->>ModsWarmup: Reset()
 
     ShellOps->>TrayVM: ResetAfterCacheClear()
-    TrayVM->>Warmup: Reset()
+    TrayVM->>TrayWarmup: Reset()
 
-    Note over Warmup: In-memory ready state is cleared\nNext page entry rebuilds blocking warmup state
+    ShellOps->>SaveWarmup: Reset()
+
+    Note over ModsWarmup,TrayWarmup: Domain warmup state is cleared\nNext page entry rebuilds blocking warmup state
 ```
 
 ---
 
 ## 7. Key Invariants
 
-* No startup-time cache warmup path exists anymore.
-* `Mods` and `Tray` blocking warmup both flow through the same coordinator.
+* startup idle warmup is scheduled through `IStartupPrewarmService`, but build/ensure work still lives in domain warmup services.
+* `Mods` and `Tray` blocking warmup both reuse the same internal inventory/runtime helpers while exposing separate service boundaries.
 * `SqliteModPackageInventoryService` is the package inventory source used by page warmup.
 * Tray dependency snapshots are keyed by `(ModsRootPath, InventoryVersion)`.
 * Export and analysis require `PreloadedSnapshot` and fail fast if cache is not ready.

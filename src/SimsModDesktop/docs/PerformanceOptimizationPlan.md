@@ -70,7 +70,7 @@ The current heavy paths are grouped by operational domain rather than by file.
 * `Tray preview root scan`
   * Type: `IO-bound`
   * Current bottleneck: root scan and descriptor rebuilding can be repeated when filter combinations change
-  * Anchors: `src/SimsModDesktop.Infrastructure/Tray/SimsTrayPreviewService.cs`
+  * Anchors: `src/SimsModDesktop.Infrastructure/Tray/PreviewQueryService.cs`
 
 ### Index / Cache Build
 
