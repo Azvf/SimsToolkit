@@ -20,6 +20,13 @@ The current codebase is organized around a layered .NET architecture:
 * `SimsModDesktop.SaveData`: save readers and household export support
 * `SimsModDesktop.TrayDependencyEngine`: tray dependency analysis/export
 
+Compile-time boundary summary:
+
+* `SimsModDesktop` is the only composition root that references `Presentation`, `Application`, and `Infrastructure` together.
+* `SimsModDesktop.Presentation` references `Application` plus feature engines, but does not reference `Infrastructure`.
+* `SimsModDesktop.Application` defines stable contracts and orchestration, but does not reference `Infrastructure`.
+* `SimsModDesktop.Infrastructure` implements `Application` contracts and is wired by the host at runtime.
+
 Detailed architecture notes live in:
 
 * [`src/SimsModDesktop/docs/ArchitectureOverview.md`](src/SimsModDesktop/docs/ArchitectureOverview.md)
@@ -54,16 +61,51 @@ These flows are planned by `ToolkitActionPlanner` and dispatched through `Execut
 
 ---
 
-## 3. Runtime Architecture
+## 3. Layered Composition
 
 ```mermaid
-graph TD
-    UI["Avalonia Host"] --> PRES["Presentation"]
-    PRES --> APP["Application"]
-    PRES --> INFRA["Infrastructure"]
-    INFRA --> CORE["PackageCore / SaveData / TrayDependencyEngine"]
-    APP --> INFRA
-    CORE --> FS["File System / SQLite / Cache"]
+flowchart LR
+    subgraph Root["Composition Root"]
+        direction TB
+        Host["SimsModDesktop Host"]
+    end
+
+    subgraph Layers["Layered Libraries"]
+        direction TB
+        Pres["Presentation"]
+        App["Application"]
+        Infra["Infrastructure"]
+    end
+
+    subgraph Engines["Feature Engines"]
+        direction TB
+        Tray["TrayDependencyEngine"]
+        Save["SaveData"]
+        Core["PackageCore"]
+    end
+
+    Host --> Pres
+    Host --> App
+    Host --> Infra
+    Host --> Tray
+    Host --> Save
+    Host --> Core
+
+    Pres --> App
+    Pres --> Tray
+    Pres --> Save
+
+    App --> Tray
+    App --> Save
+    App --> Core
+
+    Infra --> App
+    Infra --> Tray
+    Infra --> Save
+    Infra --> Core
+
+    Tray --> Core
+    Save --> Core
 ```
 
 ### 3.1 Runtime Entry Points
@@ -72,6 +114,8 @@ graph TD
 * `Composition/ServiceCollectionExtensions.cs` composes the container
 * `MainShellViewModel` owns shell-level navigation and startup prewarm scheduling
 * `MainWindowViewModel` and dedicated workspace VMs own page behavior
+
+The host resolves concrete implementations through DI. There is no direct `Presentation -> Infrastructure` or `Application -> Infrastructure` assembly reference in the current solution.
 
 ### 3.2 Dependency Injection Registration
 
@@ -104,7 +148,8 @@ Registration is split into:
 
 ## 5. Engineering Notes
 
-* Application layer remains UI-agnostic.
+* Application layer remains UI-agnostic and infrastructure-agnostic.
+* Presentation and Application stay free of direct `Infrastructure` references; the host composes implementations at runtime.
 * Tray dependency cache stays separate from UI preview cache on purpose.
 * `Mods`, `Tray`, and `Save` now share the same background prewarm foundation, while keeping domain-specific stores separate.
 * `Save` preview is descriptor-first; dependency analysis uses on-demand artifacts.

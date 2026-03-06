@@ -15,8 +15,11 @@
 ## 2. 依赖方向
 
 - 是否引入了 `Application -> Presentation` 反向依赖？
+- 是否引入了 `Application -> Infrastructure` 直接依赖？
+- 是否引入了 `Presentation -> Infrastructure` 直接依赖？
 - 是否引入了 `Feature Engine -> Presentation` 反向依赖？
 - 是否因为图省事把宿主级实现塞进了 `Presentation` 并提升成 `public`？
+- 如果 `Presentation` 或 `Application` 需要某个基础设施能力，是否改为依赖 `Application` 契约并通过 Host DI 组合，而不是直接加项目引用？
 - 如果发生跨程序集访问，是否确认这是共享能力而不是文件放错位置？
 
 ## 3. 目录与命名空间

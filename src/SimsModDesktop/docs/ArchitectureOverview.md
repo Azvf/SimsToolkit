@@ -27,6 +27,7 @@ src/
 - `Program.cs` boots Avalonia.
 - `Composition/ServiceCollectionExtensions.cs` is the root composition point.
 - `Views/` contains Avalonia XAML.
+- This is the only assembly that references `Presentation`, `Application`, and `Infrastructure` together.
 
 ### 2.2 Application
 
@@ -43,7 +44,7 @@ src/
   - `ITrayWarmupService`
   - `ISaveWarmupService`
 
-This layer should not know about Avalonia, SQLite, or shell-specific concerns.
+This layer may depend on feature engines such as `PackageCore`, `SaveData`, and `TrayDependencyEngine`, but it should not know about Avalonia, SQLite-backed infrastructure implementations, or shell-specific concerns.
 
 ### 2.3 Presentation
 
@@ -55,7 +56,7 @@ This layer should not know about Avalonia, SQLite, or shell-specific concerns.
 - warmup services for mods, tray, save, and startup prewarm
 - background prewarm scheduling and UI activity tracking
 
-This layer owns page behavior and state, but delegates real work to Application/Infrastructure services.
+This layer owns page behavior and state, but delegates real work through `Application` contracts and feature-engine interfaces. The `Presentation` assembly does not reference `Infrastructure`; concrete infrastructure implementations are composed by the desktop host at runtime.
 
 ### 2.4 Infrastructure
 
@@ -68,6 +69,8 @@ This layer owns page behavior and state, but delegates real work to Application/
 - save preview descriptor/artifact stores and builders
 - app cache maintenance
 
+This layer references `Application` plus the feature engines and provides concrete implementations for the service interfaces consumed by the host and presentation flows.
+
 ### 2.5 Feature Engines
 
 - `SimsModDesktop.PackageCore`: DBPF/package parsing and path identity
@@ -78,6 +81,53 @@ These projects encapsulate feature-heavy domains that are reused by Infrastructu
 
 ## 3. Composition and Startup
 
+Compile-time dependency graph:
+
+```mermaid
+flowchart LR
+    subgraph Root["Composition Root"]
+        direction TB
+        Host["SimsModDesktop"]
+    end
+
+    subgraph Layers["Layered Libraries"]
+        direction TB
+        Pres["Presentation"]
+        App["Application"]
+        Infra["Infrastructure"]
+    end
+
+    subgraph Engines["Feature Engines"]
+        direction TB
+        Tray["TrayDependencyEngine"]
+        Save["SaveData"]
+        Core["PackageCore"]
+    end
+
+    Host --> Pres
+    Host --> App
+    Host --> Infra
+    Host --> Tray
+    Host --> Save
+    Host --> Core
+
+    Pres --> App
+    Pres --> Tray
+    Pres --> Save
+
+    App --> Tray
+    App --> Save
+    App --> Core
+
+    Infra --> App
+    Infra --> Tray
+    Infra --> Save
+    Infra --> Core
+
+    Tray --> Core
+    Save --> Core
+```
+
 The host wires services in four steps:
 
 1. `AddSimsModDesktopApplication()`
@@ -86,31 +136,65 @@ The host wires services in four steps:
 4. `AddDesktopShellAdapters()`
 
 ```mermaid
-graph TD
-    Program["Program.Main"] --> Avalonia["Avalonia App Startup"]
-    Avalonia --> Host["SimsModDesktop Host"]
-    Host --> Compose["ServiceCollectionExtensions.AddSimsDesktopShell"]
-    Compose --> App["Application registrations"]
-    Compose --> Pres["Presentation registrations"]
-    Compose --> Infra["Infrastructure registrations"]
-    Compose --> Shell["Desktop shell adapters"]
-    Shell --> MainShell["MainShellViewModel"]
-    Shell --> MainWindow["MainWindowViewModel"]
-    Shell --> Saves["SaveWorkspaceViewModel"]
+flowchart TB
+    Program["Program.Main"] --> Avalonia["Avalonia startup"]
+    Avalonia --> Compose["AddSimsDesktopShell()"]
+
+    subgraph Steps["Registration steps"]
+        direction LR
+        AppReg["AddSimsModDesktopApplication()"]
+        PresReg["AddSimsModDesktopPresentation()"]
+        InfraReg["AddSimsModDesktopInfrastructure()"]
+        ShellReg["AddDesktopShellAdapters()"]
+    end
+
+    subgraph Services["Registered service groups"]
+        direction LR
+        AppSvc["planners / coordinators / validators"]
+        PresSvc["shell + workspace view models"]
+        InfraSvc["settings / cache / file / tray services"]
+        ShellSvc["dialogs / window host / shell adapters"]
+    end
+
+    Compose --> AppReg --> AppSvc
+    Compose --> PresReg --> PresSvc
+    Compose --> InfraReg --> InfraSvc
+    Compose --> ShellReg --> ShellSvc
 ```
+
+Architecture guard tests enforce that `Application` and `Presentation` do not take a direct assembly dependency on `Infrastructure`.
 
 ## 4. Main Runtime Flows
 
 ### 4.1 Toolkit Execution
 
 ```mermaid
-graph LR
-    UI["Panel ViewModels"] --> Planner["ToolkitActionPlanner"]
-    Planner --> Coordinator["ExecutionCoordinator"]
-    Coordinator --> Engine["UnifiedFileTransformationEngine"]
-    Coordinator --> FindDup["Duplicate pipeline"]
-    Engine --> FileOps["IFileOperationService"]
-    Engine --> Hash["IHashComputationService"]
+flowchart TB
+    subgraph UI["Presentation"]
+        direction TB
+        Panels["Panel ViewModels"]
+        ExecCtl["MainWindowExecutionController"]
+    end
+
+    subgraph AppFlow["Application"]
+        direction TB
+        Planner["ToolkitActionPlanner"]
+        Coordinator["ExecutionCoordinator"]
+        Engine["UnifiedFileTransformationEngine"]
+        FindDup["FindDuplicates path"]
+    end
+
+    subgraph Ports["Runtime service contracts"]
+        direction LR
+        FileOps["IFileOperationService"]
+        Hash["IHashComputationService"]
+    end
+
+    Panels --> ExecCtl --> Planner --> Coordinator
+    Coordinator --> Engine
+    Coordinator --> FindDup
+    Engine --> FileOps
+    Engine --> Hash
 ```
 
 Used for `Organize`, `Flatten`, `Normalize`, `Merge`, and `FindDuplicates`.
@@ -192,7 +276,7 @@ Warmup is now consumed through domain-facing interfaces:
 The most important extension seams are:
 
 - `IPreviewQueryService` for preview-facing paging behavior
-- `IPreviewQueryService` for tray/save descriptor projection logic
+- `IPreviewSourceReader`, `IPreviewProjectionEngine`, `IPreviewPageBuilder`, and `IPreviewMetadataFacade` for preview source loading, filtering, projection, and metadata coordination
 - `TrayRootPreviewSourceReader`, `PreviewProjectionEngine`, `PreviewPageBuilder`, `PreviewMetadataFacade`, `TrayPreviewSnapshotPersistence`, and `SaveDescriptorPreviewSourceReader` as the internal seams behind `PreviewQueryService`
 - `IListQueryCache` for future list-based query acceleration
 - `IModsWarmupService` / `ITrayWarmupService` / `ISaveWarmupService` for domain warmup boundaries
@@ -207,6 +291,7 @@ The repository uses three main test scopes:
 - `SimsModDesktop.PackageCore.Tests`: low-level parsing/path identity behavior
 - `SimsModDesktop.TrayDependencyEngine.Tests`: dependency engine behavior and cache reuse
 - `SimsModDesktop.Tests`: application/presentation/infrastructure behavior and wiring
+- `ArchitectureProjectsTests`, `ArchitectureBoundaryTests`, and `PureArchitectureConstraintsTests` guard the compile-time layer boundaries and prevent legacy execution types from returning
 
 Recommended validation command:
 

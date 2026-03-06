@@ -29,26 +29,27 @@ Relevant implementation anchors:
 
 ```mermaid
 sequenceDiagram
+    autonumber
     participant User
     participant Shell as MainShellViewModel
-    participant ModsVM as ModPreviewWorkspaceViewModel
-    participant TrayVM as TrayPreviewWorkspaceViewModel
-    participant ModsWarmup as IModsWarmupService
-    participant TrayWarmup as ITrayWarmupService
+    participant Mods as Mods workspace
+    participant Tray as Tray workspace
+    participant ModsWarm as IModsWarmupService
+    participant TrayWarm as ITrayWarmupService
 
-    User->>Shell: Switch to Mods or Tray section
-    Shell->>ModsVM: SetIsActive(true) for Mods
-    Shell->>TrayVM: SetIsActive(true) for Tray
+    User->>Shell: Open Mods or Tray
 
     alt Mods section
-        ModsVM->>ModsWarmup: EnsureWorkspaceReadyAsync(modsRoot)
-        ModsWarmup-->>ModsVM: validated and ready
+        Shell->>Mods: Activate workspace
+        Mods->>ModsWarm: EnsureWorkspaceReadyAsync(modsRoot)
+        ModsWarm-->>Mods: Ready
     else Tray section
-        TrayVM->>TrayWarmup: EnsureDependencyReadyAsync(modsRoot)
-        TrayWarmup-->>TrayVM: validated and ready snapshot
+        Shell->>Tray: Activate workspace
+        Tray->>TrayWarm: EnsureDependencyReadyAsync(modsRoot)
+        TrayWarm-->>Tray: Ready snapshot
     end
 
-    Note over ModsWarmup,TrayWarmup: Shared runtime helpers still use a keyed SemaphoreSlim gate\nper ModsRoot, but page callers only see domain warmup services
+    Note over ModsWarm,TrayWarm: Shared keyed gating remains internal.\nPages only depend on the domain warmup services.
 ```
 
 ---
@@ -57,41 +58,35 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
+    autonumber
     participant User
-    participant ModsVM as ModPreviewWorkspaceViewModel
+    participant Mods as ModPreviewWorkspaceViewModel
     participant Warmup as IModsWarmupService
     participant Inventory as IModPackageInventoryService
-    participant AppCache as app-cache.db
+    participant Cache as app-cache.db
     participant Indexer as IModItemIndexScheduler
     participant Catalog as IModItemCatalogService
 
-    User->>ModsVM: Open Mods page
-    ModsVM->>ModsVM: Enter blocking loading state
-    ModsVM->>Warmup: EnsureWorkspaceReadyAsync(modsRoot)
-
-    Warmup->>Warmup: Wait for serial gate
+    User->>Mods: Open page
+    Mods->>Warmup: EnsureWorkspaceReadyAsync(modsRoot)
     Warmup->>Inventory: RefreshAsync(modsRoot, progress)
+    Inventory->>Cache: Load previous inventory rows
+    Note over Inventory,Cache: Scan Mods/**/*.package,\ncompute Added / Changed / Removed / Unchanged,\npersist inventory + InventoryVersion
+    Inventory-->>Warmup: Refresh result
 
-    Inventory->>Inventory: Scan Mods/**/*.package
-    Inventory->>AppCache: Load previous inventory rows
-    Inventory->>Inventory: Compute Added / Changed / Removed / Unchanged
-    Inventory->>AppCache: Persist new inventory + InventoryVersion
-    Inventory-->>Warmup: ModPackageInventoryRefreshResult
-
-    alt Same root and same inventory already ready in session
-        Warmup-->>ModsVM: ready
-    else Fast refresh required
-        Warmup->>Indexer: QueueRefreshAsync(changed, removed, AllowDeepEnrichment=false)
+    alt Session already has a ready snapshot
+        Warmup-->>Mods: Ready
+    else Fast refresh needed
+        Warmup->>Indexer: QueueRefreshAsync(changed, removed, fast only)
         Indexer-->>Warmup: Fast pass complete
-        Warmup-->>ModsVM: ready
+        Warmup-->>Mods: Ready
     end
 
-    ModsVM->>Catalog: QueryPageAsync(current query)
-    Catalog-->>ModsVM: Real list rows
-    ModsVM->>ModsVM: Exit blocking loading state
-    ModsVM->>Warmup: QueueModsPriorityDeepEnrichment(current page packages)
+    Mods->>Catalog: QueryPageAsync(current query)
+    Catalog-->>Mods: Page rows
+    Mods->>Warmup: QueuePriorityDeepEnrichment(current page)
 
-    Note over ModsVM,Warmup: Current-page detail enrichment continues in background\nbut the list is already based on validated data
+    Note over Mods,Warmup: The page becomes usable after validated rows load.\nDetail enrichment keeps running in the background.
 ```
 
 ---
@@ -100,44 +95,41 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
+    autonumber
     participant User
-    participant TrayVM as TrayPreviewWorkspaceViewModel
+    participant Tray as TrayPreviewWorkspaceViewModel
     participant Warmup as ITrayWarmupService
     participant Inventory as IModPackageInventoryService
     participant AppCache as app-cache.db
     participant PkgCache as IPackageIndexCache
-    participant TrayCache as TrayDependencyPackageIndex/cache.db
-    participant TrayPreview as IPreviewQueryService
+    participant DepCache as TrayDependencyPackageIndex/cache.db
+    participant Preview as IPreviewQueryService
 
-    User->>TrayVM: Open Tray page
-    TrayVM->>TrayVM: Enter blocking loading state
-    TrayVM->>Warmup: EnsureDependencyReadyAsync(modsRoot)
-
-    Warmup->>Warmup: Wait for serial gate
+    User->>Tray: Open page
+    Tray->>Warmup: EnsureDependencyReadyAsync(modsRoot)
     Warmup->>Inventory: RefreshAsync(modsRoot, progress)
     Inventory->>AppCache: Validate and persist inventory
-    Inventory-->>Warmup: InventoryResult + InventoryVersion
+    Inventory-->>Warmup: Inventory result + version
 
-    alt Same root and same snapshot already ready in session
-        Warmup-->>TrayVM: ready snapshot
-    else Try persisted snapshot
+    alt Session already has a ready snapshot
+        Warmup-->>Tray: Ready snapshot
+    else Load or build snapshot
         Warmup->>PkgCache: TryLoadSnapshotAsync(modsRoot, inventoryVersion)
-        alt Persisted hit
-            PkgCache->>TrayCache: Read PackageIndexSnapshots
-            PkgCache-->>Warmup: snapshot
-        else Persisted miss
-            Warmup->>PkgCache: BuildSnapshotAsync(package files, changed files, removed paths)
-            PkgCache->>TrayCache: Persist (ModsRootPath, InventoryVersion, SnapshotJson)
-            PkgCache-->>Warmup: snapshot
+        alt Persisted snapshot exists
+            PkgCache->>DepCache: Read PackageIndexSnapshots
+            PkgCache-->>Warmup: Snapshot
+        else Snapshot must be rebuilt
+            Note over Warmup,PkgCache: Build from package files,\nchanged files, and removed paths
+            PkgCache->>DepCache: Persist new snapshot
+            PkgCache-->>Warmup: Snapshot
         end
-        Warmup-->>TrayVM: ready snapshot
+        Warmup-->>Tray: Ready snapshot
     end
 
-    TrayVM->>TrayVM: Mark IsTrayDependencyCacheReady = true
-    TrayVM->>TrayPreview: LoadAsync / LoadPageAsync
-    TrayPreview-->>TrayVM: Tray page data
+    Tray->>Preview: LoadAsync / LoadPageAsync
+    Preview-->>Tray: Page data
 
-    Note over TrayVM: Thumbnail and metadata loading stay lazy\nand are not part of blocking warmup
+    Note over Tray,Preview: Thumbnail and metadata loading stay lazy\noutside the blocking warmup path.
 ```
 
 ---
@@ -146,24 +138,23 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
+    autonumber
     participant User
-    participant ExportCtl as MainWindowTrayExportController
+    participant Export as MainWindowTrayExportController
     participant Warmup as ITrayWarmupService
-    participant ExportSvc as TrayDependencyExportService
+    participant Service as TrayDependencyExportService
 
-    User->>ExportCtl: Export selected Tray items
-    ExportCtl->>Warmup: TryGetReadySnapshot(modsRoot)
+    User->>Export: Export selected items
+    Export->>Warmup: TryGetReadySnapshot(modsRoot)
 
-    alt Snapshot is not ready
-        Warmup-->>ExportCtl: false
-        ExportCtl->>ExportCtl: Block export
-        Note over ExportCtl: Logs trayexport.blocked.cache-not-ready\nNo hidden Mods validation
-    else Snapshot is ready
-        Warmup-->>ExportCtl: snapshot
-        ExportCtl->>ExportSvc: ExportAsync(request with PreloadedSnapshot)
-        ExportSvc->>ExportSvc: Validate snapshot matches ModsRoot
-        ExportSvc->>ExportSvc: Parse tray, match direct refs, expand deps, copy files
-        ExportSvc-->>ExportCtl: Export result
+    alt Snapshot missing
+        Warmup-->>Export: false
+        Note over Export: Block export and log\ntrayexport.blocked.cache-not-ready
+    else Snapshot ready
+        Warmup-->>Export: snapshot
+        Export->>Service: ExportAsync(request + PreloadedSnapshot)
+        Note over Service: Validate ModsRoot match,\nparse tray bundle,\nexpand deps,\ncopy files
+        Service-->>Export: Export result
     end
 ```
 
@@ -173,21 +164,21 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
+    autonumber
     participant User
-    participant ExecCtl as MainWindowExecutionController
+    participant Exec as MainWindowExecutionController
     participant Warmup as ITrayWarmupService
-    participant AnalyzeSvc as TrayDependencyAnalysisService
+    participant Service as TrayDependencyAnalysisService
 
-    User->>ExecCtl: Run Tray Dependencies
-    ExecCtl->>Warmup: EnsureDependencyReadyAsync(modsRoot)
-    Warmup-->>ExecCtl: ready snapshot
+    User->>Exec: Run Tray Dependencies
+    Exec->>Warmup: EnsureDependencyReadyAsync(modsRoot)
+    Warmup-->>Exec: Ready snapshot
 
-    ExecCtl->>AnalyzeSvc: AnalyzeAsync(request with PreloadedSnapshot)
-    AnalyzeSvc->>AnalyzeSvc: Validate snapshot exists and matches ModsRoot
-    AnalyzeSvc->>AnalyzeSvc: Parse tray, match direct refs, expand deps, write outputs
-    AnalyzeSvc-->>ExecCtl: Analysis result
+    Exec->>Service: AnalyzeAsync(request + PreloadedSnapshot)
+    Note over Service: Validate snapshot,\nparse tray bundle,\nexpand dependencies,\nwrite outputs
+    Service-->>Exec: Analysis result
 
-    Note over AnalyzeSvc: Analysis no longer scans Mods or builds cache on its own
+    Note over Service: Analysis no longer scans Mods\nor builds cache on its own.
 ```
 
 ---
@@ -196,28 +187,29 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
+    autonumber
     participant User
-    participant ShellOps as ShellSystemOperationsController
+    participant Shell as ShellSystemOperationsController
     participant CacheSvc as IAppCacheMaintenanceService
-    participant ModsVM as ModPreviewWorkspaceViewModel
-    participant TrayVM as TrayPreviewWorkspaceViewModel
-    participant ModsWarmup as IModsWarmupService
-    participant TrayWarmup as ITrayWarmupService
-    participant SaveWarmup as ISaveWarmupService
+    participant Mods as ModPreviewWorkspaceViewModel
+    participant Tray as TrayPreviewWorkspaceViewModel
+    participant ModsWarm as IModsWarmupService
+    participant TrayWarm as ITrayWarmupService
+    participant SaveWarm as ISaveWarmupService
 
-    User->>ShellOps: Clear Cache
-    ShellOps->>CacheSvc: ClearAsync()
-    CacheSvc-->>ShellOps: Disk cache folders cleared
+    User->>Shell: Clear Cache
+    Shell->>CacheSvc: ClearAsync()
+    CacheSvc-->>Shell: Disk caches cleared
 
-    ShellOps->>ModsVM: ResetAfterCacheClear()
-    ModsVM->>ModsWarmup: Reset()
+    Shell->>Mods: ResetAfterCacheClear()
+    Mods->>ModsWarm: Reset()
 
-    ShellOps->>TrayVM: ResetAfterCacheClear()
-    TrayVM->>TrayWarmup: Reset()
+    Shell->>Tray: ResetAfterCacheClear()
+    Tray->>TrayWarm: Reset()
 
-    ShellOps->>SaveWarmup: Reset()
+    Shell->>SaveWarm: Reset()
 
-    Note over ModsWarmup,TrayWarmup: Domain warmup state is cleared\nNext page entry rebuilds blocking warmup state
+    Note over ModsWarm,TrayWarm: Warmup state is cleared.\nNext page entry rebuilds blocking readiness.
 ```
 
 ---

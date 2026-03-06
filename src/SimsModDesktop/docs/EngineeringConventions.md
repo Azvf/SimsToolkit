@@ -158,17 +158,28 @@
 * `Desktop Host -> Presentation`
 * `Desktop Host -> Application`
 * `Desktop Host -> Infrastructure`
+* `Desktop Host -> Feature Engines`
 * `Presentation -> Application`
 * `Presentation -> Feature Engines`
-* `Application -> Infrastructure.Abstractions`（通过接口或 contracts 间接依赖）
-* `Infrastructure -> Application.Contracts`
+* `Application -> Feature Engines`
+* `Infrastructure -> Application`
+* `Infrastructure -> Feature Engines`
+* `SaveData -> PackageCore`
+* `TrayDependencyEngine -> PackageCore`
 
 当前禁止的方向：
 
 * `Application -> Presentation`
+* `Application -> Infrastructure`
+* `Presentation -> Infrastructure`
 * `Infrastructure -> Presentation`（特殊共享 contract 命名空间除外，但应尽量避免扩散）
-* `Feature Engines -> Presentation`
+* `Feature Engines -> Application / Presentation / Infrastructure`
 * `Presentation` 中放置必须由 `Desktop Host` 直接消费的“宿主级专用代码”
+
+补充说明：
+
+* `Presentation` 通过 `Application` 中声明的接口与契约工作，具体实现可以位于 `Presentation` 或 `Infrastructure`，但由 `Desktop Host` 在组合根完成装配。
+* “运行时拿到某个基础设施实现”不等于“允许直接添加 `Presentation -> Infrastructure` 或 `Application -> Infrastructure` 的项目引用”。
 
 判断规则：
 

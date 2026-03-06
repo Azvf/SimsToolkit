@@ -19,8 +19,8 @@ Legacy strategy/router artifacts are no longer used.
 1. Add enum value in `Application/Models/SimsAction.cs`.
 2. Add input model in `Application/Requests`.
 3. Add validator in `Application/Validation` and register it in `Application/ServiceRegistration/ApplicationServiceRegistration.cs`.
-4. Extend module state contract if needed in `Application/Modules/ActionModuleStateContracts.cs`.
-5. Add/extend panel view model in `Presentation/ViewModels/Panels` and implement the related module state contract.
+4. Extend the module state contract in `Application/Modules/ActionModuleStateContracts.cs` only if the action needs UI-owned module state. Keep the contract in `Application`, not in `Presentation`.
+5. Add/extend panel view model in `Presentation/ViewModels/Panels` and implement the related `Application` module state contract.
 6. Register panel view model and state interface mapping in `Presentation/ServiceRegistration/PresentationServiceRegistration.cs`.
 7. Extend `ToolkitActionPlanner`:
    * include action in supported actions list

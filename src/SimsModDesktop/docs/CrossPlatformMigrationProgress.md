@@ -1,9 +1,10 @@
-# 跨平台迁移进展（截至 2026-03-03）
+# 跨平台迁移进展（截至 2026-03-06）
 
 ## 1. 已完成
 
 ### 1.1 架构层
-* 桌面主执行链路已完成 .NET 分层化：Presentation -> Application -> Infrastructure。
+* 桌面主链路已完成 .NET 分层化：`Presentation` 依赖 `Application` 与 feature engines，`Infrastructure` 实现 `Application` 契约，并由 `Desktop Host` 在组合根完成装配。
+* `Application` 与 `Presentation` 均已通过架构守卫测试，禁止直接引用 `Infrastructure`。
 * 历史脚本依赖已清理，桌面端主执行流程不再依赖 PowerShell。
 * 架构守卫测试已落地，防止旧组件回流。
 
@@ -37,4 +38,4 @@
 ## 4. 当前结论
 
 迁移工作已完成“架构落地”和“核心能力迁移”，进入“行为收敛与工程化完善”阶段。  
-现阶段主要风险不在功能缺失，而在双链路长期并行带来的一致性与维护成本。
+现阶段主要风险不在功能缺失，而在行为一致性、性能回归控制，以及文档描述与实现边界发生漂移。
