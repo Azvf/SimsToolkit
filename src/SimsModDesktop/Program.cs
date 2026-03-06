@@ -13,6 +13,7 @@ class Program
     public static void Main(string[] args)
     {
         AppStartupTelemetry.ResetForMainEntry();
+        GlobalExceptionTelemetry.Install();
         AppStartupTelemetry.RecordMilestone("process.main.enter");
         var builder = BuildAvaloniaApp();
         AppStartupTelemetry.RecordMilestone("avalonia.app.built");

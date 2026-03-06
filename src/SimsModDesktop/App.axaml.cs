@@ -24,11 +24,13 @@ public partial class App : Avalonia.Application
     public override void OnFrameworkInitializationCompleted()
     {
         AppStartupTelemetry.RecordMilestone("framework.init.completed");
+        GlobalExceptionTelemetry.AttachAvaloniaDispatcherHook();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             _serviceProvider = BuildServiceProvider();
             _logger = _serviceProvider.GetRequiredService<ILogger<App>>();
+            GlobalExceptionTelemetry.BindLogger(_logger);
             AppStartupTelemetry.BindLogger(_logger);
             AppStartupTelemetry.RecordMilestone("service_provider.ready", _logger);
             var themeService = _serviceProvider.GetRequiredService<IAppThemeService>();
