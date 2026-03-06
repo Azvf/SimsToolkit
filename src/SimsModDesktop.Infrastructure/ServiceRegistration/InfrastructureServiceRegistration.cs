@@ -11,7 +11,7 @@ using SimsModDesktop.Application.Services;
 using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Application.TextureProcessing;
-using SimsModDesktop.Application.TrayPreview;
+using SimsModDesktop.Application.Preview;
 using SimsModDesktop.Infrastructure.Configuration;
 using SimsModDesktop.Infrastructure.Caching;
 using SimsModDesktop.Infrastructure.Localization;
@@ -72,7 +72,7 @@ public static class InfrastructureServiceRegistration
         services.AddSingleton<TrayEmbeddedImageExtractor>();
         services.AddSingleton<ITrayMetadataService, TrayMetadataService>();
         services.AddSingleton<ITrayThumbnailService, TrayThumbnailService>();
-        services.AddSingleton<ISimsTrayPreviewService, SimsTrayPreviewService>();
+        services.AddSingleton<IPreviewQueryService, PreviewQueryService>();
 
         services.AddSingleton<ISaveCatalogService, SaveCatalogService>();
         services.AddSingleton<ISaveHouseholdReader, SaveHouseholdReader>();

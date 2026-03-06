@@ -1,8 +1,10 @@
 using Microsoft.Extensions.DependencyInjection;
 using SimsModDesktop.Application.Caching;
 using SimsModDesktop.Application.Modules;
+using SimsModDesktop.Application.Warmup;
 using SimsModDesktop.Presentation.Shell;
 using SimsModDesktop.Presentation.Services;
+using SimsModDesktop.Presentation.Warmup;
 using SimsModDesktop.Presentation.ViewModels;
 using SimsModDesktop.Presentation.ViewModels.Panels;
 using SimsModDesktop.Presentation.ViewModels.Preview;
@@ -22,11 +24,24 @@ public static class PresentationServiceRegistration
         services.AddSingleton<ITrayDependenciesLauncher, TrayDependenciesLauncher>();
         services.AddSingleton<IUiActivityMonitor, UiActivityMonitor>();
         services.AddSingleton<IBackgroundCachePrewarmCoordinator, BackgroundCachePrewarmCoordinator>();
-        services.AddSingleton<AppIdlePrewarmBootstrapper>();
+        services.AddSingleton<MainWindowCacheWarmupController>();
+        services.AddSingleton<IModsWarmupService, ModsWarmupService>();
+        services.AddSingleton<ITrayWarmupService, TrayWarmupService>();
+        services.AddSingleton<ISaveWarmupService, SaveWarmupService>();
+        services.AddSingleton<StartupPrewarmService>(sp =>
+            new StartupPrewarmService(
+                sp.GetRequiredService<ITrayWarmupService>(),
+                sp.GetRequiredService<IModsWarmupService>(),
+                sp.GetRequiredService<ISaveWarmupService>(),
+                sp.GetRequiredService<IUiActivityMonitor>(),
+                sp.GetService<Microsoft.Extensions.Logging.ILogger<StartupPrewarmService>>(),
+                sp.GetService<SimsModDesktop.Application.Configuration.IConfigurationProvider>(),
+                sp.GetService<SimsModDesktop.PackageCore.IPathIdentityResolver>(),
+                sp.GetRequiredService<MainWindowCacheWarmupController>()));
+        services.AddSingleton<IStartupPrewarmService>(sp => sp.GetRequiredService<StartupPrewarmService>());
         services.AddSingleton<MainWindowStatusController>();
         services.AddSingleton<MainWindowSettingsPersistenceController>();
         services.AddSingleton<MainWindowRecoveryController>();
-        services.AddSingleton<MainWindowCacheWarmupController>();
         services.AddSingleton<MainWindowExecutionController>();
         services.AddSingleton<MainWindowTrayPreviewController>();
         services.AddSingleton<MainWindowTrayExportController>();

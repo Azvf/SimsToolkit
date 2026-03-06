@@ -3,8 +3,10 @@ using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Application.Configuration;
 using SimsModDesktop.Application.Mods;
 using SimsModDesktop.Application.TextureCompression;
+using SimsModDesktop.Application.Warmup;
 using SimsModDesktop.Presentation.Services;
 using SimsModDesktop.Presentation.Dialogs;
+using SimsModDesktop.Presentation.Warmup;
 using SimsModDesktop.Presentation.ViewModels;
 using SimsModDesktop.Presentation.ViewModels.Panels;
 using SimsModDesktop.Presentation.ViewModels.Preview;
@@ -27,7 +29,7 @@ public sealed class ModPreviewWorkspaceViewModelTests
             filter,
             catalogService: new FakeCatalogService(),
             indexScheduler: new NoOpScheduler(),
-            cacheWarmupController: CreateCacheWarmupController(),
+            cacheWarmupController: CreateModsWarmupService(),
             inspectService: new FakeInspectService(),
             textureEditService: NullModPackageTextureEditService.Instance,
             fileDialogService: new FakeFileDialogService());
@@ -59,7 +61,7 @@ public sealed class ModPreviewWorkspaceViewModelTests
             filter,
             catalogService: new FakeCatalogService(),
             indexScheduler: scheduler,
-            cacheWarmupController: warmupController,
+            cacheWarmupController: new ModsWarmupService(warmupController),
             inspectService: new FakeInspectService(),
             textureEditService: NullModPackageTextureEditService.Instance,
             fileDialogService: new FakeFileDialogService());
@@ -103,7 +105,7 @@ public sealed class ModPreviewWorkspaceViewModelTests
             filter,
             catalogService: catalogService,
             indexScheduler: scheduler,
-            cacheWarmupController: warmupController,
+            cacheWarmupController: new ModsWarmupService(warmupController),
             inspectService: new FakeInspectService(),
             textureEditService: NullModPackageTextureEditService.Instance,
             fileDialogService: new FakeFileDialogService(),
@@ -199,13 +201,13 @@ public sealed class ModPreviewWorkspaceViewModelTests
         }
     }
 
-    private static MainWindowCacheWarmupController CreateCacheWarmupController()
+    private static IModsWarmupService CreateModsWarmupService()
     {
-        return new MainWindowCacheWarmupController(
+        return new ModsWarmupService(new MainWindowCacheWarmupController(
             new FakeInventoryService(),
             new NoOpScheduler(),
             new FakePackageIndexCache(),
-            NullLogger<MainWindowCacheWarmupController>.Instance);
+            NullLogger<MainWindowCacheWarmupController>.Instance));
     }
 
     private sealed class FakeInventoryService : IModPackageInventoryService
@@ -268,9 +270,21 @@ public sealed class ModPreviewWorkspaceViewModelTests
     {
         public TaskCompletionSource<bool> FirstCallStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public event EventHandler<ModFastBatchAppliedEventArgs>? FastBatchApplied;
-        public event EventHandler<ModEnrichmentAppliedEventArgs>? EnrichmentApplied;
-        public event EventHandler? AllWorkCompleted;
+        public event EventHandler<ModFastBatchAppliedEventArgs>? FastBatchApplied
+        {
+            add { }
+            remove { }
+        }
+        public event EventHandler<ModEnrichmentAppliedEventArgs>? EnrichmentApplied
+        {
+            add { }
+            remove { }
+        }
+        public event EventHandler? AllWorkCompleted
+        {
+            add { }
+            remove { }
+        }
         public bool IsFastPassRunning => false;
         public bool IsDeepPassRunning => false;
 
@@ -342,9 +356,21 @@ public sealed class ModPreviewWorkspaceViewModelTests
 
     private sealed class SilentScheduler : IModItemIndexScheduler
     {
-        public event EventHandler<ModFastBatchAppliedEventArgs>? FastBatchApplied;
-        public event EventHandler<ModEnrichmentAppliedEventArgs>? EnrichmentApplied;
-        public event EventHandler? AllWorkCompleted;
+        public event EventHandler<ModFastBatchAppliedEventArgs>? FastBatchApplied
+        {
+            add { }
+            remove { }
+        }
+        public event EventHandler<ModEnrichmentAppliedEventArgs>? EnrichmentApplied
+        {
+            add { }
+            remove { }
+        }
+        public event EventHandler? AllWorkCompleted
+        {
+            add { }
+            remove { }
+        }
         public bool IsFastPassRunning => false;
         public bool IsDeepPassRunning => false;
 

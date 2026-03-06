@@ -2,8 +2,9 @@ using Avalonia.Threading;
 using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Mods;
-using SimsModDesktop.Application.TrayPreview;
+using SimsModDesktop.Application.Preview;
 using SimsModDesktop.Presentation.Dialogs;
+using SimsModDesktop.Presentation.Warmup;
 using SimsModDesktop.TrayDependencyEngine;
 using SimsModDesktop.Presentation.ViewModels;
 using SimsModDesktop.Presentation.ViewModels.Panels;
@@ -19,7 +20,7 @@ public sealed class TrayPreviewWorkspaceViewModelTests
         using var trayRoot = new TempDirectory();
         using var modsRoot = new TempDirectory();
         var filter = new TrayPreviewPanelViewModel();
-        var runner = new CountingTrayPreviewCoordinator();
+        var runner = new CountingPreviewQueryService();
         var trayDependencies = new TrayDependenciesPanelViewModel
         {
             ModsPath = modsRoot.Path
@@ -35,7 +36,7 @@ public sealed class TrayPreviewWorkspaceViewModelTests
             new PassiveTrayThumbnailService(),
             new FakeFileDialogService(),
             new FakeTrayDependencyExportService(),
-            cacheWarmupController,
+            new TrayWarmupService(cacheWarmupController),
             trayDependencies);
 
         filter.TrayRoot = trayRoot.Path;
@@ -68,7 +69,7 @@ public sealed class TrayPreviewWorkspaceViewModelTests
         using var trayRoot = new TempDirectory();
         using var modsRoot = new TempDirectory();
         var filter = new TrayPreviewPanelViewModel();
-        var runner = new CountingTrayPreviewCoordinator();
+        var runner = new CountingPreviewQueryService();
         var trayDependencies = new TrayDependenciesPanelViewModel
         {
             ModsPath = modsRoot.Path
@@ -79,13 +80,14 @@ public sealed class TrayPreviewWorkspaceViewModelTests
             new NoOpModItemIndexScheduler(),
             packageCache,
             NullLogger<MainWindowCacheWarmupController>.Instance);
+        var trayWarmupService = new TrayWarmupService(cacheWarmupController);
         var workspace = new TrayPreviewWorkspaceViewModel(
             filter,
             runner,
             new PassiveTrayThumbnailService(),
             new FakeFileDialogService(),
             new FakeTrayDependencyExportService(),
-            cacheWarmupController,
+            trayWarmupService,
             trayDependencies);
 
         filter.TrayRoot = trayRoot.Path;
@@ -100,7 +102,7 @@ public sealed class TrayPreviewWorkspaceViewModelTests
 
         packageCache.ReleaseBuild();
         await WaitForAsync(
-            () => cacheWarmupController.TryGetReadyTraySnapshot(modsRoot.Path, out _),
+            () => trayWarmupService.TryGetReadySnapshot(modsRoot.Path, out _),
             timeoutMs: 3000);
 
         workspace.SetIsActive(true);
@@ -113,7 +115,7 @@ public sealed class TrayPreviewWorkspaceViewModelTests
         Dispatcher.UIThread.RunJobs(null);
     }
 
-    private sealed class CountingTrayPreviewCoordinator : ITrayPreviewCoordinator
+    private sealed class CountingPreviewQueryService : IPreviewQueryService
     {
         public int LoadCount { get; private set; }
 
@@ -144,6 +146,7 @@ public sealed class TrayPreviewWorkspaceViewModelTests
         }
 
         public Task<TrayPreviewPageResult> LoadPageAsync(
+            TrayPreviewInput input,
             int requestedPageIndex,
             CancellationToken cancellationToken = default)
         {

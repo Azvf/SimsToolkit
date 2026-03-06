@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using SimsModDesktop.PackageCore;
+using SimsModDesktop.Application.Warmup;
 using SimsModDesktop.Presentation.Diagnostics;
 using SimsModDesktop.TrayDependencyEngine;
 using SimsModDesktop.Presentation.ViewModels.Panels;
@@ -15,19 +16,19 @@ public sealed class MainWindowTrayExportController
     private const int MaxConcurrentItemExports = 8;
 
     private readonly ITrayDependencyExportService _trayDependencyExportService;
-    private readonly MainWindowCacheWarmupController _cacheWarmupController;
+    private readonly ITrayWarmupService _trayWarmupService;
     private readonly ILogger<MainWindowTrayExportController> _logger;
     private readonly IPathIdentityResolver _pathIdentityResolver;
     private MainWindowTrayExportHost? _hookedHost;
 
     public MainWindowTrayExportController(
         ITrayDependencyExportService trayDependencyExportService,
-        MainWindowCacheWarmupController cacheWarmupController,
+        ITrayWarmupService trayWarmupService,
         ILogger<MainWindowTrayExportController> logger,
         IPathIdentityResolver? pathIdentityResolver = null)
     {
         _trayDependencyExportService = trayDependencyExportService;
-        _cacheWarmupController = cacheWarmupController;
+        _trayWarmupService = trayWarmupService;
         _logger = logger;
         _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
     }
@@ -168,7 +169,7 @@ public sealed class MainWindowTrayExportController
             LogTraySelectionItemContext(host, dependencyRequest.Request);
         }
 
-        if (!_cacheWarmupController.TryGetReadyTraySnapshot(queueEntries[0].Request.ModsRootPath, out var preloadedSnapshot))
+        if (!_trayWarmupService.TryGetReadySnapshot(queueEntries[0].Request.ModsRootPath, out var preloadedSnapshot))
         {
             _logger.LogWarning(
                 "{Event} status={Status} domain={Domain} modsPath={ModsPath} reason={Reason}",

@@ -1,26 +1,27 @@
 using SimsModDesktop.Application.Saves;
 using SimsModDesktop.Application.Requests;
-using SimsModDesktop.Application.TrayPreview;
+using SimsModDesktop.Application.Caching;
 using SimsModDesktop.Application.Configuration;
+using SimsModDesktop.Application.Preview;
 using SimsModDesktop.PackageCore;
 using Avalonia.Threading;
 using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.Presentation.Services;
+using SimsModDesktop.Presentation.Save;
 using SimsModDesktop.SaveData.Models;
 using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 using SimsModDesktop.Presentation.ViewModels.Preview;
+using SimsModDesktop.Application.Warmup;
 
 namespace SimsModDesktop.Presentation.ViewModels.Saves;
 
 public sealed class SaveWorkspaceViewModel : ObservableObject
 {
-    private readonly ISaveHouseholdCoordinator _coordinator;
     private readonly IFileDialogService _fileDialogService;
-    private readonly ITrayDependenciesLauncher _trayDependenciesLauncher;
     private readonly IPathIdentityResolver _pathIdentityResolver;
-    private readonly IUiActivityMonitor _uiActivityMonitor;
-    private readonly IConfigurationProvider? _configurationProvider;
-    private readonly MainWindowCacheWarmupController? _cacheWarmupController;
+    private readonly SavePreviewLifecycleController _lifecycleController;
+    private readonly SaveDependencyAnalysisController _dependencyAnalysisController;
+    private readonly SaveExportController _exportController;
 
     private CancellationTokenSource? _selectionLoadCts;
     private CancellationTokenSource? _cacheBuildCts;
@@ -47,23 +48,28 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
         ISaveHouseholdCoordinator coordinator,
         IFileDialogService fileDialogService,
         ITrayDependenciesLauncher trayDependenciesLauncher,
-        ITrayPreviewCoordinator trayPreviewCoordinator,
+        IPreviewQueryService previewQueryService,
         ITrayThumbnailService trayThumbnailService,
-        MainWindowCacheWarmupController? cacheWarmupController = null,
+        ISaveWarmupService? saveWarmupService = null,
         IPathIdentityResolver? pathIdentityResolver = null,
         IUiActivityMonitor? uiActivityMonitor = null,
         IConfigurationProvider? configurationProvider = null)
     {
-        _coordinator = coordinator;
         _fileDialogService = fileDialogService;
-        _trayDependenciesLauncher = trayDependenciesLauncher;
-        _cacheWarmupController = cacheWarmupController;
         _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
-        _uiActivityMonitor = uiActivityMonitor ?? new UiActivityMonitor();
-        _configurationProvider = configurationProvider;
+        _lifecycleController = new SavePreviewLifecycleController(
+            coordinator,
+            uiActivityMonitor ?? new UiActivityMonitor(),
+            configurationProvider,
+            saveWarmupService);
+        _dependencyAnalysisController = new SaveDependencyAnalysisController(
+            coordinator,
+            trayDependenciesLauncher,
+            saveWarmupService);
+        _exportController = new SaveExportController(coordinator);
 
         Filter = new SavePreviewFilterViewModel();
-        Surface = new TrayLikePreviewSurfaceViewModel(trayPreviewCoordinator, trayThumbnailService);
+        Surface = new TrayLikePreviewSurfaceViewModel(previewQueryService, trayThumbnailService);
         Surface.Configure(Filter, BuildCurrentPreviewInput, PreviewSurfaceSelectionMode.Single);
         Surface.SetFooter("Save Preview", ExportSummaryText);
         Surface.PropertyChanged += OnSurfacePropertyChanged;
@@ -349,7 +355,7 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
         IsBusy = true;
         try
         {
-            var saveFiles = await Task.Run(() => _coordinator.GetSaveFiles(SavesPath));
+            var saveFiles = await _lifecycleController.GetSaveFilesAsync(SavesPath);
             _hasPendingRefresh = false;
             SaveFiles = saveFiles;
 
@@ -405,8 +411,7 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
         IsBusy = true;
         try
         {
-            _cacheWarmupController?.CancelSavePreviewWarmup(selectedSavePath, "clear-preview-data");
-            await Task.Run(() => _coordinator.ClearPreviewData(selectedSavePath));
+            await _lifecycleController.ClearPreviewDataAsync(selectedSavePath);
 
             if (SelectedSave is null ||
                 !string.Equals(NormalizePath(SelectedSave.FilePath), selectedSavePath, StringComparison.OrdinalIgnoreCase))
@@ -470,8 +475,8 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
         _pendingSelectedSavePath = NormalizePath(SelectedSave.FilePath);
         CancelArtifactPrime();
         var selectedSave = SelectedSave;
-        if (_coordinator.TryGetPreviewDescriptor(selectedSave.FilePath, out var manifest) &&
-            _coordinator.IsPreviewDescriptorCurrent(selectedSave.FilePath, manifest))
+        if (_lifecycleController.TryGetPreviewDescriptor(selectedSave.FilePath, out var manifest) &&
+            _lifecycleController.IsPreviewDescriptorCurrent(selectedSave.FilePath, manifest))
         {
             _currentManifest = manifest;
             _currentSnapshot = null;
@@ -506,33 +511,22 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
         try
         {
             SavePreviewDescriptorBuildResult result;
-            if (_cacheWarmupController is not null)
+            var observer = new CacheWarmupObserver
             {
-                var host = new MainWindowCacheWarmupHost
+                ReportProgress = progress =>
                 {
-                    ReportProgress = progress =>
-                    {
-                        CacheStatusText = string.IsNullOrWhiteSpace(progress.Detail)
-                            ? $"Building descriptor... {progress.Percent}%"
-                            : $"{progress.Detail} ({progress.Percent}%)";
-                    },
-                    AppendLog = _ => { }
-                };
-                result = await _cacheWarmupController.EnsureSavePreviewDescriptorReadyAsync(
-                    selectedSave.FilePath,
-                    host,
-                    cts.Token);
-            }
-            else
+                    CacheStatusText = string.IsNullOrWhiteSpace(progress.Detail)
+                        ? $"Building descriptor... {progress.Percent}%"
+                        : $"{progress.Detail} ({progress.Percent}%)";
+                }
+            };
+            var progress = new Progress<SavePreviewDescriptorBuildProgress>(update =>
             {
-                var progress = new Progress<SavePreviewDescriptorBuildProgress>(update =>
-                {
-                    CacheStatusText = string.IsNullOrWhiteSpace(update.Detail)
-                        ? $"Building descriptor... {update.Percent}%"
-                        : $"{update.Detail} ({update.Percent}%)";
-                });
-                result = await _coordinator.BuildPreviewDescriptorAsync(selectedSave.FilePath, progress, cts.Token);
-            }
+                CacheStatusText = string.IsNullOrWhiteSpace(update.Detail)
+                    ? $"Building descriptor... {update.Percent}%"
+                    : $"{update.Detail} ({update.Percent}%)";
+            });
+            result = await _lifecycleController.EnsureDescriptorAsync(selectedSave.FilePath, observer, progress, cts.Token);
 
             if (cts.IsCancellationRequested ||
                 SelectedSave is null ||
@@ -629,13 +623,7 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
 
         try
         {
-            var loadResult = await Task.Run(() =>
-            {
-                cts.Token.ThrowIfCancellationRequested();
-                var success = _coordinator.TryLoadHouseholds(selectedSave.FilePath, out var snapshot, out var error);
-                cts.Token.ThrowIfCancellationRequested();
-                return (Success: success, Snapshot: snapshot, Error: error);
-            });
+            var loadResult = await _lifecycleController.LoadHouseholdsAsync(selectedSave.FilePath, cts.Token);
 
             if (cts.IsCancellationRequested ||
                 SelectedSave is null ||
@@ -768,25 +756,9 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
         IsBusy = true;
         try
         {
-            var trayPath = _cacheWarmupController is not null
-                ? await _cacheWarmupController.EnsureSavePreviewArtifactReadyAsync(
-                    SelectedSave.FilePath,
-                    Surface.SelectedPreviewItem.TrayItemKey,
-                    "tray-dependency-analysis")
-                : await _coordinator
-                    .EnsurePreviewArtifactAsync(
-                        SelectedSave.FilePath,
-                        Surface.SelectedPreviewItem.TrayItemKey,
-                        "tray-dependency-analysis")
-                    .ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(trayPath) || !Directory.Exists(trayPath))
-            {
-                StatusText = "The selected save household is not ready for dependency analysis yet.";
-                return;
-            }
-
-            await _trayDependenciesLauncher.RunForTrayItemAsync(trayPath, Surface.SelectedPreviewItem.TrayItemKey);
-            StatusText = "Started tray dependency analysis for the selected save household.";
+            StatusText = await _dependencyAnalysisController.AnalyzeAsync(
+                SelectedSave.FilePath,
+                Surface.SelectedPreviewItem.TrayItemKey);
         }
         catch (Exception ex)
         {
@@ -835,7 +807,7 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
                 GenerateThumbnails = GenerateThumbnails
             };
 
-            var result = await Task.Run(() => _coordinator.Export(request));
+            var result = await _exportController.ExportAsync(request);
             if (!result.Succeeded)
             {
                 StatusText = string.IsNullOrWhiteSpace(result.Error)
@@ -846,23 +818,7 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
             }
 
             StatusText = $"Exported to {result.ExportDirectory}";
-            var lines = new List<string>
-            {
-                $"Instance: {result.InstanceIdHex}",
-                $"Directory: {result.ExportDirectory}",
-                "Files:"
-            };
-            lines.AddRange(result.WrittenFiles
-                .Select(Path.GetFileName)
-                .Where(name => !string.IsNullOrWhiteSpace(name))
-                .Cast<string>());
-            if (result.Warnings.Count > 0)
-            {
-                lines.Add("Warnings:");
-                lines.AddRange(result.Warnings);
-            }
-
-            ExportSummaryText = string.Join(Environment.NewLine, lines);
+            ExportSummaryText = _exportController.BuildSummary(result);
         }
         finally
         {
@@ -925,12 +881,14 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
 
     private void ScheduleIdleArtifactPrime()
     {
-        if (!_isActive ||
-            IsBusy ||
-            SelectedSave is null ||
-            Surface.SelectedPreviewItem is null ||
-            _selectedPreviewHousehold is null ||
-            !GetConfigBool("Performance.IdlePrewarm.SaveArtifactPrimeEnabled", true))
+        var selectedSave = SelectedSave;
+        var selectedPreviewItem = Surface.SelectedPreviewItem;
+        if (!_lifecycleController.ShouldQueueIdleArtifactPrime(
+                _isActive,
+                IsBusy,
+                selectedSave,
+                selectedPreviewItem?.TrayItemKey,
+                _selectedPreviewHousehold))
         {
             return;
         }
@@ -938,51 +896,27 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
         CancelArtifactPrime();
         _artifactPrimeCts = new CancellationTokenSource();
         var token = _artifactPrimeCts.Token;
-        var saveFilePath = SelectedSave.FilePath;
-        var trayItemKey = Surface.SelectedPreviewItem.TrayItemKey;
-        var idleDelay = TimeSpan.FromMilliseconds(Math.Max(1000, GetConfigInt("Performance.IdlePrewarm.DelayMs", 10000)));
+        if (selectedSave is null || selectedPreviewItem is null)
+        {
+            return;
+        }
 
+        var saveFilePath = selectedSave.FilePath;
+        var trayItemKey = selectedPreviewItem.TrayItemKey;
         _ = Task.Run(async () =>
         {
             try
             {
-                while (!token.IsCancellationRequested)
-                {
-                    if (!_isActive || IsBusy || SelectedSave is null || Surface.SelectedPreviewItem is null)
-                    {
-                        return;
-                    }
-
-                    if (!string.Equals(SelectedSave.FilePath, saveFilePath, StringComparison.OrdinalIgnoreCase) ||
-                        !string.Equals(Surface.SelectedPreviewItem.TrayItemKey, trayItemKey, StringComparison.OrdinalIgnoreCase))
-                    {
-                        return;
-                    }
-
-                    if (DateTimeOffset.UtcNow - _uiActivityMonitor.LastInteractionUtc >= idleDelay)
-                    {
-                        if (_cacheWarmupController is not null)
-                        {
-                            _ = _cacheWarmupController.QueueSavePreviewArtifactIdlePrewarm(
-                                saveFilePath,
-                                trayItemKey,
-                                "workspace-idle");
-                        }
-                        else
-                        {
-                            _ = await _coordinator
-                                .EnsurePreviewArtifactAsync(
-                                    saveFilePath,
-                                    trayItemKey,
-                                    "workspace-idle",
-                                    token)
-                                .ConfigureAwait(false);
-                        }
-                        return;
-                    }
-
-                    await Task.Delay(250, token).ConfigureAwait(false);
-                }
+                await _lifecycleController.QueueOrEnsureIdleArtifactPrimeAsync(
+                    saveFilePath,
+                    trayItemKey,
+                    () => _isActive &&
+                          !IsBusy &&
+                          SelectedSave is not null &&
+                          Surface.SelectedPreviewItem is not null &&
+                          string.Equals(SelectedSave.FilePath, saveFilePath, StringComparison.OrdinalIgnoreCase) &&
+                          string.Equals(Surface.SelectedPreviewItem.TrayItemKey, trayItemKey, StringComparison.OrdinalIgnoreCase),
+                    token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -1004,26 +938,6 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
             _artifactPrimeCts?.Dispose();
             _artifactPrimeCts = null;
         }
-    }
-
-    private bool GetConfigBool(string key, bool defaultValue)
-    {
-        if (_configurationProvider is null)
-        {
-            return defaultValue;
-        }
-
-        return _configurationProvider.GetConfigurationAsync<bool?>(key).GetAwaiter().GetResult() ?? defaultValue;
-    }
-
-    private int GetConfigInt(string key, int defaultValue)
-    {
-        if (_configurationProvider is null)
-        {
-            return defaultValue;
-        }
-
-        return _configurationProvider.GetConfigurationAsync<int?>(key).GetAwaiter().GetResult() ?? defaultValue;
     }
 
     private void NotifyStateChanged()

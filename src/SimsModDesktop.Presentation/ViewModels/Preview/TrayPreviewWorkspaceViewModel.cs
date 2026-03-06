@@ -4,6 +4,8 @@ using Avalonia.Threading;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Application.Caching;
+using SimsModDesktop.Application.Preview;
+using SimsModDesktop.Application.Warmup;
 using SimsModDesktop.PackageCore;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.TrayPreview;
@@ -18,7 +20,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
 {
     private readonly IFileDialogService _fileDialogService;
     private readonly ITrayDependencyExportService _trayDependencyExportService;
-    private readonly MainWindowCacheWarmupController _cacheWarmupController;
+    private readonly ITrayWarmupService _trayWarmupService;
     private readonly TrayDependenciesPanelViewModel _trayDependencies;
     private readonly IPathIdentityResolver _pathIdentityResolver;
     private readonly ILogger<TrayPreviewWorkspaceViewModel> _logger;
@@ -35,20 +37,20 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
 
     public TrayPreviewWorkspaceViewModel(
         TrayPreviewPanelViewModel filter,
-        ITrayPreviewCoordinator trayPreviewCoordinator,
+        IPreviewQueryService previewQueryService,
         ITrayThumbnailService trayThumbnailService,
         IFileDialogService fileDialogService,
         ITrayDependencyExportService trayDependencyExportService,
-        MainWindowCacheWarmupController cacheWarmupController,
+        ITrayWarmupService trayWarmupService,
         TrayDependenciesPanelViewModel trayDependencies,
         IPathIdentityResolver? pathIdentityResolver = null,
         ILogger<TrayPreviewWorkspaceViewModel>? logger = null)
     {
         Filter = filter;
-        Surface = new TrayLikePreviewSurfaceViewModel(trayPreviewCoordinator, trayThumbnailService);
+        Surface = new TrayLikePreviewSurfaceViewModel(previewQueryService, trayThumbnailService);
         _fileDialogService = fileDialogService;
         _trayDependencyExportService = trayDependencyExportService;
-        _cacheWarmupController = cacheWarmupController;
+        _trayWarmupService = trayWarmupService;
         _trayDependencies = trayDependencies;
         _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
         _logger = logger ?? NullLogger<TrayPreviewWorkspaceViewModel>.Instance;
@@ -144,7 +146,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
     public void ResetAfterCacheClear()
     {
         CancelWorkspaceLoad();
-        _cacheWarmupController.Reset();
+        _trayWarmupService.Reset();
         IsTrayDependencyCacheReady = false;
         SetTrayDependencyCacheWarmupState(false, 0, string.Empty, string.Empty);
         Surface.ResetAfterCacheClear();
@@ -188,12 +190,11 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
 
         var resumeModsPath = ResolveDirectoryPath(_trayDependencies.ModsPath ?? string.Empty);
         if (!string.IsNullOrWhiteSpace(resumeModsPath) &&
-            _cacheWarmupController.TryGetWarmupState(
+            _trayWarmupService.TryGetWarmupState(
                 resumeModsPath,
-                CacheWarmupDomain.TrayDependency,
                 out var warmupState) &&
             warmupState is not null &&
-            warmupState.State == MainWindowCacheWarmupController.WarmupRunState.Paused)
+            warmupState.State == WarmupRunState.Paused)
         {
             SetTrayDependencyCacheWarmupState(
                 false,
@@ -237,7 +238,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
             return;
         }
 
-        _cacheWarmupController.Reset();
+        _trayWarmupService.Reset();
         if (_isActive)
         {
             QueueWorkspaceLoad(forceReload: false);
@@ -368,15 +369,15 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         var warmupDetached = false;
         try
         {
-            var warmupHost = CreateCacheWarmupHost(operationId, cancellationToken);
-            _ = await _cacheWarmupController.AttachToInflightTrayWarmupIfAny(
+            var warmupObserver = CreateCacheWarmupObserver(operationId, cancellationToken);
+            _ = await _trayWarmupService.AttachToInflightDependencyWarmupIfAny(
                     modsPath,
-                    warmupHost,
+                    warmupObserver,
                     cancellationToken)
                 .ConfigureAwait(false)
-                ?? await _cacheWarmupController.EnsureTrayWorkspaceReadyAsync(
+                ?? await _trayWarmupService.EnsureDependencyReadyAsync(
                     modsPath,
-                    warmupHost,
+                    warmupObserver,
                     cancellationToken)
                 .ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
@@ -482,7 +483,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
                 return;
             }
 
-            if (!_cacheWarmupController.TryGetReadyTraySnapshot(modsPath, out var preloadedSnapshot))
+            if (!_trayWarmupService.TryGetReadySnapshot(modsPath, out var preloadedSnapshot))
             {
                 _logger.LogWarning("Tray export blocked because tray dependency cache is not ready");
                 return;
@@ -681,9 +682,9 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         return SupportedTrayExportExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
     }
 
-    private MainWindowCacheWarmupHost CreateCacheWarmupHost(int operationId, CancellationToken cancellationToken)
+    private CacheWarmupObserver CreateCacheWarmupObserver(int operationId, CancellationToken cancellationToken)
     {
-        return new MainWindowCacheWarmupHost
+        return new CacheWarmupObserver
         {
             ReportProgress = progress =>
             {

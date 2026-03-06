@@ -7,6 +7,8 @@ using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Results;
 using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Application.TextureProcessing;
+using SimsModDesktop.Application.Caching;
+using SimsModDesktop.Application.Warmup;
 using SimsModDesktop.PackageCore;
 using SimsModDesktop.Presentation.Diagnostics;
 using SimsModDesktop.TrayDependencyEngine;
@@ -19,7 +21,7 @@ public sealed class MainWindowExecutionController
     private readonly ITrayDependencyAnalysisService _trayDependencyAnalysisService;
     private readonly IToolkitActionPlanner _toolkitActionPlanner;
     private readonly MainWindowRecoveryController _recoveryController;
-    private readonly MainWindowCacheWarmupController _cacheWarmupController;
+    private readonly ITrayWarmupService _trayWarmupService;
     private readonly ITextureCompressionService _textureCompressionService;
     private readonly ITextureDimensionProbe _textureDimensionProbe;
     private readonly ILogger<MainWindowExecutionController> _logger;
@@ -30,7 +32,7 @@ public sealed class MainWindowExecutionController
         ITrayDependencyAnalysisService trayDependencyAnalysisService,
         IToolkitActionPlanner toolkitActionPlanner,
         MainWindowRecoveryController recoveryController,
-        MainWindowCacheWarmupController cacheWarmupController,
+        ITrayWarmupService trayWarmupService,
         ITextureCompressionService textureCompressionService,
         ITextureDimensionProbe textureDimensionProbe,
         ILogger<MainWindowExecutionController> logger,
@@ -40,7 +42,7 @@ public sealed class MainWindowExecutionController
         _trayDependencyAnalysisService = trayDependencyAnalysisService;
         _toolkitActionPlanner = toolkitActionPlanner;
         _recoveryController = recoveryController;
-        _cacheWarmupController = cacheWarmupController;
+        _trayWarmupService = trayWarmupService;
         _textureCompressionService = textureCompressionService;
         _textureDimensionProbe = textureDimensionProbe;
         _logger = logger;
@@ -433,9 +435,9 @@ public sealed class MainWindowExecutionController
                 $"[path.resolve] component=traydependencies.run rawPath={resolvedModsRoot.FullPath} canonicalPath={resolvedModsRoot.CanonicalPath} exists={resolvedModsRoot.Exists} isReparse={resolvedModsRoot.IsReparsePoint} linkTarget={resolvedModsRoot.LinkTarget ?? string.Empty}");
             var normalizedPlanRequest = plan.Request with { ModsRootPath = resolvedModsRoot.CanonicalPath };
             await _recoveryController.MarkRecoveryStartedAsync(operationId);
-            var preloadedSnapshot = await _cacheWarmupController.EnsureTrayWorkspaceReadyAsync(
+            var preloadedSnapshot = await _trayWarmupService.EnsureDependencyReadyAsync(
                 normalizedPlanRequest.ModsRootPath,
-                new MainWindowCacheWarmupHost
+                new CacheWarmupObserver
                 {
                     ReportProgress = progress =>
                     {

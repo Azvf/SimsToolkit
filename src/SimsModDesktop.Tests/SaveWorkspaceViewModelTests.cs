@@ -1,6 +1,7 @@
 using System.Reflection;
 using SimsModDesktop.Application.Configuration;
 using SimsModDesktop.Application.Saves;
+using SimsModDesktop.Application.Preview;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Application.Models;
 using SimsModDesktop.Application.Requests;
@@ -232,7 +233,7 @@ public sealed class SaveWorkspaceViewModelTests
             coordinator,
             new FakeFileDialogService(),
             launcher,
-            new FakeTrayPreviewCoordinator(),
+            new FakePreviewQueryService(),
             new FakeTrayThumbnailService(),
             uiActivityMonitor: uiActivityMonitor,
             configurationProvider: configurationProvider);
@@ -497,7 +498,7 @@ public sealed class SaveWorkspaceViewModelTests
             => Task.CompletedTask;
     }
 
-    private sealed class FakeTrayPreviewCoordinator : ITrayPreviewCoordinator
+    private sealed class FakePreviewQueryService : IPreviewQueryService
     {
         public bool TryGetCached(TrayPreviewInput input, out TrayPreviewLoadResult result)
         {
@@ -518,7 +519,10 @@ public sealed class SaveWorkspaceViewModelTests
             });
         }
 
-        public Task<TrayPreviewPageResult> LoadPageAsync(int requestedPageIndex, CancellationToken cancellationToken = default)
+        public Task<TrayPreviewPageResult> LoadPageAsync(
+            TrayPreviewInput input,
+            int requestedPageIndex,
+            CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new TrayPreviewPageResult
             {

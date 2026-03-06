@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Application.Caching;
+using SimsModDesktop.Application.Warmup;
 using SimsModDesktop.Presentation.Diagnostics;
 using SimsModDesktop.Presentation.Services;
 using SimsModDesktop.Presentation.ViewModels.Infrastructure;
@@ -16,7 +17,10 @@ public sealed class ShellSystemOperationsController : ObservableObject
     private readonly IGameLaunchService _gameLaunchService;
     private readonly IAppCacheMaintenanceService _appCacheMaintenanceService;
     private readonly ITrayBundleAnalysisCache? _trayBundleAnalysisCache;
-    private readonly AppIdlePrewarmBootstrapper? _idlePrewarmBootstrapper;
+    private readonly IStartupPrewarmService? _startupPrewarmService;
+    private readonly IModsWarmupService? _modsWarmupService;
+    private readonly ITrayWarmupService? _trayWarmupService;
+    private readonly ISaveWarmupService? _saveWarmupService;
     private readonly IListQueryCache? _listQueryCache;
     private readonly ILogger<ShellSystemOperationsController> _logger;
 
@@ -30,16 +34,22 @@ public sealed class ShellSystemOperationsController : ObservableObject
         IAppCacheMaintenanceService appCacheMaintenanceService,
         ILogger<ShellSystemOperationsController>? logger = null,
         ITrayBundleAnalysisCache? trayBundleAnalysisCache = null,
-        AppIdlePrewarmBootstrapper? idlePrewarmBootstrapper = null,
-        IListQueryCache? listQueryCache = null)
+        IStartupPrewarmService? startupPrewarmService = null,
+        IListQueryCache? listQueryCache = null,
+        IModsWarmupService? modsWarmupService = null,
+        ITrayWarmupService? trayWarmupService = null,
+        ISaveWarmupService? saveWarmupService = null)
     {
         _workspaceVm = workspaceVm;
         _savesVm = savesVm;
         _gameLaunchService = gameLaunchService;
         _appCacheMaintenanceService = appCacheMaintenanceService;
         _trayBundleAnalysisCache = trayBundleAnalysisCache;
-        _idlePrewarmBootstrapper = idlePrewarmBootstrapper;
+        _startupPrewarmService = startupPrewarmService;
         _listQueryCache = listQueryCache;
+        _modsWarmupService = modsWarmupService;
+        _trayWarmupService = trayWarmupService;
+        _saveWarmupService = saveWarmupService;
         _logger = logger ?? NullLogger<ShellSystemOperationsController>.Instance;
     }
 
@@ -112,9 +122,12 @@ public sealed class ShellSystemOperationsController : ObservableObject
             var result = await _appCacheMaintenanceService.ClearAsync();
             if (result.Success)
             {
-                _idlePrewarmBootstrapper?.Reset();
+                _startupPrewarmService?.Reset();
                 _trayBundleAnalysisCache?.Reset();
                 _listQueryCache?.Clear();
+                _modsWarmupService?.Reset();
+                _trayWarmupService?.Reset();
+                _saveWarmupService?.Reset();
                 _workspaceVm.ModPreviewWorkspace.ResetAfterCacheClear();
                 _workspaceVm.TrayPreviewWorkspace.ResetAfterCacheClear();
                 _savesVm?.ResetAfterCacheClear();

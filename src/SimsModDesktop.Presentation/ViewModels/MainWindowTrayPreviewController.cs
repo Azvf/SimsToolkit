@@ -2,6 +2,7 @@ using System.Text.Json;
 using Avalonia.Media.Imaging;
 using Microsoft.Extensions.Logging;
 using SimsModDesktop.Application.Modules;
+using SimsModDesktop.Application.Preview;
 using SimsModDesktop.Application.Recovery;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Results;
@@ -13,7 +14,7 @@ namespace SimsModDesktop.Presentation.ViewModels;
 
 public sealed class MainWindowTrayPreviewController
 {
-    private readonly ITrayPreviewCoordinator _trayPreviewCoordinator;
+    private readonly IPreviewQueryService _previewQueryService;
     private readonly ITrayThumbnailService _trayThumbnailService;
     private readonly IToolkitActionPlanner _toolkitActionPlanner;
     private readonly MainWindowRecoveryController _recoveryController;
@@ -24,7 +25,7 @@ public sealed class MainWindowTrayPreviewController
     private int _trayPreviewThumbnailBatchId;
 
     public MainWindowTrayPreviewController(
-        ITrayPreviewCoordinator trayPreviewCoordinator,
+        IPreviewQueryService previewQueryService,
         ITrayThumbnailService trayThumbnailService,
         IToolkitActionPlanner toolkitActionPlanner,
         MainWindowRecoveryController recoveryController,
@@ -32,7 +33,7 @@ public sealed class MainWindowTrayPreviewController
         MainWindowTrayPreviewSelectionController trayPreviewSelectionController,
         ILogger<MainWindowTrayPreviewController> logger)
     {
-        _trayPreviewCoordinator = trayPreviewCoordinator;
+        _previewQueryService = previewQueryService;
         _trayThumbnailService = trayThumbnailService;
         _toolkitActionPlanner = toolkitActionPlanner;
         _recoveryController = recoveryController;
@@ -94,7 +95,7 @@ public sealed class MainWindowTrayPreviewController
             return;
         }
 
-        if (_trayPreviewCoordinator.TryGetCached(input, out var cached))
+        if (_previewQueryService.TryGetCached(input, out var cached))
         {
             SetTrayPreviewSummary(host, cached.Summary);
             SetTrayPreviewPage(host, cached.Page, cached.LoadedPageCount);
@@ -283,7 +284,7 @@ public sealed class MainWindowTrayPreviewController
         using var executionCts = new CancellationTokenSource();
         host.SetExecutionCts(executionCts);
         var startedAt = DateTimeOffset.Now;
-        _trayPreviewCoordinator.Reset();
+        _previewQueryService.Invalidate(input.PreviewSource);
         host.ClearLog();
         var timing = PerformanceLogScope.Begin(_logger, "traypreview.load");
         ClearTrayPreview(host);
@@ -297,7 +298,7 @@ public sealed class MainWindowTrayPreviewController
         try
         {
             await _recoveryController.MarkRecoveryStartedAsync(operationId);
-            var result = await _trayPreviewCoordinator.LoadAsync(input, executionCts.Token);
+            var result = await _previewQueryService.LoadAsync(input, executionCts.Token);
             SetTrayPreviewSummary(host, result.Summary);
             SetTrayPreviewPage(host, result.Page, result.LoadedPageCount);
 
@@ -389,12 +390,19 @@ public sealed class MainWindowTrayPreviewController
             return;
         }
 
+        if (!_toolkitActionPlanner.TryBuildTrayPreviewInput(host.CreatePlanBuilderState(), out var input, out var validationError))
+        {
+            host.SetStatus(validationError);
+            host.AppendLog("[validation] " + validationError);
+            return;
+        }
+
         CancelTrayPreviewThumbnailLoading();
         host.SetTrayPreviewPageLoading(true);
         var timing = PerformanceLogScope.Begin(_logger, "traypreview.page.load", ("pageIndex", requestedPageIndex));
         try
         {
-            var result = await _trayPreviewCoordinator.LoadPageAsync(requestedPageIndex);
+            var result = await _previewQueryService.LoadPageAsync(input, requestedPageIndex);
             SetTrayPreviewPage(host, result.Page, result.LoadedPageCount);
             host.SetStatus(host.LocalizeFormat("status.trayPageLoaded", [result.Page.PageIndex, result.Page.TotalPages]));
             timing.Success(null, ("pageIndex", result.Page.PageIndex), ("fromCache", result.FromCache));

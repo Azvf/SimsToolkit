@@ -7,12 +7,13 @@ using SimsModDesktop.Application.Mods;
 using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Settings;
-using SimsModDesktop.Application.TrayPreview;
+using SimsModDesktop.Application.Preview;
 using SimsModDesktop.Infrastructure.Localization;
 using SimsModDesktop.Infrastructure.Settings;
 using SimsModDesktop.Infrastructure.TextureCompression;
 using SimsModDesktop.Infrastructure.TextureProcessing;
 using SimsModDesktop.Presentation.Dialogs;
+using SimsModDesktop.Presentation.Warmup;
 using SimsModDesktop.TrayDependencyEngine;
 using SimsModDesktop.Presentation.ViewModels;
 using SimsModDesktop.Presentation.ViewModels.Panels;
@@ -280,7 +281,7 @@ public sealed class MainWindowViewModelInteractionTests
     [Fact]
     public async Task LoadNextTrayPreviewPageAsync_EmitsTimingLogWithCacheState()
     {
-        var trayPreviewCoordinator = new FakeTrayPreviewCoordinator
+        var trayPreviewCoordinator = new FakePreviewQueryService
         {
             NextPageFromCache = true
         };
@@ -980,7 +981,7 @@ public sealed class MainWindowViewModelInteractionTests
         ITrayDependencyAnalysisService? trayDependencyAnalysisService = null,
         ITrayThumbnailService? trayThumbnailService = null,
         FakeFileDialogService? fileDialogService = null,
-        FakeTrayPreviewCoordinator? trayPreviewCoordinator = null,
+        FakePreviewQueryService? trayPreviewCoordinator = null,
         ILoggerFactory? loggerFactory = null)
     {
         var organize = new OrganizePanelViewModel();
@@ -998,20 +999,22 @@ public sealed class MainWindowViewModelInteractionTests
             new NoOpModItemIndexScheduler(),
             new FakePackageIndexCache(),
             NullLogger<MainWindowCacheWarmupController>.Instance);
-        trayPreviewCoordinator ??= new FakeTrayPreviewCoordinator();
+        var trayWarmupService = new TrayWarmupService(cacheWarmupController);
+        var modsWarmupService = new ModsWarmupService(cacheWarmupController);
+        trayPreviewCoordinator ??= new FakePreviewQueryService();
         var trayPreviewWorkspace = new TrayPreviewWorkspaceViewModel(
             trayPreview,
             trayPreviewCoordinator,
             trayThumbnailService ?? new FailingTrayThumbnailService(),
             fileDialogService ?? new FakeFileDialogService(),
             trayDependencyExportService ?? new FakeTrayDependencyExportService(),
-            cacheWarmupController,
+            trayWarmupService,
             trayDependencies);
         var modPreviewWorkspace = new ModPreviewWorkspaceViewModel(
             modPreview,
             new NoOpModItemCatalogService(),
             new NoOpModItemIndexScheduler(),
-            cacheWarmupController,
+            modsWarmupService,
             new NoOpModItemInspectService(),
             NullModPackageTextureEditService.Instance,
             fileDialogService ?? new FakeFileDialogService());
@@ -1042,7 +1045,7 @@ public sealed class MainWindowViewModelInteractionTests
                 trayDependencyAnalysisService ?? new FakeTrayDependencyAnalysisService(),
                 toolkitActionPlanner,
                 recoveryController,
-                cacheWarmupController,
+                trayWarmupService,
                 CreateTextureCompressionService(),
                 new TextureDimensionProbe(),
                 loggerFactory?.CreateLogger<MainWindowExecutionController>() ?? NullLogger<MainWindowExecutionController>.Instance),
@@ -1058,7 +1061,7 @@ public sealed class MainWindowViewModelInteractionTests
                 loggerFactory?.CreateLogger<MainWindowTrayPreviewController>() ?? NullLogger<MainWindowTrayPreviewController>.Instance),
             new MainWindowTrayExportController(
                 effectiveTrayExportService,
-                cacheWarmupController,
+                trayWarmupService,
                 loggerFactory?.CreateLogger<MainWindowTrayExportController>() ?? NullLogger<MainWindowTrayExportController>.Instance),
             new MainWindowValidationController(toolkitActionPlanner),
             new MainWindowLifecycleController(
@@ -1279,7 +1282,7 @@ public sealed class MainWindowViewModelInteractionTests
             => Task.FromResult<ModItemInspectDetail?>(null);
     }
 
-    private sealed class FakeTrayPreviewCoordinator : ITrayPreviewCoordinator
+    private sealed class FakePreviewQueryService : IPreviewQueryService
     {
         public bool NextPageFromCache { get; set; }
 
@@ -1306,7 +1309,10 @@ public sealed class MainWindowViewModelInteractionTests
             });
         }
 
-        public Task<TrayPreviewPageResult> LoadPageAsync(int requestedPageIndex, CancellationToken cancellationToken = default)
+        public Task<TrayPreviewPageResult> LoadPageAsync(
+            TrayPreviewInput input,
+            int requestedPageIndex,
+            CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new TrayPreviewPageResult
             {

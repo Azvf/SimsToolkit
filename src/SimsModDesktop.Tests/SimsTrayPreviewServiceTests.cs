@@ -3,7 +3,7 @@ using Microsoft.Extensions.Logging;
 
 namespace SimsModDesktop.Tests;
 
-public sealed class SimsTrayPreviewServiceTests
+public sealed class PreviewQueryServiceTests
 {
     [Fact]
     public async Task BuildSummaryAsync_FilterOnlyChange_ReusesRootSnapshot()
@@ -12,8 +12,8 @@ public sealed class SimsTrayPreviewServiceTests
         CreateTrayFiles(trayDir.Path, "villa_small_20x20", ".trayitem", ".blueprint");
         CreateTrayFiles(trayDir.Path, "villa_large_50x40", ".trayitem", ".blueprint");
 
-        var logger = new RecordingLogger<SimsTrayPreviewService>();
-        var service = new SimsTrayPreviewService(
+        var logger = new RecordingLogger<PreviewQueryService>();
+        var service = new PreviewQueryService(
             trayThumbnailService: null,
             trayMetadataService: null,
             metadataIndexStore: null,
@@ -52,8 +52,8 @@ public sealed class SimsTrayPreviewServiceTests
         using var trayDir = new TempDirectory();
         CreateTrayFiles(trayDir.Path, "villa_small_20x20", ".trayitem", ".blueprint");
 
-        var logger = new RecordingLogger<SimsTrayPreviewService>();
-        var service = new SimsTrayPreviewService(
+        var logger = new RecordingLogger<PreviewQueryService>();
+        var service = new PreviewQueryService(
             trayThumbnailService: null,
             trayMetadataService: null,
             metadataIndexStore: null,
@@ -83,8 +83,8 @@ public sealed class SimsTrayPreviewServiceTests
         using var cacheDir = new TempDirectory();
         CreateTrayFiles(trayDir.Path, "villa_small_20x20", ".trayitem", ".blueprint");
 
-        var firstLogger = new RecordingLogger<SimsTrayPreviewService>();
-        var firstService = new SimsTrayPreviewService(
+        var firstLogger = new RecordingLogger<PreviewQueryService>();
+        var firstService = new PreviewQueryService(
             trayThumbnailService: null,
             trayMetadataService: null,
             metadataIndexStore: new TrayMetadataIndexStore(cacheDir.Path),
@@ -100,8 +100,8 @@ public sealed class SimsTrayPreviewServiceTests
 
         var firstSummary = await firstService.BuildSummaryAsync(request);
 
-        var secondLogger = new RecordingLogger<SimsTrayPreviewService>();
-        var secondService = new SimsTrayPreviewService(
+        var secondLogger = new RecordingLogger<PreviewQueryService>();
+        var secondService = new PreviewQueryService(
             trayThumbnailService: null,
             trayMetadataService: null,
             metadataIndexStore: new TrayMetadataIndexStore(cacheDir.Path),
@@ -125,7 +125,7 @@ public sealed class SimsTrayPreviewServiceTests
         CreateTrayFiles(trayDir.Path, "villa_small_20x20", ".trayitem", ".blueprint");
         CreateTrayFiles(trayDir.Path, "villa_large_50x40", ".trayitem", ".blueprint");
 
-        var service = new SimsTrayPreviewService();
+        var service = new PreviewQueryService();
         var request = new SimsTrayPreviewRequest
         {
             PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
@@ -150,7 +150,7 @@ public sealed class SimsTrayPreviewServiceTests
         CreateTrayFiles(trayDir.Path, "family_3sims", ".trayitem", ".householdbinary");
         CreateTrayFiles(trayDir.Path, "family_6sims", ".trayitem", ".householdbinary");
 
-        var service = new SimsTrayPreviewService();
+        var service = new PreviewQueryService();
         var request = new SimsTrayPreviewRequest
         {
             PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
@@ -186,7 +186,7 @@ public sealed class SimsTrayPreviewServiceTests
             };
         }
 
-        var service = new SimsTrayPreviewService(
+        var service = new PreviewQueryService(
             trayThumbnailService: null,
             trayMetadataService: new FakeTrayMetadataService(metadata));
         var serialRequest = new SimsTrayPreviewRequest
@@ -228,7 +228,7 @@ public sealed class SimsTrayPreviewServiceTests
             CreateTrayFiles(trayDir.Path, baseName, ".trayitem", ".bpi");
         }
 
-        var service = new SimsTrayPreviewService();
+        var service = new PreviewQueryService();
         var request = new SimsTrayPreviewRequest
         {
             PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
@@ -248,7 +248,7 @@ public sealed class SimsTrayPreviewServiceTests
         CreateTrayFiles(trayDir.Path, "0x00000001!0x0000000000000010", ".trayitem", ".bpi");
 
         var cleanupRecorder = new RecordingTrayThumbnailService();
-        var service = new SimsTrayPreviewService(cleanupRecorder);
+        var service = new PreviewQueryService(cleanupRecorder);
         var request = new SimsTrayPreviewRequest
         {
             PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
@@ -273,7 +273,7 @@ public sealed class SimsTrayPreviewServiceTests
         CreateTrayFiles(trayDir.Path, "0x00000001!0x0000000000000099", ".trayitem", ".householdbinary");
         var trayItemPath = Path.Combine(trayDir.Path, "0x00000001!0x0000000000000099.trayitem");
 
-        var service = new SimsTrayPreviewService(
+        var service = new PreviewQueryService(
             trayThumbnailService: null,
             trayMetadataService: new FakeTrayMetadataService(new Dictionary<string, TrayMetadataResult>(StringComparer.OrdinalIgnoreCase)
             {
@@ -332,7 +332,7 @@ public sealed class SimsTrayPreviewServiceTests
                 Name = "Beta"
             }
         });
-        var service = new SimsTrayPreviewService(
+        var service = new PreviewQueryService(
             trayThumbnailService: null,
             trayMetadataService: metadataService);
         var request = new SimsTrayPreviewRequest
@@ -377,7 +377,7 @@ public sealed class SimsTrayPreviewServiceTests
                 CreatorName = "Builder"
             }
         });
-        var service = new SimsTrayPreviewService(
+        var service = new PreviewQueryService(
             trayThumbnailService: null,
             trayMetadataService: metadataService);
         var baseRequest = new SimsTrayPreviewRequest
@@ -441,7 +441,7 @@ public sealed class SimsTrayPreviewServiceTests
         var sharedStore = new TrayMetadataIndexStore(cacheDir.Path);
 
         var warmMetadataService = new RecordingTrayMetadataService(metadataResults);
-        var warmService = new SimsTrayPreviewService(
+        var warmService = new PreviewQueryService(
             trayThumbnailService: null,
             trayMetadataService: warmMetadataService,
             metadataIndexStore: sharedStore);
@@ -458,7 +458,7 @@ public sealed class SimsTrayPreviewServiceTests
         Assert.Equal(2, warmMetadataService.RequestBatches[0].Count);
 
         var restartedMetadataService = new RecordingTrayMetadataService(metadataResults);
-        var restartedService = new SimsTrayPreviewService(
+        var restartedService = new PreviewQueryService(
             trayThumbnailService: null,
             trayMetadataService: restartedMetadataService,
             metadataIndexStore: new TrayMetadataIndexStore(cacheDir.Path));
@@ -487,7 +487,7 @@ public sealed class SimsTrayPreviewServiceTests
         CreateTrayFiles(trayDir.Path, "0x00000013!0x051e161ef1390d54", ".sgi");
         CreateTrayFiles(trayDir.Path, "0x00000023!0x051e161ef1390d55", ".sgi");
 
-        var service = new SimsTrayPreviewService();
+        var service = new PreviewQueryService();
         var request = new SimsTrayPreviewRequest
         {
             PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
@@ -521,7 +521,7 @@ public sealed class SimsTrayPreviewServiceTests
         CreateTrayFiles(trayDir.Path, "0x00000033!0x0cbe161969c739c2", ".sgi");
         CreateTrayFiles(trayDir.Path, "0x00000043!0x0cbe161969c739c3", ".sgi");
 
-        var service = new SimsTrayPreviewService();
+        var service = new PreviewQueryService();
         var request = new SimsTrayPreviewRequest
         {
             PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
@@ -555,7 +555,7 @@ public sealed class SimsTrayPreviewServiceTests
         CreateTrayFiles(trayDir.Path, "0x00000033!0x05561617068017ed", ".sgi");
         CreateTrayFiles(trayDir.Path, "0x00000043!0x05561617068017ee", ".sgi");
 
-        var service = new SimsTrayPreviewService();
+        var service = new PreviewQueryService();
         var request = new SimsTrayPreviewRequest
         {
             PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
@@ -592,7 +592,7 @@ public sealed class SimsTrayPreviewServiceTests
         CreateTrayFiles(trayDir.Path, "0x00000013!0x0982161ee12e1027", ".sgi");
         CreateTrayFiles(trayDir.Path, "0x00000023!0x0982161ee12e1029", ".sgi");
 
-        var service = new SimsTrayPreviewService();
+        var service = new PreviewQueryService();
         var request = new SimsTrayPreviewRequest
         {
             PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
@@ -620,7 +620,7 @@ public sealed class SimsTrayPreviewServiceTests
         CreateTrayFiles(trayDir.Path, "0x00000001!0x0000000000000010", ".trayitem", ".bpi");
 
         var thumbnailService = new BlockingCleanupTrayThumbnailService();
-        var service = new SimsTrayPreviewService(thumbnailService);
+        var service = new PreviewQueryService(thumbnailService);
         var request = new SimsTrayPreviewRequest
         {
             PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),

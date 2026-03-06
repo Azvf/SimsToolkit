@@ -2,35 +2,45 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Application.Configuration;
 using SimsModDesktop.Application.Mods;
+using SimsModDesktop.Application.Warmup;
 using SimsModDesktop.PackageCore;
 using SimsModDesktop.Presentation.ViewModels;
 
 namespace SimsModDesktop.Presentation.Services;
 
-public sealed class AppIdlePrewarmBootstrapper
+public sealed class StartupPrewarmService : IStartupPrewarmService
 {
     private const string StartupTrayPrewarmJobType = "StartupTrayDependencyPrewarm";
     private const string StartupModsQueryPrewarmJobType = "StartupModsQueryPrewarm";
     private const string StartupSaveDescriptorPrewarmJobType = "StartupSaveDescriptorPrewarm";
     private const string StartupSaveArtifactPrewarmJobType = "StartupSaveArtifactPrewarm";
-    private readonly MainWindowCacheWarmupController _cacheWarmupController;
+    private readonly ITrayWarmupService _trayWarmupService;
+    private readonly IModsWarmupService _modsWarmupService;
+    private readonly ISaveWarmupService _saveWarmupService;
     private readonly IUiActivityMonitor _uiActivityMonitor;
+    private readonly MainWindowCacheWarmupController? _warmupRuntime;
     private readonly IConfigurationProvider? _configurationProvider;
     private readonly IPathIdentityResolver _pathIdentityResolver;
-    private readonly ILogger<AppIdlePrewarmBootstrapper> _logger;
+    private readonly ILogger<StartupPrewarmService> _logger;
     private readonly object _gate = new();
     private readonly Dictionary<string, CancellationTokenSource> _scheduledJobs = new(StringComparer.OrdinalIgnoreCase);
 
-    public AppIdlePrewarmBootstrapper(
-        MainWindowCacheWarmupController cacheWarmupController,
+    public StartupPrewarmService(
+        ITrayWarmupService trayWarmupService,
+        IModsWarmupService modsWarmupService,
+        ISaveWarmupService saveWarmupService,
         IUiActivityMonitor uiActivityMonitor,
-        ILogger<AppIdlePrewarmBootstrapper>? logger = null,
+        ILogger<StartupPrewarmService>? logger = null,
         IConfigurationProvider? configurationProvider = null,
-        IPathIdentityResolver? pathIdentityResolver = null)
+        IPathIdentityResolver? pathIdentityResolver = null,
+        MainWindowCacheWarmupController? warmupRuntime = null)
     {
-        _cacheWarmupController = cacheWarmupController;
+        _trayWarmupService = trayWarmupService;
+        _modsWarmupService = modsWarmupService;
+        _saveWarmupService = saveWarmupService;
         _uiActivityMonitor = uiActivityMonitor;
-        _logger = logger ?? NullLogger<AppIdlePrewarmBootstrapper>.Instance;
+        _warmupRuntime = warmupRuntime;
+        _logger = logger ?? NullLogger<StartupPrewarmService>.Instance;
         _configurationProvider = configurationProvider;
         _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
     }
@@ -43,12 +53,12 @@ public sealed class AppIdlePrewarmBootstrapper
             StartupTrayPrewarmJobType,
             modsRootPath,
             () => GetConfigBool("Performance.IdlePrewarm.Enabled", true),
-            normalizedRoot => _cacheWarmupController.QueueTrayDependencyIdlePrewarm(normalizedRoot, "startup-idle"),
+            normalizedRoot => _trayWarmupService.QueueDependencyIdlePrewarm(normalizedRoot, "startup-idle"),
             isForegroundBusy,
             "traycache.idleprewarm.schedule.fail");
     }
 
-    public void QueueModCatalogStartupPrewarm(
+    public void QueueModsQueryStartupPrewarm(
         ModItemCatalogQuery query,
         Func<bool>? isForegroundBusy = null)
     {
@@ -59,7 +69,7 @@ public sealed class AppIdlePrewarmBootstrapper
             query.ModsRoot,
             () => GetConfigBool("Performance.IdlePrewarm.Enabled", true) &&
                   GetConfigBool("Performance.IdlePrewarm.ModQueryPrimeEnabled", true),
-            normalizedRoot => _cacheWarmupController.QueueModsQueryIdlePrewarm(
+            normalizedRoot => _modsWarmupService.QueueQueryIdlePrewarm(
                 new ModItemCatalogQuery
                 {
                     ModsRoot = normalizedRoot,
@@ -75,7 +85,14 @@ public sealed class AppIdlePrewarmBootstrapper
             "modquery.idleprewarm.schedule.fail");
     }
 
-    public void QueueSavePreviewStartupPrewarm(
+    public void QueueModCatalogStartupPrewarm(
+        ModItemCatalogQuery query,
+        Func<bool>? isForegroundBusy = null)
+    {
+        QueueModsQueryStartupPrewarm(query, isForegroundBusy);
+    }
+
+    public void QueueSaveStartupPrewarm(
         string saveFilePath,
         string? selectedHouseholdKey,
         Func<bool>? isForegroundBusy = null)
@@ -85,7 +102,7 @@ public sealed class AppIdlePrewarmBootstrapper
             saveFilePath,
             () => GetConfigBool("Performance.IdlePrewarm.Enabled", true) &&
                   GetConfigBool("Performance.IdlePrewarm.SaveDescriptorPrimeEnabled", true),
-            normalizedSavePath => _cacheWarmupController.QueueSavePreviewDescriptorIdlePrewarm(normalizedSavePath, "startup-idle"),
+            normalizedSavePath => _saveWarmupService.QueueDescriptorIdlePrewarm(normalizedSavePath, "startup-idle"),
             isForegroundBusy,
             "savepreview.descriptor.idleprewarm.schedule.fail");
 
@@ -100,7 +117,7 @@ public sealed class AppIdlePrewarmBootstrapper
             saveFilePath,
             () => GetConfigBool("Performance.IdlePrewarm.Enabled", true) &&
                   GetConfigBool("Performance.IdlePrewarm.SaveArtifactPrimeEnabled", true),
-            normalizedSavePath => _cacheWarmupController.QueueSavePreviewArtifactIdlePrewarm(
+            normalizedSavePath => _saveWarmupService.QueueArtifactIdlePrewarm(
                 normalizedSavePath,
                 selectedHouseholdKey.Trim(),
                 "startup-idle"),
@@ -126,6 +143,8 @@ public sealed class AppIdlePrewarmBootstrapper
 
             _scheduledJobs.Clear();
         }
+
+        _warmupRuntime?.ResetRuntime();
     }
 
     private void QueueStartupPrewarm(

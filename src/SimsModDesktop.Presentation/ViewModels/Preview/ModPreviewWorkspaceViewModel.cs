@@ -4,6 +4,7 @@ using SimsModDesktop.Application.Caching;
 using SimsModDesktop.Application.Configuration;
 using SimsModDesktop.Application.Mods;
 using SimsModDesktop.Application.TextureCompression;
+using SimsModDesktop.Application.Warmup;
 using SimsModDesktop.Presentation.Services;
 using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.Presentation.ViewModels.Infrastructure;
@@ -16,7 +17,7 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
     private readonly ModPreviewPanelViewModel _filter;
     private readonly IModItemCatalogService _catalogService;
     private readonly IModItemIndexScheduler _indexScheduler;
-    private readonly MainWindowCacheWarmupController _cacheWarmupController;
+    private readonly IModsWarmupService _modsWarmupService;
     private readonly IUiActivityMonitor _uiActivityMonitor;
     private readonly IConfigurationProvider? _configurationProvider;
     private readonly object _eventLock = new();
@@ -48,7 +49,7 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
         ModPreviewPanelViewModel filter,
         IModItemCatalogService catalogService,
         IModItemIndexScheduler indexScheduler,
-        MainWindowCacheWarmupController cacheWarmupController,
+        IModsWarmupService cacheWarmupController,
         IModItemInspectService inspectService,
         IModPackageTextureEditService textureEditService,
         IFileDialogService fileDialogService,
@@ -58,7 +59,7 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
         _filter = filter;
         _catalogService = catalogService;
         _indexScheduler = indexScheduler;
-        _cacheWarmupController = cacheWarmupController;
+        _modsWarmupService = cacheWarmupController;
         _uiActivityMonitor = uiActivityMonitor ?? new UiActivityMonitor();
         _configurationProvider = configurationProvider;
         Inspect = new ModItemInspectViewModel(inspectService, textureEditService, fileDialogService);
@@ -243,7 +244,7 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
             CancelQueryPrime();
             if (HasValidModsPath)
             {
-                _cacheWarmupController.PauseModsWarmup(
+                _modsWarmupService.PauseWarmup(
                     _filter.ModsRoot,
                     "workspace-inactive");
             }
@@ -258,12 +259,11 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
         }
 
         if (HasValidModsPath &&
-            _cacheWarmupController.TryGetWarmupState(
+            _modsWarmupService.TryGetWarmupState(
                 _filter.ModsRoot,
-                CacheWarmupDomain.ModsCatalog,
                 out var warmupState) &&
             warmupState is not null &&
-            warmupState.State == MainWindowCacheWarmupController.WarmupRunState.Paused)
+            warmupState.State == WarmupRunState.Paused)
         {
             SetCacheWarmupState(
                 false,
@@ -281,7 +281,7 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
     public void ResetAfterCacheClear()
     {
         CancelQueryPrime();
-        _cacheWarmupController.Reset();
+        _modsWarmupService.Reset();
         CatalogItems.ReplaceAllStable(Array.Empty<ModItemListItemViewModel>());
         SelectedItem = null;
         _hasLoadedStablePage = false;
@@ -342,9 +342,9 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
         try
         {
             SetCacheWarmupState(true, 0, "Validate", "Validating package inventory...");
-            var warmupResult = await _cacheWarmupController.EnsureModsWorkspaceReadyAsync(
+            var warmupResult = await _modsWarmupService.EnsureWorkspaceReadyAsync(
                 _filter.ModsRoot,
-                CreateCacheWarmupHost(),
+                CreateCacheWarmupObserver(),
                 cancellationToken).ConfigureAwait(false);
             warmupCompleted = true;
             await LoadPageShellAsync(cancellationToken).ConfigureAwait(false);
@@ -364,7 +364,7 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
                 IndexingStatusText = "Validated catalog rows loaded. Prioritized deep enrichment continues in the background.";
                 Inspect.SetBackgroundSyncActive(true);
             }).ConfigureAwait(false);
-            _cacheWarmupController.QueueModsPriorityDeepEnrichment(
+            _modsWarmupService.QueuePriorityDeepEnrichment(
                 _filter.ModsRoot,
                 CatalogItems
                     .Select(item => item.PackagePath)
@@ -586,7 +586,7 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
         CancelQueryPrime();
         if (string.Equals(e.PropertyName, nameof(ModPreviewPanelViewModel.ModsRoot), StringComparison.Ordinal))
         {
-            _cacheWarmupController.Reset();
+            _modsWarmupService.Reset();
             CatalogItems.ReplaceAllStable(Array.Empty<ModItemListItemViewModel>());
             SelectedItem = null;
             _hasLoadedStablePage = false;
@@ -749,7 +749,7 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
 
                     if (DateTimeOffset.UtcNow - _uiActivityMonitor.LastInteractionUtc >= idleDelay)
                     {
-                        _cacheWarmupController.QueueModsQueryIdlePrewarm(nextPageQuery, "workspace-idle");
+                        _modsWarmupService.QueueQueryIdlePrewarm(nextPageQuery, "workspace-idle");
                         return;
                     }
 
@@ -812,9 +812,9 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
         return _configurationProvider.GetConfigurationAsync<int?>(key).GetAwaiter().GetResult() ?? defaultValue;
     }
 
-    private MainWindowCacheWarmupHost CreateCacheWarmupHost()
+    private CacheWarmupObserver CreateCacheWarmupObserver()
     {
-        return new MainWindowCacheWarmupHost
+        return new CacheWarmupObserver
         {
             ReportProgress = progress =>
             {

@@ -1,5 +1,7 @@
 using SimsModDesktop.Application.Services;
 using SimsModDesktop.Application.Configuration;
+using SimsModDesktop.Application.Preview;
+using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Saves;
 using SimsModDesktop.SaveData.Models;
 using SimsModDesktop.SaveData.Services;
@@ -15,7 +17,7 @@ public sealed class SaveHouseholdCoordinator : ISaveHouseholdCoordinator
     private readonly ISavePreviewDescriptorBuilder _savePreviewDescriptorBuilder;
     private readonly ISavePreviewArtifactProvider _savePreviewArtifactProvider;
     private readonly ITrayMetadataService _trayMetadataService;
-    private readonly ISimsTrayPreviewService _simsTrayPreviewService;
+    private readonly IPreviewQueryService _previewQueryService;
 
     public SaveHouseholdCoordinator(
         ISaveCatalogService saveCatalogService,
@@ -25,7 +27,7 @@ public sealed class SaveHouseholdCoordinator : ISaveHouseholdCoordinator
         ISavePreviewDescriptorBuilder savePreviewDescriptorBuilder,
         ISavePreviewArtifactProvider savePreviewArtifactProvider,
         ITrayMetadataService trayMetadataService,
-        ISimsTrayPreviewService simsTrayPreviewService)
+        IPreviewQueryService previewQueryService)
     {
         _saveCatalogService = saveCatalogService;
         _saveHouseholdReader = saveHouseholdReader;
@@ -34,7 +36,7 @@ public sealed class SaveHouseholdCoordinator : ISaveHouseholdCoordinator
         _savePreviewDescriptorBuilder = savePreviewDescriptorBuilder;
         _savePreviewArtifactProvider = savePreviewArtifactProvider;
         _trayMetadataService = trayMetadataService;
-        _simsTrayPreviewService = simsTrayPreviewService;
+        _previewQueryService = previewQueryService;
     }
 
     public IReadOnlyList<SaveFileEntry> GetSaveFiles(string savesRootPath)
@@ -131,14 +133,14 @@ public sealed class SaveHouseholdCoordinator : ISaveHouseholdCoordinator
                 return WithWarning(result, "The generated .trayitem could not be parsed.");
             }
 
-            var summary = _simsTrayPreviewService
-                .BuildSummaryAsync(new SimsTrayPreviewRequest
+            var preview = _previewQueryService
+                .LoadAsync(new TrayPreviewInput
                 {
                     PreviewSource = PreviewSourceRef.ForTrayRoot(result.ExportDirectory)
                 })
                 .GetAwaiter()
                 .GetResult();
-            if (summary.TotalItems < 1)
+            if (preview.Summary.TotalItems < 1)
             {
                 return WithWarning(result, "The exported bundle did not pass local tray preview validation.");
             }

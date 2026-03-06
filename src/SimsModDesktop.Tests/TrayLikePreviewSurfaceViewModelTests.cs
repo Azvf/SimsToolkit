@@ -1,6 +1,6 @@
 using Avalonia.Threading;
 using SimsModDesktop.Application.Requests;
-using SimsModDesktop.Application.TrayPreview;
+using SimsModDesktop.Application.Preview;
 using SimsModDesktop.Presentation.ViewModels.Preview;
 
 namespace SimsModDesktop.Tests;
@@ -8,13 +8,65 @@ namespace SimsModDesktop.Tests;
 public sealed class TrayLikePreviewSurfaceViewModelTests
 {
     [Fact]
+    public async Task LoadPageAsync_UsesCurrentInputContext_PerSurface()
+    {
+        using var trayRoot = new TempDirectory();
+        using var saveRoot = new TempDirectory();
+        var trayService = new MultiContextPreviewQueryService();
+        var thumbnails = new TrackingTrayThumbnailService(expectedStartCount: 0);
+        var traySurface = new TrayLikePreviewSurfaceViewModel(trayService, thumbnails);
+        var saveSurface = new TrayLikePreviewSurfaceViewModel(trayService, thumbnails);
+        var trayFilter = new TrayLikePreviewFilterViewModel();
+        var saveFilter = new TrayLikePreviewFilterViewModel();
+        var savePath = Path.Combine(saveRoot.Path, "slot_00000001.save");
+        File.WriteAllBytes(savePath, [1, 2, 3, 4]);
+
+        traySurface.Configure(
+            trayFilter,
+            () => trayFilter.BuildInput(PreviewSourceRef.ForTrayRoot(trayRoot.Path)),
+            PreviewSurfaceSelectionMode.Multiple,
+            autoLoad: false);
+        saveSurface.Configure(
+            saveFilter,
+            () => saveFilter.BuildInput(PreviewSourceRef.ForSaveDescriptor(savePath)),
+            PreviewSurfaceSelectionMode.Single,
+            autoLoad: false);
+
+        await traySurface.EnsureLoadedAsync(forceReload: true);
+        await saveSurface.EnsureLoadedAsync(forceReload: true);
+        await traySurface.LoadPageAsync(2);
+
+        Assert.Equal("tray-page-2", traySurface.PreviewItems.Single().Item.TrayItemKey);
+    }
+
+    [Fact]
+    public void ClearCurrentSource_OnlyInvalidatesCurrentSource()
+    {
+        using var trayRoot = new TempDirectory();
+        var service = new RecordingInvalidatePreviewQueryService();
+        var surface = new TrayLikePreviewSurfaceViewModel(service, new TrackingTrayThumbnailService(expectedStartCount: 0));
+        var filter = new TrayLikePreviewFilterViewModel();
+
+        surface.Configure(
+            filter,
+            () => filter.BuildInput(PreviewSourceRef.ForTrayRoot(trayRoot.Path)),
+            PreviewSurfaceSelectionMode.Multiple,
+            autoLoad: false);
+
+        surface.ClearCurrentSource("cleared", PreviewSourceRef.ForTrayRoot(trayRoot.Path));
+
+        Assert.Equal(1, service.InvalidateCount);
+        Assert.Equal(0, service.ResetCount);
+    }
+
+    [Fact]
     public async Task EnsureLoadedAsync_LoadsThumbnailsWithBoundedConcurrency()
     {
         using var trayRoot = new TempDirectory();
         var items = Enumerable.Range(1, 20)
             .Select(index => CreateItem(index))
             .ToArray();
-        var runner = new SinglePageTrayPreviewCoordinator(items);
+        var runner = new SinglePagePreviewQueryService(items);
         var thumbnails = new TrackingTrayThumbnailService(items.Length, delayMs: 80);
         var surface = new TrayLikePreviewSurfaceViewModel(runner, thumbnails);
         var filter = new TrayLikePreviewFilterViewModel();
@@ -45,7 +97,7 @@ public sealed class TrayLikePreviewSurfaceViewModelTests
         var items = Enumerable.Range(1, 20)
             .Select(index => CreateItem(index))
             .ToArray();
-        var runner = new SinglePageTrayPreviewCoordinator(items);
+        var runner = new SinglePagePreviewQueryService(items);
         var thumbnails = new TrackingTrayThumbnailService(items.Length, blockUntilCancellation: true);
         var surface = new TrayLikePreviewSurfaceViewModel(runner, thumbnails);
         var filter = new TrayLikePreviewFilterViewModel();
@@ -67,11 +119,11 @@ public sealed class TrayLikePreviewSurfaceViewModelTests
         Assert.True(surface.PreviewItems.All(item => item.IsThumbnailLoading || item.IsThumbnailPlaceholderVisible));
     }
 
-    private sealed class SinglePageTrayPreviewCoordinator : ITrayPreviewCoordinator
+    private sealed class SinglePagePreviewQueryService : IPreviewQueryService
     {
         private readonly IReadOnlyList<SimsTrayPreviewItem> _items;
 
-        public SinglePageTrayPreviewCoordinator(IReadOnlyList<SimsTrayPreviewItem> items)
+        public SinglePagePreviewQueryService(IReadOnlyList<SimsTrayPreviewItem> items)
         {
             _items = items;
         }
@@ -102,6 +154,7 @@ public sealed class TrayLikePreviewSurfaceViewModelTests
         }
 
         public Task<TrayPreviewPageResult> LoadPageAsync(
+            TrayPreviewInput input,
             int requestedPageIndex,
             CancellationToken cancellationToken = default)
         {
@@ -132,6 +185,136 @@ public sealed class TrayLikePreviewSurfaceViewModelTests
 
         public void Reset()
         {
+        }
+    }
+
+    private sealed class MultiContextPreviewQueryService : IPreviewQueryService
+    {
+        private readonly Dictionary<string, Dictionary<int, SimsTrayPreviewPage>> _pages = new(StringComparer.OrdinalIgnoreCase);
+
+        public MultiContextPreviewQueryService()
+        {
+            _pages["tray"] = new Dictionary<int, SimsTrayPreviewPage>
+            {
+                [1] = BuildPage("tray-page-1"),
+                [2] = BuildPage("tray-page-2")
+            };
+            _pages["save"] = new Dictionary<int, SimsTrayPreviewPage>
+            {
+                [1] = BuildPage("save-page-1"),
+                [2] = BuildPage("save-page-2")
+            };
+        }
+
+        public bool TryGetCached(TrayPreviewInput input, out TrayPreviewLoadResult result)
+        {
+            result = null!;
+            return false;
+        }
+
+        public Task<TrayPreviewLoadResult> LoadAsync(TrayPreviewInput input, CancellationToken cancellationToken = default)
+        {
+            var key = GetContextKey(input);
+            var page = _pages[key][1];
+            return Task.FromResult(new TrayPreviewLoadResult
+            {
+                Summary = new SimsTrayPreviewSummary
+                {
+                    TotalItems = 2,
+                    TotalFiles = 2,
+                    TotalBytes = 2,
+                    TotalMB = 0.01
+                },
+                Page = page,
+                LoadedPageCount = 1
+            });
+        }
+
+        public Task<TrayPreviewPageResult> LoadPageAsync(
+            TrayPreviewInput input,
+            int requestedPageIndex,
+            CancellationToken cancellationToken = default)
+        {
+            var key = GetContextKey(input);
+            var page = _pages[key][requestedPageIndex];
+            return Task.FromResult(new TrayPreviewPageResult
+            {
+                Page = page,
+                LoadedPageCount = requestedPageIndex,
+                FromCache = false
+            });
+        }
+
+        public void Invalidate(PreviewSourceRef? source = null)
+        {
+        }
+
+        public void Reset()
+        {
+        }
+
+        private static string GetContextKey(TrayPreviewInput input)
+        {
+            return input.PreviewSource.Kind == PreviewSourceKind.TrayRoot ? "tray" : "save";
+        }
+
+        private static SimsTrayPreviewPage BuildPage(string key)
+        {
+            return new SimsTrayPreviewPage
+            {
+                PageIndex = key.EndsWith("2", StringComparison.Ordinal) ? 2 : 1,
+                PageSize = 1,
+                TotalItems = 2,
+                TotalPages = 2,
+                Items =
+                [
+                    new SimsTrayPreviewItem
+                    {
+                        TrayItemKey = key,
+                        PresetType = "Lot",
+                        DisplayTitle = key
+                    }
+                ]
+            };
+        }
+    }
+
+    private sealed class RecordingInvalidatePreviewQueryService : IPreviewQueryService
+    {
+        public int InvalidateCount { get; private set; }
+        public int ResetCount { get; private set; }
+
+        public bool TryGetCached(TrayPreviewInput input, out TrayPreviewLoadResult result)
+        {
+            result = null!;
+            return false;
+        }
+
+        public Task<TrayPreviewLoadResult> LoadAsync(TrayPreviewInput input, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new TrayPreviewLoadResult
+            {
+                Summary = new SimsTrayPreviewSummary(),
+                Page = new SimsTrayPreviewPage()
+            });
+        }
+
+        public Task<TrayPreviewPageResult> LoadPageAsync(
+            TrayPreviewInput input,
+            int requestedPageIndex,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new TrayPreviewPageResult { Page = new SimsTrayPreviewPage() });
+        }
+
+        public void Invalidate(PreviewSourceRef? source = null)
+        {
+            InvalidateCount++;
+        }
+
+        public void Reset()
+        {
+            ResetCount++;
         }
     }
 

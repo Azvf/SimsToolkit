@@ -1,4 +1,6 @@
 using SimsModDesktop.Application.Saves;
+using SimsModDesktop.Application.Preview;
+using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Infrastructure.Saves;
 using SimsModDesktop.SaveData.Models;
@@ -74,7 +76,7 @@ public sealed class SaveHouseholdCoordinatorTests
             builder ?? new RecordingDescriptorBuilder(),
             artifactProvider ?? new StubSavePreviewArtifactProvider(),
             new StubTrayMetadataService(),
-            new StubSimsTrayPreviewService());
+            new StubPreviewQueryService());
     }
 
     private sealed class RecordingDescriptorBuilder : ISavePreviewDescriptorBuilder
@@ -173,20 +175,48 @@ public sealed class SaveHouseholdCoordinatorTests
         }
     }
 
-    private sealed class StubSimsTrayPreviewService : ISimsTrayPreviewService
+    private sealed class StubPreviewQueryService : IPreviewQueryService
     {
-        public Task<SimsTrayPreviewSummary> BuildSummaryAsync(
-            SimsTrayPreviewRequest request,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult(new SimsTrayPreviewSummary());
+        public bool TryGetCached(TrayPreviewInput input, out TrayPreviewLoadResult result)
+        {
+            result = null!;
+            return false;
+        }
 
-        public Task<SimsTrayPreviewPage> BuildPageAsync(
-            SimsTrayPreviewRequest request,
-            int pageIndex,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult(new SimsTrayPreviewPage());
+        public Task<TrayPreviewLoadResult> LoadAsync(TrayPreviewInput input, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new TrayPreviewLoadResult
+            {
+                Summary = new SimsTrayPreviewSummary { TotalItems = 1 },
+                Page = new SimsTrayPreviewPage
+                {
+                    PageIndex = 1,
+                    TotalPages = 1,
+                    TotalItems = 1
+                },
+                LoadedPageCount = 1
+            });
 
-        public void Invalidate(string? trayRootPath = null)
+        public Task<TrayPreviewPageResult> LoadPageAsync(
+            TrayPreviewInput input,
+            int requestedPageIndex,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new TrayPreviewPageResult
+            {
+                Page = new SimsTrayPreviewPage
+                {
+                    PageIndex = requestedPageIndex,
+                    TotalPages = 1,
+                    TotalItems = 1
+                },
+                LoadedPageCount = 1,
+                FromCache = false
+            });
+
+        public void Invalidate(PreviewSourceRef? source = null)
+        {
+        }
+
+        public void Reset()
         {
         }
     }

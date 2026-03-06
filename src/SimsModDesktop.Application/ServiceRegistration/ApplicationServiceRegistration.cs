@@ -2,11 +2,11 @@ using Microsoft.Extensions.DependencyInjection;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Mods;
 using SimsModDesktop.Application.Modules;
+using SimsModDesktop.Application.Preview;
 using SimsModDesktop.Application.Recovery;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Application.TextureCompression;
-using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Application.Validation;
 
 namespace SimsModDesktop.Application.ServiceRegistration;
@@ -27,7 +27,6 @@ public static class ApplicationServiceRegistration
         
         services.AddSingleton<IExecutionCoordinator, ExecutionCoordinator>();
         services.AddSingleton<IFileTransformationEngine, UnifiedFileTransformationEngine>();
-        services.AddSingleton<ITrayPreviewCoordinator, TrayPreviewCoordinator>();
         services.AddSingleton<IToolkitActionPlanner, ToolkitActionPlanner>();
         services.AddSingleton<IBuildBuyItemDescriptorService, BuildBuyPlaceholderDescriptorService>();
         services.AddSingleton<ICasItemDescriptorService, CasItemDescriptorService>();

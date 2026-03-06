@@ -4,7 +4,7 @@ using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Saves;
 using SimsModDesktop.Application.Settings;
-using SimsModDesktop.Application.TrayPreview;
+using SimsModDesktop.Application.Preview;
 using Avalonia.Threading;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -20,6 +20,7 @@ using SimsModDesktop.Presentation.ViewModels.Panels;
 using SimsModDesktop.Presentation.ViewModels.Preview;
 using SimsModDesktop.Presentation.ViewModels.Shell;
 using SimsModDesktop.Presentation.ViewModels.Saves;
+using SimsModDesktop.Presentation.Warmup;
 
 namespace SimsModDesktop.Tests;
 
@@ -120,7 +121,7 @@ public sealed class MainShellViewModelTests
     {
         var cacheService = new FakeAppCacheMaintenanceService();
         var trayThumbnailService = new FakeTrayThumbnailService();
-        var trayPreviewCoordinator = new FakeTrayPreviewCoordinator();
+        var trayPreviewCoordinator = new FakePreviewQueryService();
         var vm = CreateShellViewModel(cacheService, trayPreviewCoordinator, trayThumbnailService);
         using var trayRoot = new TempDirectory();
         using var modsRoot = new TempDirectory();
@@ -237,7 +238,7 @@ public sealed class MainShellViewModelTests
 
     private static MainShellViewModel CreateShellViewModel(
         FakeAppCacheMaintenanceService? cacheService = null,
-        FakeTrayPreviewCoordinator? trayPreviewCoordinator = null,
+        FakePreviewQueryService? trayPreviewCoordinator = null,
         FakeTrayThumbnailService? trayThumbnailService = null,
         AppSettings? initialSettings = null,
         FakeAppThemeService? themeService = null,
@@ -247,7 +248,7 @@ public sealed class MainShellViewModelTests
         var settingsStore = new FakeSettingsStore(initialSettings ?? new AppSettings());
         var debugConfigStore = new FakeDebugConfigStore(initialDebugConfigEntries);
         themeService ??= new FakeAppThemeService();
-        trayPreviewCoordinator ??= new FakeTrayPreviewCoordinator();
+        trayPreviewCoordinator ??= new FakePreviewQueryService();
         trayThumbnailService ??= new FakeTrayThumbnailService();
         var workspaceVm = CreateWorkspaceViewModel(settingsStore, trayPreviewCoordinator, trayThumbnailService, loggerFactory);
         var fileDialog = new FakeFileDialogService();
@@ -256,7 +257,7 @@ public sealed class MainShellViewModelTests
             new FakeSaveHouseholdCoordinator(),
             fileDialog,
             new TrayDependenciesLauncher(workspaceVm, workspaceVm.TrayDependencies, navigation),
-            new FakeTrayPreviewCoordinator(),
+            new FakePreviewQueryService(),
             trayThumbnailService);
         var settingsController = new ShellSettingsController(
             workspaceVm,
@@ -285,7 +286,7 @@ public sealed class MainShellViewModelTests
 
     private static MainWindowViewModel CreateWorkspaceViewModel(
         ISettingsStore settingsStore,
-        FakeTrayPreviewCoordinator trayPreviewCoordinator,
+        FakePreviewQueryService trayPreviewCoordinator,
         FakeTrayThumbnailService trayThumbnailService,
         ILoggerFactory? loggerFactory = null)
     {
@@ -304,19 +305,21 @@ public sealed class MainShellViewModelTests
             new NoOpModItemIndexScheduler(),
             new FakePackageIndexCache(),
             NullLogger<MainWindowCacheWarmupController>.Instance);
+        var trayWarmupService = new TrayWarmupService(cacheWarmupController);
+        var modsWarmupService = new ModsWarmupService(cacheWarmupController);
         var trayPreviewWorkspace = new TrayPreviewWorkspaceViewModel(
             trayPreview,
             trayPreviewCoordinator,
             trayThumbnailService,
             new FakeFileDialogService(),
             new FakeTrayDependencyExportService(),
-            cacheWarmupController,
+            trayWarmupService,
             trayDependencies);
         var modPreviewWorkspace = new ModPreviewWorkspaceViewModel(
             modPreview,
             new NoOpModItemCatalogService(),
             new NoOpModItemIndexScheduler(),
-            cacheWarmupController,
+            modsWarmupService,
             new NoOpModItemInspectService(),
             NullModPackageTextureEditService.Instance,
             new FakeFileDialogService());
@@ -346,7 +349,7 @@ public sealed class MainShellViewModelTests
                 new FakeTrayDependencyAnalysisService(),
                 toolkitActionPlanner,
                 recoveryController,
-                cacheWarmupController,
+                trayWarmupService,
                 CreateTextureCompressionService(),
                 new TextureDimensionProbe(),
                 loggerFactory?.CreateLogger<MainWindowExecutionController>() ?? NullLogger<MainWindowExecutionController>.Instance),
@@ -362,7 +365,7 @@ public sealed class MainShellViewModelTests
                 loggerFactory?.CreateLogger<MainWindowTrayPreviewController>() ?? NullLogger<MainWindowTrayPreviewController>.Instance),
             new MainWindowTrayExportController(
                 trayExportService,
-                cacheWarmupController,
+                trayWarmupService,
                 loggerFactory?.CreateLogger<MainWindowTrayExportController>() ?? NullLogger<MainWindowTrayExportController>.Instance),
             new MainWindowValidationController(toolkitActionPlanner),
             new MainWindowLifecycleController(
@@ -415,7 +418,7 @@ public sealed class MainShellViewModelTests
         }
     }
 
-    private sealed class FakeTrayPreviewCoordinator : ITrayPreviewCoordinator
+    private sealed class FakePreviewQueryService : IPreviewQueryService
     {
         public int LoadCount { get; private set; }
         public int InvalidateCount { get; private set; }
@@ -444,7 +447,10 @@ public sealed class MainShellViewModelTests
             });
         }
 
-        public Task<TrayPreviewPageResult> LoadPageAsync(int requestedPageIndex, CancellationToken cancellationToken = default)
+        public Task<TrayPreviewPageResult> LoadPageAsync(
+            TrayPreviewInput input,
+            int requestedPageIndex,
+            CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new TrayPreviewPageResult
             {
