@@ -8,32 +8,49 @@
 
 ## 1. System Overview
 
-SimsToolkit is a desktop toolkit for The Sims 4 mod/file workflows and game data inspection.  
-After the refactor, the runtime path is centered on a pure .NET layered architecture:
+SimsToolkit is a desktop toolkit for The Sims 4 mod/file workflows and game data inspection.
 
-* Presentation: Avalonia + MVVM view models/controllers
-* Application: planning, validation, execution orchestration, use-case contracts
-* Infrastructure: file/hash services, SQLite-backed stores, texture/tray/save adapters
-* Feature engines: unified file transformation engine, tray dependency engine, package parsing core
+The current codebase is organized around a layered .NET architecture:
+
+* `SimsModDesktop`: Avalonia host and shell composition
+* `SimsModDesktop.Presentation`: view models, UI controllers, navigation, warmup orchestration
+* `SimsModDesktop.Application`: use-case contracts, planners, validators, coordinators
+* `SimsModDesktop.Infrastructure`: persistence, file/hash/config services, tray/save adapters
+* `SimsModDesktop.PackageCore`: DBPF/package parsing primitives
+* `SimsModDesktop.SaveData`: save readers and household export support
+* `SimsModDesktop.TrayDependencyEngine`: tray dependency analysis/export
+
+Detailed architecture notes live in:
+
+* [`src/SimsModDesktop/docs/ArchitectureOverview.md`](src/SimsModDesktop/docs/ArchitectureOverview.md)
+* [`src/SimsModDesktop/docs/EngineeringConventions.md`](src/SimsModDesktop/docs/EngineeringConventions.md)
+* [`src/SimsModDesktop/docs/CacheWarmupSequence.md`](src/SimsModDesktop/docs/CacheWarmupSequence.md)
 
 ---
 
 ## 2. Core Capabilities
 
-### 2.1 File Transformation Pipeline
-* Unified engine modes: `Organize`, `Flatten`, `Normalize`, `Merge`
-* Shared conflict controls: name conflict verification, prefix hash, worker parallelism
-* `FindDuplicates` runs in-app via hash grouping + optional cleanup/export CSV
+### 2.1 Toolkit Actions
 
-### 2.2 Asset & Dependency Analysis
-* Tray dependency analysis is handled by `SimsModDesktop.TrayDependencyEngine`
-* Tray preview and metadata/thumbnail cache are handled by infrastructure tray services
-* Save data read/export pipeline is handled by `SimsModDesktop.SaveData`
+* `Organize`
+* `Flatten`
+* `Normalize`
+* `Merge`
+* `FindDuplicates`
 
-### 2.3 Mod Package & Texture Tooling
-* DBPF package parsing and resource indexing: `SimsModDesktop.PackageCore`
-* Mod catalog/index/inspect flow backed by SQLite stores
-* Texture decode/resize/encode/compression pipeline via ImageSharp + BCn encoder adapters
+These flows are planned by `ToolkitActionPlanner` and dispatched through `ExecutionCoordinator`.
+
+### 2.2 Mods / Tray / Save Workspaces
+
+* Mods: indexed catalog, inspect flow, query caching, idle prewarm
+* Tray: preview, metadata/thumbnail caches, dependency analysis/export
+* Save: descriptor-first preview, on-demand household artifact generation, export support
+
+### 2.3 Asset Processing
+
+* DBPF package parsing and resource indexing
+* texture decode/resize/encode/compression
+* tray bundle analysis reuse and package-index-backed dependency analysis
 
 ---
 
@@ -41,42 +58,29 @@ After the refactor, the runtime path is centered on a pure .NET layered architec
 
 ```mermaid
 graph TD
-    UI["Presentation (Avalonia MVVM)"] --> PLAN["ToolkitActionPlanner"]
-    PLAN --> COORD["ExecutionCoordinator"]
-    COORD --> UFT["UnifiedFileTransformationEngine"]
-    COORD --> HASH["IHashComputationService"]
-    COORD --> FILE["IFileOperationService"]
-
-    UI --> TRAYPREVIEW["TrayPreviewCoordinator"]
-    UI --> TRAYDEP["TrayDependencyEngine"]
-    UI --> MODS["Mod Index/Catalog Services"]
-    UI --> SAVE["SaveData Services"]
-
-    UFT --> FS["File System"]
-    HASH --> FS
-    MODS --> SQLITE["SQLite Caches/Indexes"]
-    TRAYPREVIEW --> SQLITE
-    SAVE --> FS
+    UI["Avalonia Host"] --> PRES["Presentation"]
+    PRES --> APP["Application"]
+    PRES --> INFRA["Infrastructure"]
+    INFRA --> CORE["PackageCore / SaveData / TrayDependencyEngine"]
+    APP --> INFRA
+    CORE --> FS["File System / SQLite / Cache"]
 ```
 
-### 3.1 Planning and Validation
-`ToolkitActionPlanner` translates UI state into typed execution plans:
-* toolkit execution plan (`ISimsExecutionInput`)
-* tray dependency analysis request
-* tray preview input
-* texture compression request
+### 3.1 Runtime Entry Points
 
-### 3.2 Execution Path
-`ExecutionCoordinator` dispatches:
-* `Flatten/Normalize/Merge/Organize` -> `UnifiedFileTransformationEngine`
-* `FindDuplicates` -> in-process duplicate pipeline with hash service
+* `Program.cs` starts Avalonia
+* `Composition/ServiceCollectionExtensions.cs` composes the container
+* `MainShellViewModel` owns shell-level navigation and startup prewarm scheduling
+* `MainWindowViewModel` and dedicated workspace VMs own page behavior
 
-### 3.3 Service Composition
-Dependency injection is layered through:
+### 3.2 Dependency Injection Registration
+
+Registration is split into:
+
 * `AddSimsModDesktopApplication()`
 * `AddSimsModDesktopPresentation()`
 * `AddSimsModDesktopInfrastructure()`
-* shell adapters in `src/SimsModDesktop/Composition/ServiceCollectionExtensions.cs`
+* desktop shell adapters in `src/SimsModDesktop/Composition/ServiceCollectionExtensions.cs`
 
 ---
 
@@ -91,26 +95,29 @@ Dependency injection is layered through:
 ├── src/SimsModDesktop.PackageCore/            # DBPF/package parsing core
 ├── src/SimsModDesktop.SaveData/               # Save/tray export readers and models
 ├── src/SimsModDesktop.TrayDependencyEngine/   # Tray dependency analysis + export
-└── src/SimsModDesktop.Tests/                  # Architecture, behavior, and service tests
+├── src/SimsModDesktop.Tests/                  # App/presentation/infrastructure tests
+├── src/SimsModDesktop.PackageCore.Tests/      # PackageCore tests
+└── src/SimsModDesktop.TrayDependencyEngine.Tests/ # Dependency engine tests
 ```
 
 ---
 
-## 5. Current Engineering Notes
+## 5. Engineering Notes
 
-* The app architecture intentionally keeps application layer free from legacy routing types
-* Architecture guard tests assert forbidden old artifacts are not reintroduced
-* Legacy `NoOp*UseCase` placeholders have been removed; runtime paths now rely on concrete application/infrastructure services
-* Engineering conventions for layer boundaries and placement rules: `src/SimsModDesktop/docs/EngineeringConventions.md`
-* Pull request review checklist for structural changes: `src/SimsModDesktop/docs/PullRequestChecklist.md`
-* Current page-level cache warmup sequence and timing diagrams: `src/SimsModDesktop/docs/CacheWarmupSequence.md`
+* Application layer remains UI-agnostic.
+* Tray dependency cache stays separate from UI preview cache on purpose.
+* `Mods`, `Tray`, and `Save` now share the same background prewarm foundation, while keeping domain-specific stores separate.
+* `Save` preview is descriptor-first; dependency analysis uses on-demand artifacts.
 
-### 4.x Performance Planning Docs
+Useful docs:
 
+* [ArchitectureOverview.md](src/SimsModDesktop/docs/ArchitectureOverview.md)
+* [ModularizationPlan.md](src/SimsModDesktop/docs/ModularizationPlan.md)
+* [CacheWarmupSequence.md](src/SimsModDesktop/docs/CacheWarmupSequence.md)
 * [PerformanceOptimizationPlan.md](src/SimsModDesktop/docs/PerformanceOptimizationPlan.md)
 * [PerformanceOptimizationChecklist.md](src/SimsModDesktop/docs/PerformanceOptimizationChecklist.md)
-* [CacheWarmupSequence.md](src/SimsModDesktop/docs/CacheWarmupSequence.md)
 * [EngineeringConventions.md](src/SimsModDesktop/docs/EngineeringConventions.md)
+* [PullRequestChecklist.md](src/SimsModDesktop/docs/PullRequestChecklist.md)
 
 ---
 
@@ -118,5 +125,5 @@ Dependency injection is layered through:
 
 ```powershell
 dotnet build SimsDesktopTools.sln
-dotnet test SimsDesktopTools.sln
+dotnet test SimsDesktopTools.sln -m:1
 ```

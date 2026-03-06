@@ -1,45 +1,89 @@
-# Modularization Status and Next Steps
+# Modularization Status and Current Structure
 
-## 1. Baseline (Current)
+## 1. Current Shape
 
-The current structure is already modularized around layered boundaries:
+The project is now modularized around three main layers plus dedicated feature engines:
 
-* `Presentation`: panel/view-model state + UI controllers.
-* `Application`: planning, validation, execution contracts, coordinators.
-* `Infrastructure`: adapters, persistence, OS/file/hash implementations.
+* `Presentation`
+  owns page behavior, shell navigation, warmup orchestration, and ViewModel state.
+* `Application`
+  owns validators, planners, execution coordinators, and stable service contracts.
+* `Infrastructure`
+  owns persistence, file/hash/config implementations, and tray/save/mod adapters.
+* feature engines
+  provide heavy domain logic:
+  * `PackageCore`
+  * `SaveData`
+  * `TrayDependencyEngine`
 
-Execution is centered on `ToolkitActionPlanner` + `ExecutionCoordinator` + feature services.
+## 2. What Is Already Modularized
 
----
+### 2.1 Toolkit Execution
 
-## 2. Completed Work
+Toolkit action execution is centralized behind:
 
-### 2.1 Boundary Cleanup
-* Removed legacy routing/strategy artifacts from active architecture.
-* Added architecture tests to prevent reintroduction of forbidden legacy types.
+* `ToolkitActionPlanner`
+* `ExecutionCoordinator`
+* `UnifiedFileTransformationEngine`
 
-### 2.2 State Contract Isolation
-* Module state interfaces are used across layer boundaries instead of concrete UI types.
-* Presentation layer maps concrete panel VMs to module state contracts via DI.
+This keeps the UI from directly composing file-operation pipelines.
 
-### 2.3 Execution Consolidation
-* `Flatten/Normalize/Merge/Organize` consolidated under `UnifiedFileTransformationEngine`.
-* `FindDuplicates` executed in-process with shared file/hash services.
+### 2.2 Preview Domains
 
----
+Preview behavior is split by responsibility:
 
-## 3. Remaining Modularization Targets
+* `TrayPreviewCoordinator`
+  handles paging-facing orchestration.
+* `SimsTrayPreviewService`
+  handles summary/page projection.
+* tray preview persistence and caches live in Infrastructure.
+* save preview now uses `PreviewSourceRef` + `SavePreviewDescriptor` rather than a tray-root-only model.
 
-1. Reduce `MainWindowViewModel` orchestration weight by moving more flows into focused coordinators/services.
-2. Replace current `NoOp*UseCase` placeholders with real use-case implementations (or remove unused seams).
-3. Standardize action result contracts across toolkit, tray, save, and mod-index flows.
-4. Continue splitting large presentation controllers where responsibilities overlap.
+### 2.3 Save Domain
 
----
+Save logic is separated into:
 
-## 4. Recommended Sequence
+* `SaveData` for parsing and household export primitives
+* `SaveHouseholdCoordinator` for application-facing operations
+* descriptor/artifact stores for preview acceleration
 
-1. Finalize use-case extraction for high-traffic paths (toolkit execution, tray preview, mod index).
-2. Introduce explicit result envelopes per flow and remove stringly-typed status propagation.
-3. Add contract tests for each module state interface and planner plan builder path.
-4. Keep architecture guard tests updated as new layers/services are introduced.
+### 2.4 Cache / Warmup Infrastructure
+
+Background prewarm and page-triggered warmup are no longer tray-only concepts.
+
+Shared seams now exist for:
+
+* background prewarm job scheduling
+* list query caching
+* tray bundle analysis reuse
+* save preview descriptor/artifact readiness
+
+## 3. Current Pressure Points
+
+The main remaining high-weight areas are:
+
+1. `MainWindowViewModel`
+   still coordinates many shell-facing responsibilities even after controller extraction.
+2. `MainWindowCacheWarmupController`
+   now owns multiple domains and will likely need a second round of decomposition if more prewarm jobs are added.
+3. `SimsTrayPreviewService`
+   carries both tray-root and save-descriptor preview projection behavior.
+4. `SaveWorkspaceViewModel`
+   still mixes page state, selection behavior, export actions, and preview lifecycle logic.
+
+## 4. Recommended Next Modularization Moves
+
+1. Extract more page-specific orchestration from large workspace view models into small presentation coordinators.
+2. Keep service contracts source-oriented.
+   `PreviewSourceRef`, `CacheSourceVersion`, and descriptor/artifact contracts are the right direction.
+3. Avoid folding domain stores together just because they share caching behavior.
+   Reuse warmup/query infrastructure, but keep mods/tray/save persistence separate.
+4. Prefer adding explicit contract tests when introducing a new seam.
+   This is especially important for warmup reuse, preview source routing, and cache invalidation.
+
+## 5. Related Docs
+
+* `ArchitectureOverview.md`
+* `CacheWarmupSequence.md`
+* `PerformanceOptimizationPlan.md`
+* `EngineeringConventions.md`
