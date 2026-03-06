@@ -1,7 +1,9 @@
 using Avalonia.Threading;
 using Microsoft.Extensions.Logging.Abstractions;
+using SimsModDesktop.Application.Configuration;
 using SimsModDesktop.Application.Mods;
 using SimsModDesktop.Application.TextureCompression;
+using SimsModDesktop.Presentation.Services;
 using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.Presentation.ViewModels;
 using SimsModDesktop.Presentation.ViewModels.Panels;
@@ -73,6 +75,48 @@ public sealed class ModPreviewWorkspaceViewModelTests
         Assert.InRange(workspace.CacheWarmupPercent, 0, 99);
     }
 
+    [Fact]
+    public async Task SetIsActive_True_WhenIdlePrimeEnabled_PrimesNextPageInBackground()
+    {
+        using var modsRoot = new TempDirectory();
+        var filter = new ModPreviewPanelViewModel
+        {
+            ModsRoot = modsRoot.Path
+        };
+        var configurationProvider = new StaticConfigurationProvider(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Performance.IdlePrewarm.ModQueryPrimeEnabled"] = true,
+            ["Performance.IdlePrewarm.DelayMs"] = 50
+        });
+        var catalogService = new RecordingCatalogService();
+        var scheduler = new SilentScheduler();
+        var warmupController = new MainWindowCacheWarmupController(
+            new FakeInventoryService(),
+            scheduler,
+            new FakePackageIndexCache(),
+            NullLogger<MainWindowCacheWarmupController>.Instance,
+            catalogService,
+            pathIdentityResolver: null,
+            configurationProvider: configurationProvider,
+            backgroundCachePrewarmCoordinator: new BackgroundCachePrewarmCoordinator());
+        var workspace = new ModPreviewWorkspaceViewModel(
+            filter,
+            catalogService: catalogService,
+            indexScheduler: scheduler,
+            cacheWarmupController: warmupController,
+            inspectService: new FakeInspectService(),
+            textureEditService: NullModPackageTextureEditService.Instance,
+            fileDialogService: new FakeFileDialogService(),
+            uiActivityMonitor: new FakeUiActivityMonitor(DateTimeOffset.UtcNow - TimeSpan.FromMinutes(1)),
+            configurationProvider: configurationProvider);
+
+        workspace.SetIsActive(true);
+        await WaitForAsync(() => catalogService.Calls.Count >= 2, timeoutMs: 3000);
+        Dispatcher.UIThread.RunJobs(null);
+
+        Assert.Equal([1, 2], catalogService.Calls.Select(query => query.PageIndex).Take(2).ToArray());
+    }
+
     private sealed class FakeCatalogService : IModItemCatalogService
     {
         public Task<ModItemCatalogPage> QueryPageAsync(ModItemCatalogQuery query, CancellationToken cancellationToken = default)
@@ -101,6 +145,56 @@ public sealed class ModPreviewWorkspaceViewModelTests
                 PageIndex = 1,
                 PageSize = 50,
                 TotalPages = 2
+            });
+        }
+    }
+
+    private sealed class RecordingCatalogService : IModItemCatalogService
+    {
+        private readonly object _gate = new();
+
+        public List<ModItemCatalogQuery> Calls { get; } = new();
+
+        public Task<ModItemCatalogPage> QueryPageAsync(ModItemCatalogQuery query, CancellationToken cancellationToken = default)
+        {
+            lock (_gate)
+            {
+                Calls.Add(new ModItemCatalogQuery
+                {
+                    ModsRoot = query.ModsRoot,
+                    SearchQuery = query.SearchQuery,
+                    EntityKindFilter = query.EntityKindFilter,
+                    SubTypeFilter = query.SubTypeFilter,
+                    SortBy = query.SortBy,
+                    PageIndex = query.PageIndex,
+                    PageSize = query.PageSize
+                });
+            }
+
+            return Task.FromResult(new ModItemCatalogPage
+            {
+                Items =
+                [
+                    new ModItemListRow
+                    {
+                        ItemKey = $"item-{query.PageIndex}",
+                        DisplayName = $"CAS {query.PageIndex:00000000}",
+                        EntityKind = "Cas",
+                        EntitySubType = "CAS Part",
+                        PackagePath = @"D:\Mods\demo.package",
+                        PackageName = "demo",
+                        ScopeText = "Cas",
+                        ThumbnailStatus = "None",
+                        TextureCount = 0,
+                        EditableTextureCount = 0,
+                        TextureSummaryText = "Textures 0 | Editable 0 | No texture",
+                        UpdatedUtcTicks = DateTime.UtcNow.Ticks
+                    }
+                ],
+                TotalItems = 120,
+                PageIndex = query.PageIndex,
+                PageSize = query.PageSize,
+                TotalPages = 3
             });
         }
     }
@@ -229,6 +323,114 @@ public sealed class ModPreviewWorkspaceViewModelTests
 
         public Task<string?> PickCsvSavePathAsync(string title, string suggestedFileName)
             => Task.FromResult<string?>(null);
+    }
+
+    private sealed class FakeUiActivityMonitor : IUiActivityMonitor
+    {
+        public FakeUiActivityMonitor(DateTimeOffset lastInteractionUtc)
+        {
+            LastInteractionUtc = lastInteractionUtc;
+        }
+
+        public DateTimeOffset LastInteractionUtc { get; private set; }
+
+        public void RecordInteraction()
+        {
+            LastInteractionUtc = DateTimeOffset.UtcNow;
+        }
+    }
+
+    private sealed class SilentScheduler : IModItemIndexScheduler
+    {
+        public event EventHandler<ModFastBatchAppliedEventArgs>? FastBatchApplied;
+        public event EventHandler<ModEnrichmentAppliedEventArgs>? EnrichmentApplied;
+        public event EventHandler? AllWorkCompleted;
+        public bool IsFastPassRunning => false;
+        public bool IsDeepPassRunning => false;
+
+        public Task QueueRefreshAsync(
+            ModIndexRefreshRequest request,
+            IProgress<ModIndexRefreshProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class StaticConfigurationProvider : IConfigurationProvider
+    {
+        private readonly IReadOnlyDictionary<string, object?> _values;
+
+        public StaticConfigurationProvider(IReadOnlyDictionary<string, object?> values)
+        {
+            _values = values;
+        }
+
+        public Task<T?> GetConfigurationAsync<T>(string key, CancellationToken cancellationToken = default)
+        {
+            if (_values.TryGetValue(key, out var value) && value is T typed)
+            {
+                return Task.FromResult<T?>(typed);
+            }
+
+            return Task.FromResult<T?>(default);
+        }
+
+        public Task SetConfigurationAsync<T>(string key, T value, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task<bool> ContainsKeyAsync(string key, CancellationToken cancellationToken = default)
+            => Task.FromResult(_values.ContainsKey(key));
+
+        public Task<bool> RemoveConfigurationAsync(string key, CancellationToken cancellationToken = default)
+            => Task.FromResult(false);
+
+        public Task<IReadOnlyList<string>> GetAllKeysAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<string>>(_values.Keys.ToArray());
+
+        public Task<bool> IsPlatformSpecificAsync(string key, CancellationToken cancellationToken = default)
+            => Task.FromResult(false);
+
+        public string GetPlatformSpecificPrefix()
+            => string.Empty;
+
+        public T? GetDefaultValue<T>(string key)
+            => default;
+
+        public Task<bool> ResetToDefaultAsync(string key, CancellationToken cancellationToken = default)
+            => Task.FromResult(false);
+
+        public Task<IReadOnlyDictionary<string, object?>> GetConfigurationsAsync(
+            IReadOnlyList<string> keys,
+            CancellationToken cancellationToken = default)
+        {
+            var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var key in keys)
+            {
+                values[key] = _values.TryGetValue(key, out var value) ? value : null;
+            }
+
+            return Task.FromResult<IReadOnlyDictionary<string, object?>>(values);
+        }
+
+        public Task SetConfigurationsAsync(
+            IReadOnlyDictionary<string, object> configurations,
+            CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+    }
+
+    private static async Task WaitForAsync(Func<bool> condition, int timeoutMs)
+    {
+        var startedAt = Environment.TickCount64;
+        while (!condition())
+        {
+            if (Environment.TickCount64 - startedAt > timeoutMs)
+            {
+                throw new TimeoutException("Condition was not met before timeout.");
+            }
+
+            await Task.Delay(25);
+        }
     }
 
     private sealed class TempDirectory : IDisposable

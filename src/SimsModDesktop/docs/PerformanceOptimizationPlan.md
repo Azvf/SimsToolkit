@@ -153,10 +153,10 @@ The current heavy paths are grouped by operational domain rather than by file.
   * Current bottleneck: package index read plus repeated texture resource reads and classification
   * Anchors: `src/SimsModDesktop.Application/TextureCompression/ModPackageTextureAnalysisService.cs`
 
-* `Save preview cache build`
+* `Save preview descriptor / artifact pipeline`
   * Type: `Mixed`
-  * Current bottleneck: full save read plus per-household tray-like export generation
-  * Anchors: `src/SimsModDesktop.Application/Saves/SavePreviewCacheBuilder.cs`
+  * Current bottleneck: full save read for descriptor build plus on-demand single-household artifact generation
+  * Anchors: `src/SimsModDesktop.Infrastructure/Saves/SavePreviewDescriptorBuilder.cs`, `src/SimsModDesktop.Infrastructure/Saves/SavePreviewArtifactProvider.cs`
 
 * `Save household export`
   * Type: `IO-bound`

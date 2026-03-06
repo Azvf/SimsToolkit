@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Application.Caching;
 using SimsModDesktop.Application.Configuration;
 using SimsModDesktop.Application.Mods;
+using SimsModDesktop.Presentation.Services;
 using SimsModDesktop.Presentation.ViewModels;
 using SimsModDesktop.TrayDependencyEngine;
 
@@ -97,7 +98,7 @@ public sealed class MainWindowCacheWarmupControllerTests
             packageCache,
             NullLogger<MainWindowCacheWarmupController>.Instance,
             pathIdentityResolver: null,
-            configurationProvider);
+            configurationProvider: configurationProvider);
 
         _ = await controller.EnsureTrayWorkspaceReadyAsync(modsRoot.Path, CreateNoOpHost());
 
@@ -137,6 +138,138 @@ public sealed class MainWindowCacheWarmupControllerTests
         Assert.Equal(1, inventory.CallCount);
     }
 
+    [Fact]
+    public async Task AppIdlePrewarmBootstrapper_QueuesTrayDependencyWarmupAfterIdleDelay()
+    {
+        using var modsRoot = new TempDirectory("warmup-idle");
+        var packagePath = Path.Combine(modsRoot.Path, "sample.package");
+        File.WriteAllBytes(packagePath, [1, 2, 3, 4]);
+
+        var configurationProvider = new StaticConfigurationProvider(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Performance.IdlePrewarm.Enabled"] = true,
+            ["Performance.IdlePrewarm.DelayMs"] = 50
+        });
+        var backgroundCoordinator = new BackgroundCachePrewarmCoordinator();
+        var controller = new MainWindowCacheWarmupController(
+            new StaticInventoryService(packagePath),
+            new NoOpModScheduler(),
+            new FastPackageIndexCache(),
+            NullLogger<MainWindowCacheWarmupController>.Instance,
+            pathIdentityResolver: null,
+            configurationProvider: configurationProvider,
+            backgroundCachePrewarmCoordinator: backgroundCoordinator);
+        var bootstrapper = new AppIdlePrewarmBootstrapper(
+            controller,
+            new UiActivityMonitor(),
+            NullLogger<AppIdlePrewarmBootstrapper>.Instance,
+            configurationProvider);
+
+        bootstrapper.QueueTrayDependencyStartupPrewarm(modsRoot.Path);
+
+        await WaitForAsync(
+            () => controller.TryGetReadyTraySnapshot(modsRoot.Path, out _),
+            timeoutMs: 3000);
+
+        Assert.True(controller.TryGetReadyTraySnapshot(modsRoot.Path, out var snapshot));
+        Assert.NotNull(snapshot);
+        Assert.True(controller.TryGetTrayPrewarmState(modsRoot.Path, out var state));
+        Assert.NotNull(state);
+        Assert.Equal(BackgroundPrewarmJobRunState.Completed, state!.RunState);
+    }
+
+    [Fact]
+    public async Task QueueModsQueryIdlePrewarm_PrimesCatalogQueryCache()
+    {
+        using var modsRoot = new TempDirectory("warmup-modquery");
+        var packagePath = Path.Combine(modsRoot.Path, "sample.package");
+        File.WriteAllBytes(packagePath, [1, 2, 3, 4]);
+
+        var catalogService = new RecordingModItemCatalogService();
+        var backgroundCoordinator = new BackgroundCachePrewarmCoordinator();
+        var controller = new MainWindowCacheWarmupController(
+            new StaticInventoryService(packagePath),
+            new NoOpModScheduler(),
+            new FastPackageIndexCache(),
+            NullLogger<MainWindowCacheWarmupController>.Instance,
+            catalogService,
+            pathIdentityResolver: null,
+            configurationProvider: null,
+            backgroundCachePrewarmCoordinator: backgroundCoordinator);
+        var query = new ModItemCatalogQuery
+        {
+            ModsRoot = modsRoot.Path,
+            SearchQuery = "hair",
+            EntityKindFilter = "Cas",
+            SubTypeFilter = "Hair",
+            SortBy = "Name",
+            PageIndex = 1,
+            PageSize = 50
+        };
+
+        Assert.True(controller.QueueModsQueryIdlePrewarm(query, "test"));
+
+        await WaitForAsync(() => catalogService.CallCount > 0, timeoutMs: 3000);
+
+        Assert.Equal(1, catalogService.CallCount);
+        Assert.NotNull(catalogService.LastQuery);
+        Assert.Equal(modsRoot.Path, catalogService.LastQuery!.ModsRoot);
+        Assert.True(controller.TryGetModsQueryPrewarmState(query, out var state));
+        Assert.NotNull(state);
+        Assert.Equal(BackgroundPrewarmJobRunState.Completed, state!.RunState);
+    }
+
+    [Fact]
+    public async Task AppIdlePrewarmBootstrapper_QueuesModCatalogWarmupAfterIdleDelay()
+    {
+        using var modsRoot = new TempDirectory("warmup-modquery-idle");
+        var packagePath = Path.Combine(modsRoot.Path, "sample.package");
+        File.WriteAllBytes(packagePath, [1, 2, 3, 4]);
+
+        var configurationProvider = new StaticConfigurationProvider(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Performance.IdlePrewarm.Enabled"] = true,
+            ["Performance.IdlePrewarm.DelayMs"] = 50,
+            ["Performance.IdlePrewarm.ModQueryPrimeEnabled"] = true
+        });
+        var catalogService = new RecordingModItemCatalogService();
+        var backgroundCoordinator = new BackgroundCachePrewarmCoordinator();
+        var controller = new MainWindowCacheWarmupController(
+            new StaticInventoryService(packagePath),
+            new NoOpModScheduler(),
+            new FastPackageIndexCache(),
+            NullLogger<MainWindowCacheWarmupController>.Instance,
+            catalogService,
+            saveHouseholdCoordinator: null,
+            pathIdentityResolver: null,
+            configurationProvider: configurationProvider,
+            backgroundCachePrewarmCoordinator: backgroundCoordinator);
+        var bootstrapper = new AppIdlePrewarmBootstrapper(
+            controller,
+            new UiActivityMonitor(),
+            NullLogger<AppIdlePrewarmBootstrapper>.Instance,
+            configurationProvider);
+        var query = new ModItemCatalogQuery
+        {
+            ModsRoot = modsRoot.Path,
+            SearchQuery = string.Empty,
+            EntityKindFilter = "All",
+            SubTypeFilter = "All",
+            SortBy = "Last Indexed",
+            PageIndex = 1,
+            PageSize = 50
+        };
+
+        bootstrapper.QueueModCatalogStartupPrewarm(query);
+
+        await WaitForAsync(() => catalogService.CallCount > 0, timeoutMs: 3000);
+
+        Assert.Equal(1, catalogService.CallCount);
+        Assert.True(controller.TryGetModsQueryPrewarmState(query, out var state));
+        Assert.NotNull(state);
+        Assert.Equal(BackgroundPrewarmJobRunState.Completed, state!.RunState);
+    }
+
     private static MainWindowCacheWarmupHost CreateNoOpHost()
     {
         return new MainWindowCacheWarmupHost
@@ -144,6 +277,20 @@ public sealed class MainWindowCacheWarmupControllerTests
             ReportProgress = _ => { },
             AppendLog = _ => { }
         };
+    }
+
+    private static async Task WaitForAsync(Func<bool> condition, int timeoutMs)
+    {
+        var startedAt = Environment.TickCount64;
+        while (!condition())
+        {
+            if (Environment.TickCount64 - startedAt > timeoutMs)
+            {
+                throw new TimeoutException("Condition was not met before timeout.");
+            }
+
+            await Task.Delay(25);
+        }
     }
 
     private sealed class StaticInventoryService : IModPackageInventoryService
@@ -179,6 +326,28 @@ public sealed class MainWindowCacheWarmupControllerTests
                     LastValidatedUtcTicks = DateTime.UtcNow.Ticks
                 },
                 AddedEntries = [entry]
+            });
+        }
+    }
+
+    private sealed class RecordingModItemCatalogService : IModItemCatalogService
+    {
+        public int CallCount { get; private set; }
+
+        public ModItemCatalogQuery? LastQuery { get; private set; }
+
+        public Task<ModItemCatalogPage> QueryPageAsync(ModItemCatalogQuery query, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            CallCount++;
+            LastQuery = query;
+            return Task.FromResult(new ModItemCatalogPage
+            {
+                Items = Array.Empty<ModItemListRow>(),
+                TotalItems = 0,
+                PageIndex = query.PageIndex,
+                PageSize = query.PageSize,
+                TotalPages = 1
             });
         }
     }

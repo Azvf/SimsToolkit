@@ -281,7 +281,7 @@ Implementation:
 - [x] add `ModIndexRefreshRequest.FastWorkerCount` / `DeepWorkerCount`
 - [x] add `PackageIndexBuildRequest.ParseWorkerCount` / `WriteBatchSize`
 - [x] add `ITrayMetadataService` batch request overload
-- [x] add `ISavePreviewCacheBuilder` options overload
+- [x] replace save preview prebuild with descriptor/artifact split contracts
 - [x] add `OrganizeOptions.MaxParallelArchives`
 - [x] update hash worker default from `8` to `12`
 - [x] add Round2 default performance config keys
@@ -294,7 +294,7 @@ Pipeline:
 - [x] refactor warmup controller gate to keyed per-root lock and add `modcache.warmup.lock.wait`
 - [x] refactor inventory persistence to staging + set-based SQL and add `modcache.inventory.persist.batch`
 - [x] refactor `Organize` to two-phase planning + parallel execution + adaptive throttle
-- [x] refactor `SavePreviewCacheBuilder` to bounded parallel household export with stable manifest ordering
+- [x] refactor save preview pipeline to `descriptor-first` preview + single-household on-demand artifact generation
 
 Schema:
 

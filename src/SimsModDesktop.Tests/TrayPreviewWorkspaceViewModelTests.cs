@@ -168,7 +168,7 @@ public sealed class TrayPreviewWorkspaceViewModelTests
             return false;
         }
 
-        public void Invalidate(string? trayRootPath = null)
+        public void Invalidate(PreviewSourceRef? source = null)
         {
         }
 

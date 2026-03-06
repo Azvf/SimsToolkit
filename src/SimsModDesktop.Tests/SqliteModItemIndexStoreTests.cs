@@ -1,7 +1,7 @@
 using SimsModDesktop.Application.Mods;
+using SimsModDesktop.Application.Caching;
 using SimsModDesktop.Application.TextureCompression;
 using Microsoft.Data.Sqlite;
-using System.Reflection;
 
 namespace SimsModDesktop.Tests;
 
@@ -679,10 +679,11 @@ public sealed class SqliteModItemIndexStoreTests
     }
 
     [Fact]
-    public async Task QueryPageAsync_CountCache_IsBounded()
+    public async Task QueryPageAsync_UsesInjectedQueryCacheAndInvalidatesOnWrite()
     {
         using var temp = new TempDirectory();
-        var store = new SqliteModItemIndexStore(temp.Path);
+        var queryCache = new RecordingListQueryCache();
+        var store = new SqliteModItemIndexStore(temp.Path, queryCache: queryCache);
         var packagePath = Path.Combine(temp.Path, "bounded.package");
         File.WriteAllBytes(packagePath, [1, 2, 3, 4]);
         var now = DateTime.UtcNow.Ticks;
@@ -739,26 +740,90 @@ public sealed class SqliteModItemIndexStoreTests
             ]
         });
 
-        for (var i = 0; i < 320; i++)
+        var query = new ModItemCatalogQuery
         {
-            _ = await store.QueryPageAsync(new ModItemCatalogQuery
-            {
-                ModsRoot = temp.Path,
-                SearchQuery = $"token{i}",
-                EntityKindFilter = "All",
-                SubTypeFilter = "All",
-                SortBy = "Name",
-                PageIndex = 1,
-                PageSize = 20
-            });
-        }
+            ModsRoot = temp.Path,
+            SearchQuery = string.Empty,
+            EntityKindFilter = "All",
+            SubTypeFilter = "All",
+            SortBy = "Name",
+            PageIndex = 1,
+            PageSize = 20
+        };
 
-        var cacheField = typeof(SqliteModItemIndexStore).GetField("_countCache", BindingFlags.Instance | BindingFlags.NonPublic);
-        Assert.NotNull(cacheField);
-        var cacheValue = cacheField!.GetValue(store);
-        Assert.NotNull(cacheValue);
-        var cache = Assert.IsAssignableFrom<System.Collections.IDictionary>(cacheValue);
-        Assert.True(cache.Count <= 256);
+        var firstPage = await store.QueryPageAsync(query);
+        var pageSetCountAfterFirstQuery = queryCache.SetCounts.GetValueOrDefault("modindex.page");
+        var countSetCountAfterFirstQuery = queryCache.SetCounts.GetValueOrDefault("modindex.count");
+
+        var secondPage = await store.QueryPageAsync(query);
+        var pageSetCountAfterSecondQuery = queryCache.SetCounts.GetValueOrDefault("modindex.page");
+        var countSetCountAfterSecondQuery = queryCache.SetCounts.GetValueOrDefault("modindex.count");
+
+        await store.ReplacePackageAsync(new ModItemIndexBuildResult
+        {
+            PackageState = new ModPackageIndexState
+            {
+                PackagePath = packagePath,
+                FileLength = 4,
+                LastWriteUtcTicks = now + 1,
+                PackageType = ".package",
+                ScopeHint = "CAS",
+                IndexedUtcTicks = now + 1,
+                ItemCount = 1,
+                CasItemCount = 1,
+                BuildBuyItemCount = 0,
+                UnclassifiedEntityCount = 0,
+                TextureResourceCount = 0,
+                EditableTextureCount = 0,
+                Status = "Ready"
+            },
+            Items =
+            [
+                new ModIndexedItemRecord
+                {
+                    ItemKey = "item-cache",
+                    PackagePath = packagePath,
+                    PackageFingerprintLength = 4,
+                    PackageFingerprintLastWriteUtcTicks = now + 1,
+                    EntityKind = "Cas",
+                    EntitySubType = "Hair",
+                    DisplayName = "Cache Item Updated",
+                    SortName = "Cache Item Updated",
+                    SearchText = "Cache Item Updated",
+                    ScopeText = "Cas",
+                    ThumbnailStatus = "Placeholder",
+                    TextureCount = 0,
+                    EditableTextureCount = 0,
+                    HasTextureData = false,
+                    SourceResourceKey = "034AEECB:00000001:0000000000000001",
+                    SourceGroupText = "00000001",
+                    CreatedUtcTicks = now,
+                    UpdatedUtcTicks = now + 1,
+                    SortKeyStable = "Cas:Hair:0000000000000001",
+                    DisplayStage = ModItemDisplayStage.Fast,
+                    ThumbnailStage = ModItemThumbnailStage.None,
+                    TextureStage = ModItemTextureStage.Pending,
+                    LastFastParsedUtcTicks = now + 1,
+                    PendingDeepRefresh = true,
+                    DisplayNameSource = "Fallback",
+                    TextureCandidates = Array.Empty<ModPackageTextureCandidate>()
+                }
+            ]
+        });
+
+        var thirdPage = await store.QueryPageAsync(query);
+
+        Assert.Single(firstPage.Items);
+        Assert.Single(secondPage.Items);
+        Assert.Single(thirdPage.Items);
+        Assert.Equal("Cache Item", firstPage.Items[0].DisplayName);
+        Assert.Equal("Cache Item", secondPage.Items[0].DisplayName);
+        Assert.Equal("Cache Item Updated", thirdPage.Items[0].DisplayName);
+        Assert.Equal(pageSetCountAfterFirstQuery, pageSetCountAfterSecondQuery);
+        Assert.Equal(countSetCountAfterFirstQuery, countSetCountAfterSecondQuery);
+        Assert.True(queryCache.TryGetHits.GetValueOrDefault("modindex.page") >= 1);
+        Assert.True(queryCache.InvalidateCounts.GetValueOrDefault("modindex.page") >= 2);
+        Assert.True(queryCache.SetCounts.GetValueOrDefault("modindex.page") > pageSetCountAfterSecondQuery);
     }
 
     private sealed class TempDirectory : IDisposable
@@ -777,6 +842,57 @@ public sealed class SqliteModItemIndexStoreTests
             {
                 Directory.Delete(Path, recursive: true);
             }
+        }
+    }
+
+    private sealed class RecordingListQueryCache : IListQueryCache
+    {
+        private readonly Dictionary<string, object> _entries = new(StringComparer.Ordinal);
+
+        public Dictionary<string, int> TryGetHits { get; } = new(StringComparer.Ordinal);
+
+        public Dictionary<string, int> SetCounts { get; } = new(StringComparer.Ordinal);
+
+        public Dictionary<string, int> InvalidateCounts { get; } = new(StringComparer.Ordinal);
+
+        public bool TryGet<TValue>(string domain, string key, out TValue? value)
+        {
+            if (_entries.TryGetValue(BuildKey(domain, key), out var stored) && stored is TValue typed)
+            {
+                TryGetHits[domain] = TryGetHits.GetValueOrDefault(domain) + 1;
+                value = typed;
+                return true;
+            }
+
+            value = default;
+            return false;
+        }
+
+        public void Set<TValue>(string domain, string key, TValue value)
+        {
+            _entries[BuildKey(domain, key)] = value!;
+            SetCounts[domain] = SetCounts.GetValueOrDefault(domain) + 1;
+        }
+
+        public void InvalidateDomain(string domain, string? keyPrefix = null)
+        {
+            var prefix = BuildKey(domain, keyPrefix ?? string.Empty);
+            foreach (var key in _entries.Keys.Where(candidate => candidate.StartsWith(prefix, StringComparison.Ordinal)).ToArray())
+            {
+                _entries.Remove(key);
+            }
+
+            InvalidateCounts[domain] = InvalidateCounts.GetValueOrDefault(domain) + 1;
+        }
+
+        public void Clear()
+        {
+            _entries.Clear();
+        }
+
+        private static string BuildKey(string domain, string key)
+        {
+            return domain + "|" + key;
         }
     }
 }

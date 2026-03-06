@@ -20,7 +20,7 @@ public sealed class SimsTrayPreviewServiceTests
             logger: logger);
         var requestA = new SimsTrayPreviewRequest
         {
-            TrayPath = trayDir.Path,
+            PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
             PresetTypeFilter = "Lot",
             BuildSizeFilter = "20 x 20",
             TimeFilter = "All",
@@ -28,7 +28,7 @@ public sealed class SimsTrayPreviewServiceTests
         };
         var requestB = new SimsTrayPreviewRequest
         {
-            TrayPath = trayDir.Path,
+            PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
             PresetTypeFilter = "Lot",
             BuildSizeFilter = "50 x 40",
             TimeFilter = "Last90d",
@@ -60,7 +60,7 @@ public sealed class SimsTrayPreviewServiceTests
             logger: logger);
         var request = new SimsTrayPreviewRequest
         {
-            TrayPath = trayDir.Path,
+            PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
             PresetTypeFilter = "Lot",
             PageSize = 50
         };
@@ -77,6 +77,48 @@ public sealed class SimsTrayPreviewServiceTests
     }
 
     [Fact]
+    public async Task BuildSummaryAsync_ReusesPersistedRootSnapshotAcrossServiceInstances()
+    {
+        using var trayDir = new TempDirectory();
+        using var cacheDir = new TempDirectory();
+        CreateTrayFiles(trayDir.Path, "villa_small_20x20", ".trayitem", ".blueprint");
+
+        var firstLogger = new RecordingLogger<SimsTrayPreviewService>();
+        var firstService = new SimsTrayPreviewService(
+            trayThumbnailService: null,
+            trayMetadataService: null,
+            metadataIndexStore: new TrayMetadataIndexStore(cacheDir.Path),
+            logger: firstLogger,
+            pathIdentityResolver: null,
+            rootSnapshotStore: new TrayPreviewRootSnapshotStore(cacheDir.Path));
+        var request = new SimsTrayPreviewRequest
+        {
+            PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
+            PresetTypeFilter = "Lot",
+            PageSize = 50
+        };
+
+        var firstSummary = await firstService.BuildSummaryAsync(request);
+
+        var secondLogger = new RecordingLogger<SimsTrayPreviewService>();
+        var secondService = new SimsTrayPreviewService(
+            trayThumbnailService: null,
+            trayMetadataService: null,
+            metadataIndexStore: new TrayMetadataIndexStore(cacheDir.Path),
+            logger: secondLogger,
+            pathIdentityResolver: null,
+            rootSnapshotStore: new TrayPreviewRootSnapshotStore(cacheDir.Path));
+
+        var secondSummary = await secondService.BuildSummaryAsync(request);
+
+        Assert.Equal(1, firstSummary.TotalItems);
+        Assert.Equal(1, secondSummary.TotalItems);
+        Assert.Contains(
+            secondLogger.Messages,
+            message => message.Contains("traypreview.rootsnapshot.persist.reuse", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task BuildPageAsync_BuildSizeFilter_FiltersLotsAndRoomsByParsedDimensions()
     {
         using var trayDir = new TempDirectory();
@@ -86,7 +128,7 @@ public sealed class SimsTrayPreviewServiceTests
         var service = new SimsTrayPreviewService();
         var request = new SimsTrayPreviewRequest
         {
-            TrayPath = trayDir.Path,
+            PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
             PresetTypeFilter = "Lot",
             BuildSizeFilter = "20 x 20",
             HouseholdSizeFilter = "All",
@@ -111,7 +153,7 @@ public sealed class SimsTrayPreviewServiceTests
         var service = new SimsTrayPreviewService();
         var request = new SimsTrayPreviewRequest
         {
-            TrayPath = trayDir.Path,
+            PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
             PresetTypeFilter = "Household",
             BuildSizeFilter = "All",
             HouseholdSizeFilter = "3",
@@ -149,13 +191,13 @@ public sealed class SimsTrayPreviewServiceTests
             trayMetadataService: new FakeTrayMetadataService(metadata));
         var serialRequest = new SimsTrayPreviewRequest
         {
-            TrayPath = trayDir.Path,
+            PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
             PageSize = 50,
             PageBuildWorkerCount = 1
         };
         var parallelRequest = new SimsTrayPreviewRequest
         {
-            TrayPath = trayDir.Path,
+            PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
             PageSize = 50,
             PageBuildWorkerCount = 8
         };
@@ -189,7 +231,7 @@ public sealed class SimsTrayPreviewServiceTests
         var service = new SimsTrayPreviewService();
         var request = new SimsTrayPreviewRequest
         {
-            TrayPath = trayDir.Path,
+            PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
             PageSize = 50,
             PageBuildWorkerCount = 8
         };
@@ -209,7 +251,7 @@ public sealed class SimsTrayPreviewServiceTests
         var service = new SimsTrayPreviewService(cleanupRecorder);
         var request = new SimsTrayPreviewRequest
         {
-            TrayPath = trayDir.Path,
+            PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
             PageSize = 50
         };
 
@@ -253,7 +295,7 @@ public sealed class SimsTrayPreviewServiceTests
             }));
         var request = new SimsTrayPreviewRequest
         {
-            TrayPath = trayDir.Path,
+            PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
             PageSize = 50
         };
 
@@ -295,7 +337,7 @@ public sealed class SimsTrayPreviewServiceTests
             trayMetadataService: metadataService);
         var request = new SimsTrayPreviewRequest
         {
-            TrayPath = trayDir.Path,
+            PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
             PageSize = 1
         };
 
@@ -340,7 +382,7 @@ public sealed class SimsTrayPreviewServiceTests
             trayMetadataService: metadataService);
         var baseRequest = new SimsTrayPreviewRequest
         {
-            TrayPath = trayDir.Path,
+            PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
             PageSize = 1
         };
 
@@ -355,7 +397,7 @@ public sealed class SimsTrayPreviewServiceTests
 
         var authorRequest = new SimsTrayPreviewRequest
         {
-            TrayPath = trayDir.Path,
+            PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
             AuthorFilter = "Builder",
             PageSize = 1
         };
@@ -405,7 +447,7 @@ public sealed class SimsTrayPreviewServiceTests
             metadataIndexStore: sharedStore);
         var warmRequest = new SimsTrayPreviewRequest
         {
-            TrayPath = trayDir.Path,
+            PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
             PageSize = 50
         };
 
@@ -422,7 +464,7 @@ public sealed class SimsTrayPreviewServiceTests
             metadataIndexStore: new TrayMetadataIndexStore(cacheDir.Path));
         var filteredRequest = new SimsTrayPreviewRequest
         {
-            TrayPath = trayDir.Path,
+            PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
             AuthorFilter = "Builder",
             PageSize = 50
         };
@@ -448,7 +490,7 @@ public sealed class SimsTrayPreviewServiceTests
         var service = new SimsTrayPreviewService();
         var request = new SimsTrayPreviewRequest
         {
-            TrayPath = trayDir.Path,
+            PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
             PageSize = 50
         };
 
@@ -482,7 +524,7 @@ public sealed class SimsTrayPreviewServiceTests
         var service = new SimsTrayPreviewService();
         var request = new SimsTrayPreviewRequest
         {
-            TrayPath = trayDir.Path,
+            PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
             PageSize = 50
         };
 
@@ -516,7 +558,7 @@ public sealed class SimsTrayPreviewServiceTests
         var service = new SimsTrayPreviewService();
         var request = new SimsTrayPreviewRequest
         {
-            TrayPath = trayDir.Path,
+            PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
             PageSize = 50
         };
 
@@ -553,7 +595,7 @@ public sealed class SimsTrayPreviewServiceTests
         var service = new SimsTrayPreviewService();
         var request = new SimsTrayPreviewRequest
         {
-            TrayPath = trayDir.Path,
+            PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
             PageSize = 50
         };
 
@@ -581,7 +623,7 @@ public sealed class SimsTrayPreviewServiceTests
         var service = new SimsTrayPreviewService(thumbnailService);
         var request = new SimsTrayPreviewRequest
         {
-            TrayPath = trayDir.Path,
+            PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.Path),
             PageSize = 50
         };
 

@@ -1,5 +1,7 @@
 using System.Buffers.Binary;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.PackageCore;
 using SimsModDesktop.TrayDependencyEngine;
 
@@ -180,6 +182,60 @@ public sealed class TrayDependencyEngineTests
         Assert.Contains(progressEvents, progress => progress.Stage == TrayDependencyExportStage.Completed && progress.Percent == 100);
         Assert.True(File.Exists(Path.Combine(request.TrayExportRoot, "0x1.trayitem")));
         Assert.True(File.Exists(Path.Combine(request.ModsExportRoot, "resolved.package")));
+    }
+
+    [Fact]
+    public async Task TrayDependencyServices_ShareTrayBundleAnalysisCache()
+    {
+        using var trayRoot = new TempDirectory("tray-shared-bundle");
+        using var modsRoot = new TempDirectory("mods-shared-bundle");
+        using var exportRoot = new TempDirectory("out-shared-bundle");
+
+        var trayItemPath = Path.Combine(trayRoot.Path, "0x1.trayitem");
+        WriteTrayItem(trayItemPath, KnownInstance);
+
+        var packagePath = Path.Combine(modsRoot.Path, "resolved.package");
+        WritePackage(packagePath, KnownInstance, KnownResourceType, group: 0, resourceData: [9, 9, 9, 9]);
+
+        var preloadedSnapshot = await BuildSnapshotAsync(new PackageIndexCache(), modsRoot.Path);
+        var cacheLogger = new RecordingLogger<TrayBundleAnalysisCache>();
+        var sharedCache = new TrayBundleAnalysisCache(logger: cacheLogger);
+        var exportService = new TrayDependencyExportService(
+            new PackageIndexCache(),
+            logger: NullLogger<TrayDependencyExportService>.Instance,
+            bundleAnalysisCache: sharedCache);
+        var analysisService = new TrayDependencyAnalysisService(
+            logger: NullLogger<TrayDependencyAnalysisService>.Instance,
+            bundleAnalysisCache: sharedCache);
+
+        var exportResult = await exportService.ExportAsync(new TrayDependencyExportRequest
+        {
+            ItemTitle = "Sample",
+            TrayItemKey = "0x1",
+            TrayRootPath = trayRoot.Path,
+            TraySourceFiles = [trayItemPath],
+            ModsRootPath = modsRoot.Path,
+            TrayExportRoot = Path.Combine(exportRoot.Path, "Sample_0x1", "Tray"),
+            ModsExportRoot = Path.Combine(exportRoot.Path, "Sample_0x1", "Mods"),
+            PreloadedSnapshot = preloadedSnapshot
+        });
+
+        var analysisResult = await analysisService.AnalyzeAsync(new TrayDependencyAnalysisRequest
+        {
+            TrayPath = trayRoot.Path,
+            ModsRootPath = modsRoot.Path,
+            TrayItemKey = "0x1",
+            PreloadedSnapshot = preloadedSnapshot
+        });
+
+        Assert.True(exportResult.Success);
+        Assert.True(analysisResult.Success);
+        Assert.Equal(
+            1,
+            cacheLogger.Messages.Count(message => message.Contains("traybundle.analysiscache.miss", StringComparison.Ordinal)));
+        Assert.Equal(
+            1,
+            cacheLogger.Messages.Count(message => message.Contains("traybundle.analysiscache.hit", StringComparison.Ordinal)));
     }
 
     [Fact]
@@ -794,6 +850,40 @@ public sealed class TrayDependencyEngineTests
     private const uint ImageResourceType = 877907861u;
     private const uint MaterialDefinitionType = 734023391u;
     private const uint ObjectDefinitionType = 3235601127u;
+
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        public List<string> Messages { get; } = new();
+
+        public IDisposable BeginScope<TState>(TState state) where TState : notnull
+        {
+            return NullScope.Instance;
+        }
+
+        public bool IsEnabled(LogLevel logLevel)
+        {
+            return true;
+        }
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            Messages.Add(formatter(state, exception));
+        }
+
+        private sealed class NullScope : IDisposable
+        {
+            public static readonly NullScope Instance = new();
+
+            public void Dispose()
+            {
+            }
+        }
+    }
 
     private sealed class TempDirectory : IDisposable
     {

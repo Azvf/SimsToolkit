@@ -267,7 +267,7 @@ public sealed class MainWindowViewModelInteractionTests
             "RunTrayPreviewAsync",
             new TrayPreviewInput
             {
-                TrayPath = trayRoot.Path
+                PreviewSource = PreviewSourceRef.ForTrayRoot(trayRoot.Path)
             });
 
         Assert.True(vm.IsTrayPreviewEmptyStateVisible);
@@ -296,7 +296,7 @@ public sealed class MainWindowViewModelInteractionTests
             "RunTrayPreviewAsync",
             new TrayPreviewInput
             {
-                TrayPath = trayRoot.Path
+                PreviewSource = PreviewSourceRef.ForTrayRoot(trayRoot.Path)
             });
 
         await InvokePrivateAsync(vm, "LoadNextTrayPreviewPageAsync");
@@ -1323,7 +1323,7 @@ public sealed class MainWindowViewModelInteractionTests
             });
         }
 
-        public void Invalidate(string? trayRootPath = null)
+        public void Invalidate(PreviewSourceRef? source = null)
         {
         }
 

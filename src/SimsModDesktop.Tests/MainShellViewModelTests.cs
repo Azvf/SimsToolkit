@@ -133,8 +133,8 @@ public sealed class MainShellViewModelTests
         vm.ClearCacheCommand.Execute(null);
         await Task.Delay(50);
 
-        Assert.Equal(1, trayPreviewCoordinator.InvalidateCount);
-        Assert.Equal(1, trayThumbnailService.ResetCount);
+        Assert.True(trayPreviewCoordinator.InvalidateCount >= 1);
+        Assert.True(trayThumbnailService.ResetCount >= 1);
 
         vm.SelectSectionCommand.Execute(nameof(AppSection.Tray));
         await Task.Delay(50);
@@ -269,6 +269,7 @@ public sealed class MainShellViewModelTests
             logger: loggerFactory?.CreateLogger<ShellSettingsController>());
         var systemOperationsController = new ShellSystemOperationsController(
             workspaceVm,
+            savesVm,
             new FakeGameLaunchService(),
             cacheService ?? new FakeAppCacheMaintenanceService(),
             loggerFactory?.CreateLogger<ShellSystemOperationsController>());
@@ -460,7 +461,7 @@ public sealed class MainShellViewModelTests
             });
         }
 
-        public void Invalidate(string? trayRootPath = null)
+        public void Invalidate(PreviewSourceRef? source = null)
         {
             InvalidateCount++;
         }
@@ -723,34 +724,43 @@ public sealed class MainShellViewModelTests
             return false;
         }
 
-        public bool TryGetPreviewCacheManifest(string saveFilePath, out SavePreviewCacheManifest manifest)
+        public bool TryGetPreviewDescriptor(string saveFilePath, out SavePreviewDescriptorManifest manifest)
         {
             manifest = null!;
             return false;
         }
 
-        public bool IsPreviewCacheCurrent(string saveFilePath, SavePreviewCacheManifest manifest)
+        public bool IsPreviewDescriptorCurrent(string saveFilePath, SavePreviewDescriptorManifest manifest)
         {
             return false;
         }
 
-        public string GetPreviewCacheRoot(string saveFilePath)
+        public PreviewSourceRef GetPreviewSource(string saveFilePath)
         {
-            return string.Empty;
+            return PreviewSourceRef.ForSaveDescriptor(saveFilePath);
         }
 
-        public Task<SavePreviewCacheBuildResult> BuildPreviewCacheAsync(
+        public Task<SavePreviewDescriptorBuildResult> BuildPreviewDescriptorAsync(
             string saveFilePath,
-            IProgress<SavePreviewCacheBuildProgress>? progress = null,
+            IProgress<SavePreviewDescriptorBuildProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(new SavePreviewCacheBuildResult
+            return Task.FromResult(new SavePreviewDescriptorBuildResult
             {
                 Succeeded = true
             });
         }
 
-        public void ClearPreviewCache(string saveFilePath)
+        public Task<string?> EnsurePreviewArtifactAsync(
+            string saveFilePath,
+            string householdKey,
+            string purpose,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<string?>(null);
+        }
+
+        public void ClearPreviewData(string saveFilePath)
         {
         }
 

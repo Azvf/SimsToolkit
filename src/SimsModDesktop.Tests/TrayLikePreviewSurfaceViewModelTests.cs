@@ -19,7 +19,11 @@ public sealed class TrayLikePreviewSurfaceViewModelTests
         var surface = new TrayLikePreviewSurfaceViewModel(runner, thumbnails);
         var filter = new TrayLikePreviewFilterViewModel();
 
-        surface.Configure(filter, () => trayRoot.Path, PreviewSurfaceSelectionMode.Multiple, autoLoad: false);
+        surface.Configure(
+            filter,
+            () => filter.BuildInput(PreviewSourceRef.ForTrayRoot(trayRoot.Path)),
+            PreviewSurfaceSelectionMode.Multiple,
+            autoLoad: false);
 
         await surface.EnsureLoadedAsync(forceReload: true);
         await thumbnails.WaitForStartedCountAsync(items.Length);
@@ -46,7 +50,11 @@ public sealed class TrayLikePreviewSurfaceViewModelTests
         var surface = new TrayLikePreviewSurfaceViewModel(runner, thumbnails);
         var filter = new TrayLikePreviewFilterViewModel();
 
-        surface.Configure(filter, () => trayRoot.Path, PreviewSurfaceSelectionMode.Multiple, autoLoad: false);
+        surface.Configure(
+            filter,
+            () => filter.BuildInput(PreviewSourceRef.ForTrayRoot(trayRoot.Path)),
+            PreviewSurfaceSelectionMode.Multiple,
+            autoLoad: false);
 
         await surface.EnsureLoadedAsync(forceReload: true);
         await thumbnails.WaitForStartedCountAsync(8);
@@ -118,7 +126,7 @@ public sealed class TrayLikePreviewSurfaceViewModelTests
             return false;
         }
 
-        public void Invalidate(string? trayRootPath = null)
+        public void Invalidate(PreviewSourceRef? source = null)
         {
         }
 

@@ -20,7 +20,7 @@ public sealed class TrayPreviewCoordinatorTests
 
             var input = new TrayPreviewInput
             {
-                TrayPath = trayDir.FullName,
+                PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.FullName),
                 PageSize = 50
             };
 
@@ -57,7 +57,7 @@ public sealed class TrayPreviewCoordinatorTests
 
             var inputA = new TrayPreviewInput
             {
-                TrayPath = trayDir.FullName,
+                PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.FullName),
                 PageSize = 50,
                 PresetTypeFilter = "Lot",
                 BuildSizeFilter = "50 x 40",
@@ -101,10 +101,10 @@ public sealed class TrayPreviewCoordinatorTests
 
             var aliasInput = new TrayPreviewInput
             {
-                TrayPath = aliasPath,
+                PreviewSource = PreviewSourceRef.ForTrayRoot(aliasPath),
                 PageSize = 50
             };
-            var canonicalInput = aliasInput with { TrayPath = trayDir.FullName };
+            var canonicalInput = aliasInput with { PreviewSource = PreviewSourceRef.ForTrayRoot(trayDir.FullName) };
 
             _ = await coordinator.LoadAsync(aliasInput);
 

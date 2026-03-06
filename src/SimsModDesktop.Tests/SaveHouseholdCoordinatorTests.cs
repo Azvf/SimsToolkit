@@ -1,5 +1,3 @@
-using SimsModDesktop.Application.Configuration;
-using SimsModDesktop.Application.Models;
 using SimsModDesktop.Application.Saves;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Infrastructure.Saves;
@@ -11,207 +9,156 @@ namespace SimsModDesktop.Tests;
 public sealed class SaveHouseholdCoordinatorTests
 {
     [Fact]
-    public async Task BuildPreviewCacheAsync_WhenRound2Disabled_UsesSingleWorkerFallback()
+    public async Task BuildPreviewDescriptorAsync_DelegatesToDescriptorBuilder()
     {
-        var builder = new RecordingSavePreviewCacheBuilder();
-        var coordinator = CreateCoordinator(builder, new Dictionary<string, object?>
-        {
-            ["Performance.Round2.SavePreviewParallelEnabled"] = false
-        });
+        var builder = new RecordingDescriptorBuilder();
+        var coordinator = CreateCoordinator(builder: builder);
 
-        var result = await coordinator.BuildPreviewCacheAsync("slot_00000001.save");
+        var result = await coordinator.BuildPreviewDescriptorAsync("slot_00000001.save");
 
         Assert.True(result.Succeeded);
-        Assert.NotNull(builder.LastOptions);
-        Assert.Equal(1, builder.LastOptions!.WorkerCount);
-        Assert.True(builder.LastOptions.ContinueOnItemFailure);
+        Assert.Equal("slot_00000001.save", builder.LastSaveFilePath);
     }
 
     [Fact]
-    public async Task BuildPreviewCacheAsync_WhenRound2Enabled_UsesDefaultBuilderOptions()
+    public async Task EnsurePreviewArtifactAsync_DelegatesToArtifactProvider()
     {
-        var builder = new RecordingSavePreviewCacheBuilder();
-        var coordinator = CreateCoordinator(builder, new Dictionary<string, object?>
+        var artifactProvider = new StubSavePreviewArtifactProvider
         {
-            ["Performance.Round2.SavePreviewParallelEnabled"] = true
-        });
+            Result = "preview-root"
+        };
+        var coordinator = CreateCoordinator(artifactProvider: artifactProvider);
 
-        var result = await coordinator.BuildPreviewCacheAsync("slot_00000002.save");
+        var result = await coordinator.EnsurePreviewArtifactAsync("slot_00000003.save", "household-1", "analysis");
 
-        Assert.True(result.Succeeded);
-        Assert.Null(builder.LastOptions);
+        Assert.Equal("preview-root", result);
+        Assert.Equal("slot_00000003.save", artifactProvider.LastSaveFilePath);
+        Assert.Equal("household-1", artifactProvider.LastHouseholdKey);
+        Assert.Equal("analysis", artifactProvider.LastPurpose);
+    }
+
+    [Fact]
+    public void ClearPreviewData_ClearsDescriptorAndArtifactState()
+    {
+        var previewStore = new StubSavePreviewDescriptorStore();
+        var artifactProvider = new StubSavePreviewArtifactProvider();
+        var coordinator = CreateCoordinator(previewStore: previewStore, artifactProvider: artifactProvider);
+
+        coordinator.ClearPreviewData("slot_00000005.save");
+
+        Assert.Equal("slot_00000005.save", previewStore.LastClearedSaveFilePath);
+        Assert.Equal("slot_00000005.save", artifactProvider.LastClearedSaveFilePath);
+    }
+
+    [Fact]
+    public void GetPreviewSource_ReturnsSaveDescriptorSource()
+    {
+        var coordinator = CreateCoordinator();
+
+        var source = coordinator.GetPreviewSource("slot_00000004.save");
+
+        Assert.Equal(PreviewSourceKind.SaveDescriptor, source.Kind);
+        Assert.EndsWith("slot_00000004.save", source.SourceKey, StringComparison.OrdinalIgnoreCase);
     }
 
     private static SaveHouseholdCoordinator CreateCoordinator(
-        RecordingSavePreviewCacheBuilder builder,
-        IReadOnlyDictionary<string, object?> configValues)
+        RecordingDescriptorBuilder? builder = null,
+        StubSavePreviewDescriptorStore? previewStore = null,
+        StubSavePreviewArtifactProvider? artifactProvider = null)
     {
         return new SaveHouseholdCoordinator(
             new StubSaveCatalogService(),
             new StubSaveHouseholdReader(),
             new StubHouseholdTrayExporter(),
-            new StubSavePreviewCacheStore(),
-            builder,
+            previewStore ?? new StubSavePreviewDescriptorStore(),
+            builder ?? new RecordingDescriptorBuilder(),
+            artifactProvider ?? new StubSavePreviewArtifactProvider(),
             new StubTrayMetadataService(),
-            new StubSimsTrayPreviewService(),
-            new StubConfigurationProvider(configValues));
+            new StubSimsTrayPreviewService());
     }
 
-    private sealed class RecordingSavePreviewCacheBuilder : ISavePreviewCacheBuilder
+    private sealed class RecordingDescriptorBuilder : ISavePreviewDescriptorBuilder
     {
-        public SavePreviewBuildOptions? LastOptions { get; private set; }
+        public string? LastSaveFilePath { get; private set; }
 
-        public Task<SavePreviewCacheBuildResult> BuildAsync(
+        public Task<SavePreviewDescriptorBuildResult> BuildAsync(
             string saveFilePath,
-            IProgress<SavePreviewCacheBuildProgress>? progress = null,
+            IProgress<SavePreviewDescriptorBuildProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
-            throw new NotSupportedException("This overload is not expected in coordinator tests.");
-        }
-
-        public Task<SavePreviewCacheBuildResult> BuildAsync(
-            string saveFilePath,
-            SavePreviewBuildOptions? options,
-            IProgress<SavePreviewCacheBuildProgress>? progress = null,
-            CancellationToken cancellationToken = default)
-        {
-            LastOptions = options;
-            return Task.FromResult(new SavePreviewCacheBuildResult
+            LastSaveFilePath = saveFilePath;
+            return Task.FromResult(new SavePreviewDescriptorBuildResult
             {
                 Succeeded = true,
-                CacheRootPath = "cache-root"
+                Manifest = new SavePreviewDescriptorManifest
+                {
+                    SourceSavePath = saveFilePath,
+                    DescriptorSchemaVersion = "save-preview-descriptor-v1"
+                }
             });
-        }
-    }
-
-    private sealed class StubConfigurationProvider : IConfigurationProvider
-    {
-        private readonly IReadOnlyDictionary<string, object?> _values;
-
-        public StubConfigurationProvider(IReadOnlyDictionary<string, object?> values)
-        {
-            _values = values;
-        }
-
-        public Task<T?> GetConfigurationAsync<T>(string key, CancellationToken cancellationToken = default)
-        {
-            if (_values.TryGetValue(key, out var value) && value is T typed)
-            {
-                return Task.FromResult<T?>(typed);
-            }
-
-            return Task.FromResult<T?>(default);
-        }
-
-        public Task SetConfigurationAsync<T>(string key, T value, CancellationToken cancellationToken = default)
-        {
-            return Task.CompletedTask;
-        }
-
-        public Task<bool> ContainsKeyAsync(string key, CancellationToken cancellationToken = default)
-        {
-            return Task.FromResult(_values.ContainsKey(key));
-        }
-
-        public Task<bool> RemoveConfigurationAsync(string key, CancellationToken cancellationToken = default)
-        {
-            return Task.FromResult(false);
-        }
-
-        public Task<IReadOnlyList<string>> GetAllKeysAsync(CancellationToken cancellationToken = default)
-        {
-            return Task.FromResult<IReadOnlyList<string>>(_values.Keys.ToArray());
-        }
-
-        public Task<bool> IsPlatformSpecificAsync(string key, CancellationToken cancellationToken = default)
-        {
-            return Task.FromResult(false);
-        }
-
-        public string GetPlatformSpecificPrefix()
-        {
-            return string.Empty;
-        }
-
-        public T? GetDefaultValue<T>(string key)
-        {
-            return default;
-        }
-
-        public Task<bool> ResetToDefaultAsync(string key, CancellationToken cancellationToken = default)
-        {
-            return Task.FromResult(false);
-        }
-
-        public Task<IReadOnlyDictionary<string, object?>> GetConfigurationsAsync(
-            IReadOnlyList<string> keys,
-            CancellationToken cancellationToken = default)
-        {
-            var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-            foreach (var key in keys)
-            {
-                values[key] = _values.TryGetValue(key, out var value) ? value : null;
-            }
-
-            return Task.FromResult<IReadOnlyDictionary<string, object?>>(values);
-        }
-
-        public Task SetConfigurationsAsync(
-            IReadOnlyDictionary<string, object> configurations,
-            CancellationToken cancellationToken = default)
-        {
-            return Task.CompletedTask;
         }
     }
 
     private sealed class StubSaveCatalogService : ISaveCatalogService
     {
-        public IReadOnlyList<SaveFileEntry> GetPrimarySaveFiles(string savesRootPath)
-        {
-            return Array.Empty<SaveFileEntry>();
-        }
+        public IReadOnlyList<SaveFileEntry> GetPrimarySaveFiles(string savesRootPath) => Array.Empty<SaveFileEntry>();
     }
 
     private sealed class StubSaveHouseholdReader : ISaveHouseholdReader
     {
-        public SaveHouseholdSnapshot Load(string saveFilePath)
-        {
-            return new SaveHouseholdSnapshot { SavePath = saveFilePath };
-        }
+        public SaveHouseholdSnapshot Load(string saveFilePath) => new() { SavePath = saveFilePath };
     }
 
     private sealed class StubHouseholdTrayExporter : IHouseholdTrayExporter
     {
-        public SaveHouseholdExportResult Export(SaveHouseholdExportRequest request)
+        public SaveHouseholdExportResult Export(SaveHouseholdExportRequest request) => new();
+    }
+
+    private sealed class StubSavePreviewDescriptorStore : ISavePreviewDescriptorStore
+    {
+        public string? LastClearedSaveFilePath { get; private set; }
+
+        public bool IsDescriptorCurrent(string saveFilePath, SavePreviewDescriptorManifest manifest) => false;
+
+        public bool TryLoadDescriptor(string saveFilePath, out SavePreviewDescriptorManifest manifest)
         {
-            return new SaveHouseholdExportResult();
+            manifest = new SavePreviewDescriptorManifest();
+            return false;
+        }
+
+        public void SaveDescriptor(string saveFilePath, SavePreviewDescriptorManifest manifest)
+        {
+        }
+
+        public void ClearDescriptor(string saveFilePath)
+        {
+            LastClearedSaveFilePath = saveFilePath;
         }
     }
 
-    private sealed class StubSavePreviewCacheStore : ISavePreviewCacheStore
+    private sealed class StubSavePreviewArtifactProvider : ISavePreviewArtifactProvider
     {
-        public string GetCacheRootPath(string saveFilePath)
-        {
-            return string.Empty;
-        }
+        public string? Result { get; set; }
+        public string? LastSaveFilePath { get; private set; }
+        public string? LastHouseholdKey { get; private set; }
+        public string? LastPurpose { get; private set; }
+        public string? LastClearedSaveFilePath { get; private set; }
 
-        public bool IsCurrent(string saveFilePath, SavePreviewCacheManifest manifest)
+        public Task<string?> EnsureBundleAsync(
+            string saveFilePath,
+            string householdKey,
+            string purpose,
+            CancellationToken cancellationToken = default)
         {
-            return false;
-        }
-
-        public bool TryLoad(string saveFilePath, out SavePreviewCacheManifest manifest)
-        {
-            manifest = new SavePreviewCacheManifest();
-            return false;
-        }
-
-        public void Save(string saveFilePath, SavePreviewCacheManifest manifest)
-        {
+            LastSaveFilePath = saveFilePath;
+            LastHouseholdKey = householdKey;
+            LastPurpose = purpose;
+            return Task.FromResult(Result);
         }
 
         public void Clear(string saveFilePath)
         {
+            LastClearedSaveFilePath = saveFilePath;
         }
     }
 
@@ -230,18 +177,14 @@ public sealed class SaveHouseholdCoordinatorTests
     {
         public Task<SimsTrayPreviewSummary> BuildSummaryAsync(
             SimsTrayPreviewRequest request,
-            CancellationToken cancellationToken = default)
-        {
-            return Task.FromResult(new SimsTrayPreviewSummary());
-        }
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new SimsTrayPreviewSummary());
 
         public Task<SimsTrayPreviewPage> BuildPageAsync(
             SimsTrayPreviewRequest request,
             int pageIndex,
-            CancellationToken cancellationToken = default)
-        {
-            return Task.FromResult(new SimsTrayPreviewPage());
-        }
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new SimsTrayPreviewPage());
 
         public void Invalidate(string? trayRootPath = null)
         {
