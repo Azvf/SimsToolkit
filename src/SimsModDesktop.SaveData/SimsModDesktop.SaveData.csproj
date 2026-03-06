@@ -12,4 +12,11 @@
   <ItemGroup>
     <ProjectReference Include="..\SimsModDesktop.PackageCore\SimsModDesktop.PackageCore.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Resources\CASModifierTuning.package">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <TargetPath>CASModifierTuning.package</TargetPath>
+    </Content>
+  </ItemGroup>
 </Project>

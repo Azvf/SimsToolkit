@@ -28,6 +28,15 @@ public sealed class Ts4ResourceLocatorTests
 
         var locator = new Ts4ResourceLocator();
 
+        var resolution = locator.Resolve(snapshot, key, ResourceLookupPolicy.PreferModsSdxGame);
+        Assert.True(resolution.Found);
+        Assert.Equal(Ts4ResourceMatchMode.Exact, resolution.MatchMode);
+        Assert.Equal(3, resolution.Candidates.Count);
+        Assert.True(resolution.Candidates[0].Selected);
+        Assert.Equal(Ts4ResourceSourceKind.Mods, resolution.Candidates[0].SourceKind);
+        Assert.Equal(Ts4ResourceSourceKind.Sdx, resolution.Candidates[1].SourceKind);
+        Assert.Equal(Ts4ResourceSourceKind.Game, resolution.Candidates[2].SourceKind);
+
         Assert.True(locator.TryResolveFirst(snapshot, key, out var location, ResourceLookupPolicy.PreferModsSdxGame));
         Assert.Contains("\\Mods\\", location.FilePath, StringComparison.OrdinalIgnoreCase);
 
@@ -60,9 +69,37 @@ public sealed class Ts4ResourceLocatorTests
 
         var locator = new Ts4ResourceLocator();
 
+        var resolution = locator.Resolve(snapshot, requestedKey, ResourceLookupPolicy.PreferModsSdxGame);
+        Assert.True(resolution.Found);
+        Assert.Equal(Ts4ResourceMatchMode.TypeInstanceFallback, resolution.MatchMode);
+        Assert.Single(resolution.Candidates);
+
         Assert.True(locator.TryResolveFirst(snapshot, requestedKey, out var resolved, ResourceLookupPolicy.PreferModsSdxGame));
         Assert.Equal(actualKey.Group, resolved.Entry.Group);
         Assert.Equal(actualKey.Instance, resolved.Entry.Instance);
+    }
+
+    [Fact]
+    public void Resolve_ReturnsNotFound_WhenNoMatchesExist()
+    {
+        var key = new DbpfResourceKey(Sims4ResourceTypeRegistry.CasPart, 0, 0x1234UL);
+        var snapshot = new DbpfCatalogSnapshot
+        {
+            RootPath = "C:\\",
+            Packages = Array.Empty<DbpfPackageIndex>(),
+            ExactIndex = new Dictionary<DbpfResourceKey, ResourceLocation[]>().ToFrozenDictionary(),
+            TypeInstanceIndex = new Dictionary<TypeInstanceKey, ResourceLocation[]>().ToFrozenDictionary(),
+            SupportedInstanceIndex = new Dictionary<ulong, ResourceLocation[]>().ToFrozenDictionary(),
+            Issues = Array.Empty<DbpfCatalogIssue>()
+        };
+
+        var locator = new Ts4ResourceLocator();
+        var resolution = locator.Resolve(snapshot, key, ResourceLookupPolicy.PreferModsSdxGame);
+
+        Assert.False(resolution.Found);
+        Assert.Equal(Ts4ResourceMatchMode.NotFound, resolution.MatchMode);
+        Assert.Equal(-1, resolution.SelectedCandidateIndex);
+        Assert.Empty(resolution.Candidates);
     }
 
     private static DbpfIndexEntry MakeEntry(DbpfResourceKey key)

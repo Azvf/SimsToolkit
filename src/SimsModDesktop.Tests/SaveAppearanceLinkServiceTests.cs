@@ -27,6 +27,19 @@ public sealed class SaveAppearanceLinkServiceTests
         const ulong dmapShapeInstance = 0x6000000000000002;
         const ulong dmapNormalInstance = 0x6000000000000003;
         const ulong bondInstance = 0x6000000000000004;
+        const ulong regionMapPartA = 0x7300000000000001;
+        const ulong regionMapPartB = 0x7600000000000001;
+        const ulong meshPartA = 0x7200000000000001;
+        const ulong meshPartB = 0x7500000000000001;
+        const ulong diffusePartA = 0x7100000000000001;
+        const ulong normalPartA = 0x7100000000000002;
+        const ulong specularPartA = 0x7100000000000003;
+        const ulong diffusePartB = 0x7400000000000001;
+        const ulong normalPartB = 0x7400000000000002;
+        const ulong specularPartB = 0x7400000000000003;
+        const ulong toneInstance = 0x8100000000000001;
+        const ulong peltLayerInstance = 0x8200000000000001;
+        const ulong rigInstance = 0x8300000000000001;
 
         WritePackageWithSingleResource(
             Path.Combine(modsPath, "part-a.package"),
@@ -34,22 +47,71 @@ public sealed class SaveAppearanceLinkServiceTests
             0xA0000001,
             partA,
             BuildCaspFixture(
-                diffuseInstance: 0x7100000000000001,
-                normalInstance: 0x7100000000000002,
-                specularInstance: 0x7100000000000003,
-                meshInstance: 0x7200000000000001,
-                regionMapInstance: 0x7300000000000001));
+                diffuseInstance: diffusePartA,
+                normalInstance: normalPartA,
+                specularInstance: specularPartA,
+                meshInstance: meshPartA,
+                regionMapInstance: regionMapPartA));
         WritePackageWithSingleResource(
             Path.Combine(modsPath, "part-b.package"),
             Sims4ResourceTypeRegistry.CasPart,
             0xA0000002,
             partB,
             BuildCaspFixture(
-                diffuseInstance: 0x7400000000000001,
-                normalInstance: 0x7400000000000002,
-                specularInstance: 0x7400000000000003,
-                meshInstance: 0x7500000000000001,
-                regionMapInstance: 0x7600000000000001));
+                diffuseInstance: diffusePartB,
+                normalInstance: normalPartB,
+                specularInstance: specularPartB,
+                meshInstance: meshPartB,
+                regionMapInstance: regionMapPartB));
+
+        WritePackageWithSingleResource(
+            Path.Combine(modsPath, "geom-a.package"),
+            Sims4ResourceTypeRegistry.Geom,
+            0x10000000,
+            meshPartA,
+            BuildGeomFixture());
+        WritePackageWithSingleResource(
+            Path.Combine(modsPath, "geom-b.package"),
+            Sims4ResourceTypeRegistry.Geom,
+            0x10000000,
+            meshPartB,
+            BuildGeomFixture());
+        WritePackageWithSingleResource(
+            Path.Combine(modsPath, "tex-a-diffuse.package"),
+            Sims4ResourceTypeRegistry.Dds,
+            0x10000000,
+            diffusePartA,
+            BuildDdsFixture(4, 4));
+        WritePackageWithSingleResource(
+            Path.Combine(modsPath, "tex-a-normal.package"),
+            Sims4ResourceTypeRegistry.Dds,
+            0x10000000,
+            normalPartA,
+            BuildDdsFixture(4, 4));
+        WritePackageWithSingleResource(
+            Path.Combine(modsPath, "tex-a-specular.package"),
+            Sims4ResourceTypeRegistry.Dds,
+            0x10000000,
+            specularPartA,
+            BuildDdsFixture(4, 4));
+        WritePackageWithSingleResource(
+            Path.Combine(modsPath, "tex-b-diffuse.package"),
+            Sims4ResourceTypeRegistry.Dds,
+            0x10000000,
+            diffusePartB,
+            BuildDdsFixture(4, 4));
+        WritePackageWithSingleResource(
+            Path.Combine(modsPath, "tex-b-normal.package"),
+            Sims4ResourceTypeRegistry.Dds,
+            0x10000000,
+            normalPartB,
+            BuildDdsFixture(4, 4));
+        WritePackageWithSingleResource(
+            Path.Combine(modsPath, "tex-b-specular.package"),
+            Sims4ResourceTypeRegistry.Dds,
+            0x10000000,
+            specularPartB,
+            BuildDdsFixture(4, 4));
 
         WritePackageWithSingleResource(
             Path.Combine(modsPath, "morph-smod.package"),
@@ -87,6 +149,36 @@ public sealed class SaveAppearanceLinkServiceTests
             0,
             bondInstance,
             BuildBondHeaderFixture());
+        WritePackageWithSingleResource(
+            Path.Combine(modsPath, "region-a.package"),
+            Sims4ResourceTypeRegistry.RegionMap,
+            0,
+            regionMapPartA,
+            BuildRegionMapFixture(0x7200000000000001));
+        WritePackageWithSingleResource(
+            Path.Combine(modsPath, "region-b.package"),
+            Sims4ResourceTypeRegistry.RegionMap,
+            0,
+            regionMapPartB,
+            BuildRegionMapFixture(0x7500000000000001));
+        WritePackageWithSingleResource(
+            Path.Combine(modsPath, "tone.package"),
+            Sims4ResourceTypeRegistry.Tone,
+            0,
+            toneInstance,
+            BuildToneFixture());
+        WritePackageWithSingleResource(
+            Path.Combine(modsPath, "pelt.package"),
+            Sims4ResourceTypeRegistry.PeltLayer,
+            0,
+            peltLayerInstance,
+            BuildPeltLayerFixture());
+        WritePackageWithSingleResource(
+            Path.Combine(modsPath, "rig.package"),
+            Sims4ResourceTypeRegistry.Rig,
+            0,
+            rigInstance,
+            BuildRigFixture());
 
         var saveData = new SaveGameData();
         var sim = new SimData
@@ -96,8 +188,15 @@ public sealed class SaveAppearanceLinkServiceTests
             last_name = "Tester",
             extended_species = 1,
             outfits = new OutfitList(),
-            facial_attr = BuildMorphPayload(smodInstance, sculptInstance)
+            facial_attr = BuildMorphPayload(smodInstance, sculptInstance),
+            skin_tone = toneInstance,
+            pelt_layers = new PeltLayerDataList()
         };
+        sim.pelt_layers.layers.Add(new PeltLayerData
+        {
+            layer_id = peltLayerInstance,
+            color = 0x00FFAA
+        });
         sim.outfits.outfits.Add(new OutfitData
         {
             outfit_id = 0xAAAA,
@@ -125,7 +224,23 @@ public sealed class SaveAppearanceLinkServiceTests
         var partAResult = outfit.Parts[0];
         Assert.NotNull(partAResult.CasPart);
         Assert.NotNull(partAResult.ResolvedCasPartKey);
+        Assert.NotNull(partAResult.CasPartResolution);
         Assert.NotEmpty(partAResult.TextureRefs);
+        Assert.NotEmpty(partAResult.Meshes);
+        Assert.NotEmpty(partAResult.Textures);
+        Assert.Contains(partAResult.Meshes, mesh => mesh.Geom is { VertexCount: > 0 });
+        Assert.Contains(partAResult.Textures, texture => texture.Metadata is { Width: 4, Height: 4 });
+
+        Assert.NotEmpty(simResult.ModifierSemantics);
+        Assert.False(string.IsNullOrWhiteSpace(simResult.ModifierSemantics[0].ModifierName));
+        Assert.NotNull(simResult.Tone);
+        Assert.NotNull(simResult.ToneRef);
+        Assert.Single(simResult.PeltLayers);
+        Assert.NotNull(simResult.PeltLayers[0].PeltLayer);
+
+        Assert.NotNull(snapshot.ModifierTuningCatalog);
+        Assert.NotNull(snapshot.RigBoneIndexSummary);
+        Assert.True(snapshot.RigBoneIndexSummary!.BoneHashCount > 0);
 
         Assert.NotEmpty(snapshot.MorphGraphSummary.SimModifierLinks);
         Assert.NotEmpty(snapshot.MorphGraphSummary.SculptLinks);
@@ -134,6 +249,7 @@ public sealed class SaveAppearanceLinkServiceTests
         Assert.Contains(snapshot.MorphGraphSummary.ReferencedResources, health => health.Kind == Ts4MorphReferencedResourceKind.BlendGeometry && health.HeaderParsed);
         Assert.Contains(snapshot.MorphGraphSummary.ReferencedResources, health => health.Kind == Ts4MorphReferencedResourceKind.DeformerMap && health.HeaderParsed);
         Assert.Contains(snapshot.MorphGraphSummary.ReferencedResources, health => health.Kind == Ts4MorphReferencedResourceKind.BoneDelta && health.HeaderParsed);
+        Assert.Contains(snapshot.MorphGraphSummary.ReferencedResources, health => health.Kind == Ts4MorphReferencedResourceKind.BoneDelta && health.BondAdjustmentCount > 0);
         Assert.True(snapshot.ResourceStats.TotalReferences > 0);
     }
 
@@ -307,6 +423,142 @@ public sealed class SaveAppearanceLinkServiceTests
             issue.SimId == 0x6666UL);
     }
 
+    [Fact]
+    public async Task BuildSnapshotAsync_ConflictingCasp_ExposesResolutionTrace()
+    {
+        using var fixture = new TempDirectory("save-appearance-casp-resolution");
+        var savePath = Path.Combine(fixture.Path, "slot_00000007.save");
+        var modsPath = Path.Combine(fixture.Path, "Mods");
+        var gamePath = Path.Combine(fixture.Path, "Game");
+        Directory.CreateDirectory(modsPath);
+        Directory.CreateDirectory(gamePath);
+
+        const ulong partId = 0x9900000000000001;
+        var caspBytes = BuildCaspFixture(
+            diffuseInstance: 0x7100000000000101,
+            normalInstance: 0x7100000000000102,
+            specularInstance: 0x7100000000000103,
+            meshInstance: 0x7200000000000101,
+            regionMapInstance: 0x7300000000000101);
+        WritePackageWithSingleResource(
+            Path.Combine(gamePath, "part-game.package"),
+            Sims4ResourceTypeRegistry.CasPart,
+            0,
+            partId,
+            caspBytes);
+        WritePackageWithSingleResource(
+            Path.Combine(modsPath, "part-mod.package"),
+            Sims4ResourceTypeRegistry.CasPart,
+            0,
+            partId,
+            caspBytes);
+
+        var saveData = new SaveGameData();
+        var sim = new SimData
+        {
+            sim_id = 0x7777,
+            first_name = "Trace",
+            last_name = "Candidate",
+            extended_species = 1,
+            outfits = new OutfitList()
+        };
+        sim.outfits.outfits.Add(new OutfitData
+        {
+            outfit_id = 0xDDDD,
+            category = 0,
+            parts = new EA.Sims4.IdList { ids = [partId] },
+            body_types_list = new BodyTypesList { body_types = [5] },
+            part_shifts = new ColorShiftList { color_shift = [0] }
+        });
+        saveData.sims.Add(sim);
+        WriteSavePackage(savePath, saveData);
+
+        var service = new SaveAppearanceLinkService();
+        var snapshot = await service.BuildSnapshotAsync(savePath, gamePath, modsPath);
+
+        var resolvedPart = Assert.Single(Assert.Single(Assert.Single(snapshot.Sims).Outfits).Parts);
+        var resolution = Assert.IsType<Ts4ResourceResolution>(resolvedPart.CasPartResolution);
+        Assert.True(resolution.Found);
+        Assert.True(resolution.Candidates.Count >= 2);
+        Assert.Equal(Ts4ResourceSourceKind.Mods, resolution.Candidates[0].SourceKind);
+        Assert.Contains(resolution.Candidates, candidate => candidate.SourceKind == Ts4ResourceSourceKind.Game);
+    }
+
+    [Fact]
+    public async Task BuildSnapshotAsync_BrokenGeomAndTexture_AddsIssuesWithoutStoppingSnapshot()
+    {
+        using var fixture = new TempDirectory("save-appearance-broken-geom-texture");
+        var savePath = Path.Combine(fixture.Path, "slot_00000008.save");
+        var modsPath = Path.Combine(fixture.Path, "Mods");
+        var gamePath = Path.Combine(fixture.Path, "Game");
+        Directory.CreateDirectory(modsPath);
+        Directory.CreateDirectory(gamePath);
+
+        const ulong partId = 0x9800000000000001;
+        const ulong meshId = 0x7200000000000201;
+        const ulong diffuseId = 0x7100000000000201;
+        const ulong normalId = 0x7100000000000202;
+        const ulong specularId = 0x7100000000000203;
+        WritePackageWithSingleResource(
+            Path.Combine(modsPath, "part.package"),
+            Sims4ResourceTypeRegistry.CasPart,
+            0,
+            partId,
+            BuildCaspFixture(
+                diffuseInstance: diffuseId,
+                normalInstance: normalId,
+                specularInstance: specularId,
+                meshInstance: meshId,
+                regionMapInstance: 0x7300000000000201,
+                textureType: Sims4ResourceTypeRegistry.Rle2));
+        WritePackageWithSingleResource(
+            Path.Combine(modsPath, "mesh-broken.package"),
+            Sims4ResourceTypeRegistry.Geom,
+            0x10000000,
+            meshId,
+            [0x01, 0x02, 0x03, 0x04]);
+        WritePackageWithSingleResource(
+            Path.Combine(modsPath, "texture-decode-fail.package"),
+            Sims4ResourceTypeRegistry.Rle2,
+            0x10000000,
+            diffuseId,
+            BuildRle2L8Fixture());
+        WritePackageWithSingleResource(
+            Path.Combine(modsPath, "texture-parse-fail.package"),
+            Sims4ResourceTypeRegistry.Rle2,
+            0x10000000,
+            normalId,
+            [0xFF, 0x00, 0xAA]);
+
+        var saveData = new SaveGameData();
+        var sim = new SimData
+        {
+            sim_id = 0x8888,
+            first_name = "Broken",
+            last_name = "Assets",
+            extended_species = 1,
+            outfits = new OutfitList()
+        };
+        sim.outfits.outfits.Add(new OutfitData
+        {
+            outfit_id = 0xEEEE,
+            category = 0,
+            parts = new EA.Sims4.IdList { ids = [partId] },
+            body_types_list = new BodyTypesList { body_types = [5] },
+            part_shifts = new ColorShiftList { color_shift = [0] }
+        });
+        saveData.sims.Add(sim);
+        WriteSavePackage(savePath, saveData);
+
+        var service = new SaveAppearanceLinkService();
+        var snapshot = await service.BuildSnapshotAsync(savePath, gamePath, modsPath);
+
+        Assert.Single(snapshot.Sims);
+        Assert.Contains(snapshot.Issues, issue => issue.Code == "GEOM_PARSE_FAILED");
+        Assert.Contains(snapshot.Issues, issue => issue.Code == "TEXTURE_PARSE_FAILED");
+        Assert.Contains(snapshot.Issues, issue => issue.Code == "TEXTURE_DECODE_FAILED");
+    }
+
     private static byte[] BuildMorphPayload(ulong simModifierInstance, ulong sculptInstance)
     {
         var payload = new BlobSimFacialCustomizationData
@@ -329,7 +581,8 @@ public sealed class SaveAppearanceLinkServiceTests
         ulong normalInstance,
         ulong specularInstance,
         ulong meshInstance,
-        ulong regionMapInstance)
+        ulong regionMapInstance,
+        uint textureType = Sims4ResourceTypeRegistry.Dds)
     {
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
@@ -372,22 +625,25 @@ public sealed class SaveAppearanceLinkServiceTests
         writer.Write(0ul);
         writer.Write(0u);
         writer.Write((byte)1);
-        writer.Write((byte)0);
         writer.Write((byte)1);
         writer.Write((byte)1);
-        writer.Write((byte)0);
-        writer.Write((byte)4);
-        writer.Write((byte)0);
+        writer.Write((byte)byte.MaxValue);
         writer.Write((byte)2);
+        writer.Write((byte)byte.MaxValue);
+        writer.Write((byte)0);
+        writer.Write((byte)5);
+        writer.Write((byte)0);
         writer.Write((byte)3);
+        writer.Write((byte)4);
         writer.Write(0u);
         writer.Write((byte)byte.MaxValue);
-        writer.Write((byte)5);
+        writer.Write((byte)6);
 
+        WriteIgt(writer, 0, 0, 0);
         WriteIgt(writer, Sims4ResourceTypeRegistry.Geom, 0x10000000, meshInstance);
-        WriteIgt(writer, Sims4ResourceTypeRegistry.Dds, 0x10000000, diffuseInstance);
-        WriteIgt(writer, Sims4ResourceTypeRegistry.Dds, 0x10000000, normalInstance);
-        WriteIgt(writer, Sims4ResourceTypeRegistry.Dds, 0x10000000, specularInstance);
+        WriteIgt(writer, textureType, 0x10000000, diffuseInstance);
+        WriteIgt(writer, textureType, 0x10000000, normalInstance);
+        WriteIgt(writer, textureType, 0x10000000, specularInstance);
         WriteIgt(writer, Sims4ResourceTypeRegistry.RegionMap, 0x10000000, regionMapInstance);
 
         writer.Flush();
@@ -414,6 +670,76 @@ public sealed class SaveAppearanceLinkServiceTests
         WriteItg(writer, Sims4ResourceTypeRegistry.DeformerMap, 0, dmapShapeInstance);
         WriteItg(writer, Sims4ResourceTypeRegistry.DeformerMap, 0, dmapNormalInstance);
 
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    private static byte[] BuildGeomFixture()
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
+        writer.Write(3);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write(0ul);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(0x4D4F4547u);
+        writer.Write(14);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(0u);
+        writer.Write(1);
+        writer.Write(0);
+        writer.Write(2);
+        writer.Write(1);
+        writer.Write(1);
+        writer.Write(2);
+        writer.Write((byte)12);
+        writer.Write(new byte[24]);
+        writer.Write(1);
+        writer.Write((byte)2);
+        writer.Write(6);
+        writer.Write(new byte[12]);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(2);
+        writer.Write(0x11111111u);
+        writer.Write(0x22222222u);
+        writer.Write(1);
+        WriteItg(writer, Sims4ResourceTypeRegistry.Dds, 0x10000000, 0x7100000000000001);
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    private static byte[] BuildDdsFixture(int width, int height, int mipCount = 1)
+    {
+        var bytes = new byte[128];
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(0, 4), 0x20534444u);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(4, 4), 124);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(12, 4), height);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(16, 4), width);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(28, 4), mipCount);
+        return bytes;
+    }
+
+    private static byte[] BuildRle2L8Fixture()
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
+        writer.Write(0x2020384Cu);
+        writer.Write(0x32454C52u);
+        writer.Write((ushort)4);
+        writer.Write((ushort)4);
+        writer.Write((ushort)1);
+        writer.Write((ushort)0);
+        writer.Write(24);
+        writer.Write(24);
         writer.Flush();
         return stream.ToArray();
     }
@@ -505,14 +831,123 @@ public sealed class SaveAppearanceLinkServiceTests
         writer.Write(0u);
         writer.Write(1u);
         writer.Write(1u);
-        writer.Write(1u);
-        for (var index = 0; index < 10; index++)
-        {
-            writer.Write(0f);
-        }
+        writer.Write(0x11111111u);
+        writer.Write(1f);
+        writer.Write(2f);
+        writer.Write(3f);
+        writer.Write(1f);
+        writer.Write(1f);
+        writer.Write(1f);
+        writer.Write(0f);
+        writer.Write(0f);
+        writer.Write(0f);
+        writer.Write(1f);
 
         writer.Flush();
         return stream.ToArray();
+    }
+
+    private static byte[] BuildRegionMapFixture(ulong meshInstance)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
+        writer.Write(3u);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write(1u);
+        writer.Write(44u);
+        writer.Write(21u);
+        writer.Write(1);
+        writer.Write(1);
+        writer.Write(5u);
+        writer.Write(0.25f);
+        writer.Write((byte)1);
+        writer.Write(1u);
+        WriteItg(writer, Sims4ResourceTypeRegistry.Geom, 0x10000000, meshInstance);
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    private static byte[] BuildToneFixture()
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
+        writer.Write(11u);
+        writer.Write((byte)1);
+        writer.Write(0x111ul);
+        writer.Write(0x222ul);
+        writer.Write(1.2f);
+        writer.Write(0.3f);
+        writer.Write(0.4f);
+        writer.Write(1);
+        writer.Write(0x00002010u);
+        writer.Write(0x333ul);
+        writer.Write((ushort)30);
+        writer.Write((ushort)40);
+        writer.Write(255u);
+        writer.Write(1);
+        writer.Write((ushort)0x0045);
+        writer.Write(0x51u);
+        writer.Write((byte)1);
+        writer.Write(unchecked((int)0xFF112233));
+        writer.Write(5f);
+        writer.Write(0x260A5ul);
+        writer.Write((ushort)2);
+        writer.Write(-0.1f);
+        writer.Write(0.1f);
+        writer.Write(0.01f);
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    private static byte[] BuildPeltLayerFixture()
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
+        writer.Write(8u);
+        writer.Write(77u);
+        writer.Write(2.5f);
+        writer.Write((byte)3);
+        writer.Write(0x444ul);
+        writer.Write(0x12345678u);
+        writer.Write(new byte[] { 1, 2, 3, 4, 5 });
+        writer.Write(0x555ul);
+        writer.Write(0x666ul);
+        writer.Write(1u);
+        writer.Write((ushort)0x20);
+        writer.Write(0x1234u);
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    private static byte[] BuildRigFixture()
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
+        writer.Write(3);
+        writer.Write(1);
+        writer.Write(2);
+        WriteRigBone(writer, "Root", -1, 0x11111111u);
+        WriteRigBone(writer, "Spine", 0, 0x22222222u);
+        writer.Write(0);
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    private static void WriteRigBone(BinaryWriter writer, string name, int parentIndex, uint hash)
+    {
+        for (var i = 0; i < 10; i++)
+        {
+            writer.Write(i == 6 ? 1f : 0f);
+        }
+
+        writer.Write(name.Length);
+        writer.Write(name.ToCharArray());
+        writer.Write(0);
+        writer.Write(parentIndex);
+        writer.Write(hash);
+        writer.Write(0u);
     }
 
     private static void WriteItg(BinaryWriter writer, uint type, uint group, ulong instance)
