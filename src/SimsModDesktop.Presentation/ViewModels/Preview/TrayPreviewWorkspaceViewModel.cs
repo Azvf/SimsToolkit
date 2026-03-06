@@ -3,6 +3,7 @@ using System.ComponentModel;
 using Avalonia.Threading;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using SimsModDesktop.Application.Caching;
 using SimsModDesktop.PackageCore;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Presentation.Dialogs;
@@ -167,11 +168,27 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
             CancelWorkspaceLoad();
             SetTrayDependencyCacheWarmupState(
                 false,
-                TrayDependencyCacheWarmupPercent,
-                TrayDependencyCacheWarmupStageText,
-                TrayDependencyCacheWarmupDetail);
+                Math.Clamp(TrayDependencyCacheWarmupPercent, 0, 99),
+                "Background",
+                "Tray warmup continues in background.");
             Surface.PauseBackgroundLoading();
             return;
+        }
+
+        var resumeModsPath = ResolveDirectoryPath(_trayDependencies.ModsPath ?? string.Empty);
+        if (!string.IsNullOrWhiteSpace(resumeModsPath) &&
+            _cacheWarmupController.TryGetWarmupState(
+                resumeModsPath,
+                CacheWarmupDomain.TrayDependency,
+                out var warmupState) &&
+            warmupState is not null &&
+            warmupState.State == MainWindowCacheWarmupController.WarmupRunState.Paused)
+        {
+            SetTrayDependencyCacheWarmupState(
+                false,
+                Math.Clamp(warmupState.Progress.Percent, 0, 99),
+                "Resuming",
+                "Resuming tray warmup...");
         }
 
         if (!string.IsNullOrWhiteSpace(Filter.TrayRoot) &&
@@ -336,6 +353,8 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
             SetTrayDependencyCacheWarmupState(true, 0, "Validate", "Preparing tray dependency cache...");
         }).ConfigureAwait(false);
 
+        var warmupCompleted = false;
+        var warmupDetached = false;
         try
         {
             await _cacheWarmupController.EnsureTrayWorkspaceReadyAsync(
@@ -343,6 +362,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
                 CreateCacheWarmupHost(operationId, cancellationToken),
                 cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
+            warmupCompleted = true;
 
             await ExecuteOnUiAsync(() =>
             {
@@ -363,6 +383,24 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
+            warmupDetached = !_isActive;
+            if (warmupDetached)
+            {
+                await ExecuteOnUiAsync(() =>
+                {
+                    if (!IsCurrentWorkspaceLoad(operationId))
+                    {
+                        return;
+                    }
+
+                    IsTrayDependencyCacheReady = false;
+                    SetTrayDependencyCacheWarmupState(
+                        false,
+                        Math.Clamp(TrayDependencyCacheWarmupPercent, 0, 99),
+                        "Background",
+                        "Tray warmup continues in background.");
+                }).ConfigureAwait(false);
+            }
         }
         catch (Exception ex)
         {
@@ -381,6 +419,25 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
                     "Tray dependency cache warmup failed.");
                 _logger.LogError(ex, "Tray dependency cache warmup failed");
             }).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (!warmupCompleted && !warmupDetached)
+            {
+                await ExecuteOnUiAsync(() =>
+                {
+                    if (!IsCurrentWorkspaceLoad(operationId))
+                    {
+                        return;
+                    }
+
+                    SetTrayDependencyCacheWarmupState(
+                        false,
+                        Math.Clamp(TrayDependencyCacheWarmupPercent, 0, 99),
+                        TrayDependencyCacheWarmupStageText,
+                        TrayDependencyCacheWarmupDetail);
+                }).ConfigureAwait(false);
+            }
         }
     }
 

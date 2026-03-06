@@ -39,6 +39,40 @@ public sealed class ModPreviewWorkspaceViewModelTests
         Assert.Equal("CAS 00000001", workspace.CatalogItems[0].Item.DisplayName);
     }
 
+    [Fact]
+    public async Task SetIsActive_False_PausesWarmupWithoutForcing100Percent()
+    {
+        using var modsRoot = new TempDirectory();
+        var filter = new ModPreviewPanelViewModel
+        {
+            ModsRoot = modsRoot.Path
+        };
+        var scheduler = new BlockingScheduler();
+        var warmupController = new MainWindowCacheWarmupController(
+            new FakeInventoryService(),
+            scheduler,
+            new FakePackageIndexCache(),
+            NullLogger<MainWindowCacheWarmupController>.Instance);
+        var workspace = new ModPreviewWorkspaceViewModel(
+            filter,
+            catalogService: new FakeCatalogService(),
+            indexScheduler: scheduler,
+            cacheWarmupController: warmupController,
+            inspectService: new FakeInspectService(),
+            textureEditService: NullModPackageTextureEditService.Instance,
+            fileDialogService: new FakeFileDialogService());
+
+        workspace.SetIsActive(true);
+        await scheduler.FirstCallStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+
+        workspace.SetIsActive(false);
+        await Task.Delay(50);
+        Dispatcher.UIThread.RunJobs(null);
+
+        Assert.Equal("Paused", workspace.CacheWarmupStageText);
+        Assert.InRange(workspace.CacheWarmupPercent, 0, 99);
+    }
+
     private sealed class FakeCatalogService : IModItemCatalogService
     {
         public Task<ModItemCatalogPage> QueryPageAsync(ModItemCatalogQuery query, CancellationToken cancellationToken = default)
@@ -133,6 +167,26 @@ public sealed class ModPreviewWorkspaceViewModelTests
             });
             AllWorkCompleted?.Invoke(this, EventArgs.Empty);
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class BlockingScheduler : IModItemIndexScheduler
+    {
+        public TaskCompletionSource<bool> FirstCallStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public event EventHandler<ModFastBatchAppliedEventArgs>? FastBatchApplied;
+        public event EventHandler<ModEnrichmentAppliedEventArgs>? EnrichmentApplied;
+        public event EventHandler? AllWorkCompleted;
+        public bool IsFastPassRunning => false;
+        public bool IsDeepPassRunning => false;
+
+        public async Task QueueRefreshAsync(
+            ModIndexRefreshRequest request,
+            IProgress<ModIndexRefreshProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            FirstCallStarted.TrySetResult(true);
+            await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
         }
     }
 

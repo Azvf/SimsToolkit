@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using Avalonia.Threading;
+using SimsModDesktop.Application.Caching;
 using SimsModDesktop.Application.Mods;
 using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Presentation.Dialogs;
@@ -230,8 +231,35 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
         _isActive = isActive;
         if (!_isActive)
         {
+            if (HasValidModsPath)
+            {
+                _cacheWarmupController.PauseModsWarmup(
+                    _filter.ModsRoot,
+                    "workspace-inactive");
+            }
+
             _refreshCts?.Cancel();
+            SetCacheWarmupState(
+                false,
+                Math.Clamp(CacheWarmupPercent, 0, 99),
+                "Paused",
+                "Mods warmup paused. Return to resume.");
             return;
+        }
+
+        if (HasValidModsPath &&
+            _cacheWarmupController.TryGetWarmupState(
+                _filter.ModsRoot,
+                CacheWarmupDomain.ModsCatalog,
+                out var warmupState) &&
+            warmupState is not null &&
+            warmupState.State == MainWindowCacheWarmupController.WarmupRunState.Paused)
+        {
+            SetCacheWarmupState(
+                false,
+                Math.Clamp(warmupState.Progress.Percent, 0, 99),
+                "Resuming",
+                "Resuming Mods warmup...");
         }
 
         if (_hasPendingRefresh || (HasValidModsPath && CatalogItems.Count == 0))
@@ -297,6 +325,8 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
             StatusText = "Loading cached item catalog rows...";
         }).ConfigureAwait(false);
 
+        var warmupCompleted = false;
+        var warmupPaused = false;
         try
         {
             SetCacheWarmupState(true, 0, "Validate", "Validating package inventory...");
@@ -304,6 +334,7 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
                 _filter.ModsRoot,
                 CreateCacheWarmupHost(),
                 cancellationToken).ConfigureAwait(false);
+            warmupCompleted = true;
             await LoadPageShellAsync(cancellationToken).ConfigureAwait(false);
 
             if (warmupResult.Snapshot.Entries.Count == 0)
@@ -331,6 +362,18 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
+            warmupPaused = !_isActive;
+            if (warmupPaused)
+            {
+                await ExecuteOnUiAsync(() =>
+                {
+                    SetCacheWarmupState(
+                        false,
+                        Math.Clamp(CacheWarmupPercent, 0, 99),
+                        "Paused",
+                        "Mods warmup paused. Return to resume.");
+                }).ConfigureAwait(false);
+            }
         }
         catch (Exception ex)
         {
@@ -353,7 +396,14 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
             await ExecuteOnUiAsync(() =>
             {
                 IsBusy = false;
-                SetCacheWarmupState(false, 100, string.Empty, string.Empty);
+                if (warmupCompleted)
+                {
+                    SetCacheWarmupState(false, 100, string.Empty, string.Empty);
+                }
+                else if (!warmupPaused)
+                {
+                    SetCacheWarmupState(false, Math.Clamp(CacheWarmupPercent, 0, 99), CacheWarmupStageText, CacheWarmupDetail);
+                }
             }).ConfigureAwait(false);
         }
     }
@@ -707,7 +757,15 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
 
     private static Task ExecuteOnUiAsync(Action action)
     {
-        return Dispatcher.UIThread.InvokeAsync(action).GetTask();
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            action();
+            return Task.CompletedTask;
+        }
+
+        // Keep background refresh flow non-blocking in headless test contexts.
+        Dispatcher.UIThread.Post(action);
+        return Task.CompletedTask;
     }
 
 }

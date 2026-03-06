@@ -10,6 +10,8 @@ public sealed class PerformanceAdaptiveThrottle
     private long _lastCompletedCount;
     private int _lowThroughputStreak;
     private int _recoveryStreak;
+    private int _highBackpressureStreak;
+    private int _highCommitLatencyStreak;
     private DateTime? _highMemorySinceUtc;
 
     public PerformanceAdaptiveThrottle(
@@ -31,7 +33,9 @@ public sealed class PerformanceAdaptiveThrottle
         long totalCompletedCount,
         DateTime nowUtc,
         long workingSetBytes,
-        long baselineWorkingSetBytes)
+        long baselineWorkingSetBytes,
+        double parseResultQueueFillRatio = 0d,
+        double writerCommitLatencyMs = 0d)
     {
         if (nowUtc <= _lastSampleUtc || nowUtc - _lastSampleUtc < _window)
         {
@@ -67,6 +71,36 @@ public sealed class PerformanceAdaptiveThrottle
             _highMemorySinceUtc = null;
         }
 
+        var queueFillRatio = Math.Clamp(parseResultQueueFillRatio, 0d, 1d);
+        if (queueFillRatio >= 0.85d)
+        {
+            _highBackpressureStreak++;
+        }
+        else
+        {
+            _highBackpressureStreak = 0;
+        }
+
+        var commitLatencyMs = Math.Max(0d, writerCommitLatencyMs);
+        if (commitLatencyMs >= 600d && queueFillRatio >= 0.6d)
+        {
+            _highCommitLatencyStreak++;
+        }
+        else
+        {
+            _highCommitLatencyStreak = 0;
+        }
+
+        if (_highCommitLatencyStreak >= 2)
+        {
+            return Downscale("writer-commit-latency");
+        }
+
+        if (_highBackpressureStreak >= 3)
+        {
+            return Downscale("writer-backpressure");
+        }
+
         if (previousAverage > 0 && throughput < previousAverage * 0.85d)
         {
             _lowThroughputStreak++;
@@ -76,7 +110,8 @@ public sealed class PerformanceAdaptiveThrottle
             _lowThroughputStreak = 0;
         }
 
-        if (previousAverage > 0 && throughput >= previousAverage * 0.95d)
+        var backpressureHealthy = queueFillRatio <= 0.45d && commitLatencyMs <= 350d;
+        if (previousAverage > 0 && throughput >= previousAverage * 0.95d && backpressureHealthy)
         {
             _recoveryStreak++;
         }
@@ -108,6 +143,8 @@ public sealed class PerformanceAdaptiveThrottle
     {
         _lowThroughputStreak = 0;
         _recoveryStreak = 0;
+        _highBackpressureStreak = 0;
+        _highCommitLatencyStreak = 0;
         _highMemorySinceUtc = null;
 
         var reduced = Math.Max(_minWorkers, (int)Math.Floor(CurrentWorkers * 0.75d));

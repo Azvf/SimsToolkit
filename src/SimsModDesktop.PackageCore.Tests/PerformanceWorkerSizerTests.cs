@@ -21,9 +21,10 @@ public sealed class PerformanceWorkerSizerTests
     [Fact]
     public void ResolveTrayExportCopyWorkers_UsesDefaultAndClamp()
     {
-        Assert.Equal(4, PerformanceWorkerSizer.ResolveTrayExportCopyWorkers());
+        var expectedDefault = Math.Max(1, Math.Min(12, (int)Math.Ceiling(Environment.ProcessorCount / 2d)));
+        Assert.Equal(expectedDefault, PerformanceWorkerSizer.ResolveTrayExportCopyWorkers());
         Assert.Equal(1, PerformanceWorkerSizer.ResolveTrayExportCopyWorkers(0));
-        Assert.Equal(8, PerformanceWorkerSizer.ResolveTrayExportCopyWorkers(99));
+        Assert.Equal(12, PerformanceWorkerSizer.ResolveTrayExportCopyWorkers(99));
     }
 
     [Fact]

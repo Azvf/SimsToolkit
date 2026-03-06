@@ -56,6 +56,61 @@ public sealed class TrayPreviewWorkspaceViewModelTests
 
         workspace.SetIsActive(true);
         await WaitForAsync(() => runner.LoadCount == 2);
+
+        workspace.SetIsActive(false);
+        await Task.Delay(50);
+        Dispatcher.UIThread.RunJobs(null);
+    }
+
+    [Fact]
+    public async Task SetIsActive_False_AllowsTrayWarmupToContinueInBackground()
+    {
+        using var trayRoot = new TempDirectory();
+        using var modsRoot = new TempDirectory();
+        var filter = new TrayPreviewPanelViewModel();
+        var runner = new CountingTrayPreviewCoordinator();
+        var trayDependencies = new TrayDependenciesPanelViewModel
+        {
+            ModsPath = modsRoot.Path
+        };
+        var packageCache = new ControlledPackageIndexCache();
+        var cacheWarmupController = new MainWindowCacheWarmupController(
+            new FakeInventoryService(),
+            new NoOpModItemIndexScheduler(),
+            packageCache,
+            NullLogger<MainWindowCacheWarmupController>.Instance);
+        var workspace = new TrayPreviewWorkspaceViewModel(
+            filter,
+            runner,
+            new PassiveTrayThumbnailService(),
+            new FakeFileDialogService(),
+            new FakeTrayDependencyExportService(),
+            cacheWarmupController,
+            trayDependencies);
+
+        filter.TrayRoot = trayRoot.Path;
+        workspace.SetIsActive(true);
+        await packageCache.FirstBuildStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+
+        workspace.SetIsActive(false);
+        await Task.Delay(50);
+        Dispatcher.UIThread.RunJobs(null);
+        Assert.Equal("Background", workspace.TrayDependencyCacheWarmupStageText);
+        Assert.InRange(workspace.TrayDependencyCacheWarmupPercent, 0, 99);
+
+        packageCache.ReleaseBuild();
+        await WaitForAsync(
+            () => cacheWarmupController.TryGetReadyTraySnapshot(modsRoot.Path, out _),
+            timeoutMs: 3000);
+
+        workspace.SetIsActive(true);
+        await WaitForAsync(() => workspace.IsTrayDependencyCacheReady, timeoutMs: 3000);
+        Assert.True(workspace.IsTrayDependencyCacheReady);
+        Assert.Equal(1, packageCache.BuildCallCount);
+
+        workspace.SetIsActive(false);
+        await Task.Delay(50);
+        Dispatcher.UIThread.RunJobs(null);
     }
 
     private sealed class CountingTrayPreviewCoordinator : ITrayPreviewCoordinator
@@ -255,6 +310,53 @@ public sealed class TrayPreviewWorkspaceViewModelTests
             });
         }
 
+    }
+
+    private sealed class ControlledPackageIndexCache : IPackageIndexCache
+    {
+        public TaskCompletionSource<bool> FirstBuildStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<bool> _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _buildCallCount;
+        public int BuildCallCount => Volatile.Read(ref _buildCallCount);
+
+        public void ReleaseBuild()
+        {
+            _release.TrySetResult(true);
+        }
+
+        public Task<PackageIndexSnapshot?> TryLoadSnapshotAsync(
+            string modsRootPath,
+            long inventoryVersion,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<PackageIndexSnapshot?>(null);
+        }
+
+        public async Task<PackageIndexSnapshot> BuildSnapshotAsync(
+            PackageIndexBuildRequest request,
+            IProgress<TrayDependencyExportProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            var call = Interlocked.Increment(ref _buildCallCount);
+            if (call == 1)
+            {
+                FirstBuildStarted.TrySetResult(true);
+                await _release.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            progress?.Report(new TrayDependencyExportProgress
+            {
+                Stage = TrayDependencyExportStage.Completed,
+                Percent = 100,
+                Detail = "ready"
+            });
+            return new PackageIndexSnapshot
+            {
+                ModsRootPath = request.ModsRootPath,
+                InventoryVersion = request.InventoryVersion,
+                Packages = Array.Empty<IndexedPackageFile>()
+            };
+        }
     }
 
     private static SimsTrayPreviewItem CreateItem(string key)

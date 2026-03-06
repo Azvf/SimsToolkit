@@ -55,304 +55,319 @@ internal sealed class SqliteModPackageInventoryService : IModPackageInventorySer
         IProgress<ModPackageInventoryRefreshProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromCanceled<ModPackageInventoryRefreshResult>(cancellationToken);
+        }
+
         ArgumentException.ThrowIfNullOrWhiteSpace(modsRoot);
         var startedAt = DateTime.UtcNow;
-
-        var resolvedRoot = _pathIdentityResolver.ResolveDirectory(modsRoot);
-        var rawRoot = !string.IsNullOrWhiteSpace(resolvedRoot.FullPath)
-            ? resolvedRoot.FullPath
-            : modsRoot.Trim().Trim('"');
-        var normalizedRoot = !string.IsNullOrWhiteSpace(resolvedRoot.CanonicalPath)
-            ? resolvedRoot.CanonicalPath
-            : rawRoot;
-        _logger.LogInformation(
-            "path.resolve component={Component} rawPath={RawPath} canonicalPath={CanonicalPath} exists={Exists} isReparse={IsReparse} linkTarget={LinkTarget}",
-            "modcache.inventory",
-            rawRoot,
-            normalizedRoot,
-            resolvedRoot.Exists,
-            resolvedRoot.IsReparsePoint,
-            resolvedRoot.LinkTarget ?? string.Empty);
-        var currentEntries = ScanEntries(normalizedRoot, progress, cancellationToken);
-
-        using var connection = OpenConnection();
-        using var transaction = connection.BeginTransaction();
-        var aliasMigrationStarted = Stopwatch.StartNew();
-        var aliasMovedRows = MigrateRootAlias(connection, transaction, rawRoot, normalizedRoot);
-        aliasMigrationStarted.Stop();
-        if (aliasMovedRows > 0)
+        string normalizedRoot = string.Empty;
+        try
         {
+            var resolvedRoot = _pathIdentityResolver.ResolveDirectory(modsRoot);
+            var rawRoot = !string.IsNullOrWhiteSpace(resolvedRoot.FullPath)
+                ? resolvedRoot.FullPath
+                : modsRoot.Trim().Trim('"');
+            normalizedRoot = !string.IsNullOrWhiteSpace(resolvedRoot.CanonicalPath)
+                ? resolvedRoot.CanonicalPath
+                : rawRoot;
             _logger.LogInformation(
-                "path.alias.migrate component={Component} fromRoot={FromRoot} toRoot={ToRoot} movedRows={MovedRows} elapsedMs={ElapsedMs}",
+                "path.resolve component={Component} rawPath={RawPath} canonicalPath={CanonicalPath} exists={Exists} isReparse={IsReparse} linkTarget={LinkTarget}",
                 "modcache.inventory",
                 rawRoot,
                 normalizedRoot,
-                aliasMovedRows,
-                aliasMigrationStarted.ElapsedMilliseconds);
-        }
+                resolvedRoot.Exists,
+                resolvedRoot.IsReparsePoint,
+                resolvedRoot.LinkTarget ?? string.Empty);
+            var currentEntries = ScanEntries(normalizedRoot, progress, cancellationToken);
 
-        var existingEntries = connection.Query<InventoryEntryRow>(
-                """
-                SELECT *
-                FROM ModPackageInventoryEntries
-                WHERE ModsRootPath = @ModsRootPath;
-                """,
-                new { ModsRootPath = normalizedRoot },
-                transaction)
-            .ToDictionary(row => row.PackagePath, StringComparer.OrdinalIgnoreCase);
-
-        var added = new List<ModPackageInventoryEntry>();
-        var changed = new List<ModPackageInventoryEntry>();
-        var unchanged = new List<ModPackageInventoryEntry>();
-        foreach (var entry in currentEntries)
-        {
-            if (!existingEntries.TryGetValue(entry.PackagePath, out var previous))
+            using var connection = OpenConnection();
+            using var transaction = connection.BeginTransaction();
+            var aliasMigrationStarted = Stopwatch.StartNew();
+            var aliasMovedRows = MigrateRootAlias(connection, transaction, rawRoot, normalizedRoot);
+            aliasMigrationStarted.Stop();
+            if (aliasMovedRows > 0)
             {
-                added.Add(entry);
-                continue;
+                _logger.LogInformation(
+                    "path.alias.migrate component={Component} fromRoot={FromRoot} toRoot={ToRoot} movedRows={MovedRows} elapsedMs={ElapsedMs}",
+                    "modcache.inventory",
+                    rawRoot,
+                    normalizedRoot,
+                    aliasMovedRows,
+                    aliasMigrationStarted.ElapsedMilliseconds);
             }
 
-            if (string.Equals(previous.PackageFingerprintKey, BuildPackageFingerprintKey(entry), StringComparison.Ordinal) &&
-                string.Equals(previous.PackageType, entry.PackageType, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(previous.ScopeHint, entry.ScopeHint, StringComparison.OrdinalIgnoreCase))
+            var existingEntries = connection.Query<InventoryEntryRow>(
+                    """
+                    SELECT *
+                    FROM ModPackageInventoryEntries
+                    WHERE ModsRootPath = @ModsRootPath;
+                    """,
+                    new { ModsRootPath = normalizedRoot },
+                    transaction)
+                .ToDictionary(row => row.PackagePath, StringComparer.OrdinalIgnoreCase);
+
+            var added = new List<ModPackageInventoryEntry>();
+            var changed = new List<ModPackageInventoryEntry>();
+            var unchanged = new List<ModPackageInventoryEntry>();
+            foreach (var entry in currentEntries)
             {
-                unchanged.Add(entry);
-                continue;
+                if (!existingEntries.TryGetValue(entry.PackagePath, out var previous))
+                {
+                    added.Add(entry);
+                    continue;
+                }
+
+                if (string.Equals(previous.PackageFingerprintKey, BuildPackageFingerprintKey(entry), StringComparison.Ordinal) &&
+                    string.Equals(previous.PackageType, entry.PackageType, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(previous.ScopeHint, entry.ScopeHint, StringComparison.OrdinalIgnoreCase))
+                {
+                    unchanged.Add(entry);
+                    continue;
+                }
+
+                changed.Add(entry);
             }
 
-            changed.Add(entry);
-        }
+            var removed = existingEntries.Keys
+                .Except(currentEntries.Select(entry => entry.PackagePath), StringComparer.OrdinalIgnoreCase)
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
 
-        var removed = existingEntries.Keys
-            .Except(currentEntries.Select(entry => entry.PackagePath), StringComparer.OrdinalIgnoreCase)
-            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
-        var (inventoryVersion, hashInputBytes) = ComputeInventoryVersion(currentEntries, normalizedRoot);
-        var validatedUtcTicks = DateTime.UtcNow.Ticks;
-        _logger.LogInformation(
-            "modcache.inventory.version mode={Mode} packageCount={PackageCount} hashInputBytes={HashInputBytes} inventoryVersion={InventoryVersion}",
-            "stablehash",
-            currentEntries.Count,
-            hashInputBytes,
-            inventoryVersion);
-        var persistStartedAt = DateTime.UtcNow;
-        connection.Execute(
-            """
-            DROP TABLE IF EXISTS TempInventoryScan;
-            CREATE TEMP TABLE TempInventoryScan (
-                PackagePath TEXT NOT NULL PRIMARY KEY,
-                FileLength INTEGER NOT NULL,
-                LastWriteUtcTicks INTEGER NOT NULL,
-                PackageType TEXT NOT NULL,
-                ScopeHint TEXT NOT NULL,
-                PackageFingerprintKey TEXT NOT NULL
-            );
-            """,
-            transaction: transaction);
-        if (currentEntries.Count > 0)
-        {
+            var (inventoryVersion, hashInputBytes) = ComputeInventoryVersion(currentEntries, normalizedRoot);
+            var validatedUtcTicks = DateTime.UtcNow.Ticks;
+            _logger.LogInformation(
+                "modcache.inventory.version mode={Mode} packageCount={PackageCount} hashInputBytes={HashInputBytes} inventoryVersion={InventoryVersion}",
+                "stablehash",
+                currentEntries.Count,
+                hashInputBytes,
+                inventoryVersion);
+            var persistStartedAt = DateTime.UtcNow;
             connection.Execute(
                 """
-                INSERT INTO TempInventoryScan (
+                DROP TABLE IF EXISTS TempInventoryScan;
+                CREATE TEMP TABLE TempInventoryScan (
+                    PackagePath TEXT NOT NULL PRIMARY KEY,
+                    FileLength INTEGER NOT NULL,
+                    LastWriteUtcTicks INTEGER NOT NULL,
+                    PackageType TEXT NOT NULL,
+                    ScopeHint TEXT NOT NULL,
+                    PackageFingerprintKey TEXT NOT NULL
+                );
+                """,
+                transaction: transaction);
+            if (currentEntries.Count > 0)
+            {
+                connection.Execute(
+                    """
+                    INSERT INTO TempInventoryScan (
+                        PackagePath,
+                        FileLength,
+                        LastWriteUtcTicks,
+                        PackageType,
+                        ScopeHint,
+                        PackageFingerprintKey
+                    ) VALUES (
+                        @PackagePath,
+                        @FileLength,
+                        @LastWriteUtcTicks,
+                        @PackageType,
+                        @ScopeHint,
+                        @PackageFingerprintKey
+                    );
+                    """,
+                    currentEntries.Select(entry => new
+                    {
+                        entry.PackagePath,
+                        entry.FileLength,
+                        entry.LastWriteUtcTicks,
+                        entry.PackageType,
+                        entry.ScopeHint,
+                        PackageFingerprintKey = BuildPackageFingerprintKey(entry)
+                    }),
+                    transaction);
+            }
+
+            connection.Execute(
+                """
+                DELETE FROM ModPackageInventoryEntries
+                WHERE ModsRootPath = @ModsRootPath
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM TempInventoryScan src
+                    WHERE src.PackagePath = ModPackageInventoryEntries.PackagePath
+                  );
+                """,
+                new { ModsRootPath = normalizedRoot },
+                transaction);
+
+            connection.Execute(
+                """
+                UPDATE ModPackageInventoryEntries
+                SET FileLength = (
+                        SELECT src.FileLength
+                        FROM TempInventoryScan src
+                        WHERE src.PackagePath = ModPackageInventoryEntries.PackagePath
+                    ),
+                    LastWriteUtcTicks = (
+                        SELECT src.LastWriteUtcTicks
+                        FROM TempInventoryScan src
+                        WHERE src.PackagePath = ModPackageInventoryEntries.PackagePath
+                    ),
+                    PackageType = (
+                        SELECT src.PackageType
+                        FROM TempInventoryScan src
+                        WHERE src.PackagePath = ModPackageInventoryEntries.PackagePath
+                    ),
+                    ScopeHint = (
+                        SELECT src.ScopeHint
+                        FROM TempInventoryScan src
+                        WHERE src.PackagePath = ModPackageInventoryEntries.PackagePath
+                    ),
+                    InventoryVersion = @InventoryVersion,
+                    PackageFingerprintKey = (
+                        SELECT src.PackageFingerprintKey
+                        FROM TempInventoryScan src
+                        WHERE src.PackagePath = ModPackageInventoryEntries.PackagePath
+                    )
+                WHERE ModsRootPath = @ModsRootPath
+                  AND EXISTS (
+                        SELECT 1
+                        FROM TempInventoryScan src
+                        WHERE src.PackagePath = ModPackageInventoryEntries.PackagePath
+                          AND (
+                            ModPackageInventoryEntries.PackageFingerprintKey <> src.PackageFingerprintKey
+                            OR ModPackageInventoryEntries.PackageType <> src.PackageType
+                            OR ModPackageInventoryEntries.ScopeHint <> src.ScopeHint
+                          )
+                    );
+                """,
+                new
+                {
+                    ModsRootPath = normalizedRoot,
+                    InventoryVersion = inventoryVersion
+                },
+                transaction);
+
+            connection.Execute(
+                """
+                INSERT INTO ModPackageInventoryEntries (
+                    ModsRootPath,
                     PackagePath,
                     FileLength,
                     LastWriteUtcTicks,
                     PackageType,
                     ScopeHint,
+                    InventoryVersion,
                     PackageFingerprintKey
-                ) VALUES (
-                    @PackagePath,
-                    @FileLength,
-                    @LastWriteUtcTicks,
-                    @PackageType,
-                    @ScopeHint,
-                    @PackageFingerprintKey
-                );
-                """,
-                currentEntries.Select(entry => new
-                {
-                    entry.PackagePath,
-                    entry.FileLength,
-                    entry.LastWriteUtcTicks,
-                    entry.PackageType,
-                    entry.ScopeHint,
-                    PackageFingerprintKey = BuildPackageFingerprintKey(entry)
-                }),
-                transaction);
-        }
-
-        connection.Execute(
-            """
-            DELETE FROM ModPackageInventoryEntries
-            WHERE ModsRootPath = @ModsRootPath
-              AND NOT EXISTS (
-                SELECT 1
-                FROM TempInventoryScan src
-                WHERE src.PackagePath = ModPackageInventoryEntries.PackagePath
-              );
-            """,
-            new { ModsRootPath = normalizedRoot },
-            transaction);
-
-        connection.Execute(
-            """
-            UPDATE ModPackageInventoryEntries
-            SET FileLength = (
-                    SELECT src.FileLength
-                    FROM TempInventoryScan src
-                    WHERE src.PackagePath = ModPackageInventoryEntries.PackagePath
-                ),
-                LastWriteUtcTicks = (
-                    SELECT src.LastWriteUtcTicks
-                    FROM TempInventoryScan src
-                    WHERE src.PackagePath = ModPackageInventoryEntries.PackagePath
-                ),
-                PackageType = (
-                    SELECT src.PackageType
-                    FROM TempInventoryScan src
-                    WHERE src.PackagePath = ModPackageInventoryEntries.PackagePath
-                ),
-                ScopeHint = (
-                    SELECT src.ScopeHint
-                    FROM TempInventoryScan src
-                    WHERE src.PackagePath = ModPackageInventoryEntries.PackagePath
-                ),
-                InventoryVersion = @InventoryVersion,
-                PackageFingerprintKey = (
-                    SELECT src.PackageFingerprintKey
-                    FROM TempInventoryScan src
-                    WHERE src.PackagePath = ModPackageInventoryEntries.PackagePath
                 )
-            WHERE ModsRootPath = @ModsRootPath
-              AND EXISTS (
-                    SELECT 1
-                    FROM TempInventoryScan src
-                    WHERE src.PackagePath = ModPackageInventoryEntries.PackagePath
-                      AND (
-                        ModPackageInventoryEntries.PackageFingerprintKey <> src.PackageFingerprintKey
-                        OR ModPackageInventoryEntries.PackageType <> src.PackageType
-                        OR ModPackageInventoryEntries.ScopeHint <> src.ScopeHint
-                      )
-                );
-            """,
-            new
+                SELECT
+                    @ModsRootPath,
+                    src.PackagePath,
+                    src.FileLength,
+                    src.LastWriteUtcTicks,
+                    src.PackageType,
+                    src.ScopeHint,
+                    @InventoryVersion,
+                    src.PackageFingerprintKey
+                FROM TempInventoryScan src
+                LEFT JOIN ModPackageInventoryEntries existing
+                    ON existing.ModsRootPath = @ModsRootPath
+                   AND existing.PackagePath = src.PackagePath
+                WHERE existing.PackagePath IS NULL;
+                """,
+                new
+                {
+                    ModsRootPath = normalizedRoot,
+                    InventoryVersion = inventoryVersion
+                },
+                transaction);
+
+            connection.Execute("DROP TABLE IF EXISTS TempInventoryScan;", transaction: transaction);
+            _logger.LogInformation(
+                "modcache.inventory.persist.batch ModsRoot={ModsRoot} InventoryVersion={InventoryVersion} AddedCount={AddedCount} ChangedCount={ChangedCount} RemovedCount={RemovedCount} ElapsedMs={ElapsedMs}",
+                normalizedRoot,
+                inventoryVersion,
+                added.Count,
+                changed.Count,
+                removed.Length,
+                (DateTime.UtcNow - persistStartedAt).TotalMilliseconds);
+
+            connection.Execute(
+                """
+                INSERT INTO ModPackageInventoryRoots (
+                    ModsRootPath,
+                    LastValidatedUtcTicks,
+                    InventoryVersion,
+                    PackageCount,
+                    Status
+                ) VALUES (
+                    @ModsRootPath,
+                    @LastValidatedUtcTicks,
+                    @InventoryVersion,
+                    @PackageCount,
+                    @Status
+                )
+                ON CONFLICT(ModsRootPath) DO UPDATE SET
+                    LastValidatedUtcTicks = excluded.LastValidatedUtcTicks,
+                    InventoryVersion = excluded.InventoryVersion,
+                    PackageCount = excluded.PackageCount,
+                    Status = excluded.Status;
+                """,
+                new
+                {
+                    ModsRootPath = normalizedRoot,
+                    LastValidatedUtcTicks = validatedUtcTicks,
+                    InventoryVersion = inventoryVersion,
+                    PackageCount = currentEntries.Count,
+                    Status = "Ready"
+                },
+                transaction);
+
+            transaction.Commit();
+            _logger.LogInformation(
+                "modcache.inventory.delta ModsRoot={ModsRoot} InventoryVersion={InventoryVersion} PackageCount={PackageCount} AddedCount={AddedCount} ChangedCount={ChangedCount} RemovedCount={RemovedCount} ElapsedMs={ElapsedMs}",
+                normalizedRoot,
+                inventoryVersion,
+                currentEntries.Count,
+                added.Count,
+                changed.Count,
+                removed.Length,
+                (DateTime.UtcNow - startedAt).TotalMilliseconds);
+
+            progress?.Report(new ModPackageInventoryRefreshProgress
             {
-                ModsRootPath = normalizedRoot,
-                InventoryVersion = inventoryVersion
-            },
-            transaction);
+                Stage = "persist",
+                Percent = 100,
+                Current = currentEntries.Count,
+                Total = currentEntries.Count,
+                Detail = $"Validated {currentEntries.Count} package(s)."
+            });
 
-        connection.Execute(
-            """
-            INSERT INTO ModPackageInventoryEntries (
-                ModsRootPath,
-                PackagePath,
-                FileLength,
-                LastWriteUtcTicks,
-                PackageType,
-                ScopeHint,
-                InventoryVersion,
-                PackageFingerprintKey
-            )
-            SELECT
-                @ModsRootPath,
-                src.PackagePath,
-                src.FileLength,
-                src.LastWriteUtcTicks,
-                src.PackageType,
-                src.ScopeHint,
-                @InventoryVersion,
-                src.PackageFingerprintKey
-            FROM TempInventoryScan src
-            LEFT JOIN ModPackageInventoryEntries existing
-                ON existing.ModsRootPath = @ModsRootPath
-               AND existing.PackagePath = src.PackagePath
-            WHERE existing.PackagePath IS NULL;
-            """,
-            new
+            return Task.FromResult(new ModPackageInventoryRefreshResult
             {
-                ModsRootPath = normalizedRoot,
-                InventoryVersion = inventoryVersion
-            },
-            transaction);
-
-        connection.Execute("DROP TABLE IF EXISTS TempInventoryScan;", transaction: transaction);
-        _logger.LogInformation(
-            "modcache.inventory.persist.batch ModsRoot={ModsRoot} InventoryVersion={InventoryVersion} AddedCount={AddedCount} ChangedCount={ChangedCount} RemovedCount={RemovedCount} ElapsedMs={ElapsedMs}",
-            normalizedRoot,
-            inventoryVersion,
-            added.Count,
-            changed.Count,
-            removed.Length,
-            (DateTime.UtcNow - persistStartedAt).TotalMilliseconds);
-
-        connection.Execute(
-            """
-            INSERT INTO ModPackageInventoryRoots (
-                ModsRootPath,
-                LastValidatedUtcTicks,
-                InventoryVersion,
-                PackageCount,
-                Status
-            ) VALUES (
-                @ModsRootPath,
-                @LastValidatedUtcTicks,
-                @InventoryVersion,
-                @PackageCount,
-                @Status
-            )
-            ON CONFLICT(ModsRootPath) DO UPDATE SET
-                LastValidatedUtcTicks = excluded.LastValidatedUtcTicks,
-                InventoryVersion = excluded.InventoryVersion,
-                PackageCount = excluded.PackageCount,
-                Status = excluded.Status;
-            """,
-            new
-            {
-                ModsRootPath = normalizedRoot,
-                LastValidatedUtcTicks = validatedUtcTicks,
-                InventoryVersion = inventoryVersion,
-                PackageCount = currentEntries.Count,
-                Status = "Ready"
-            },
-            transaction);
-
-        transaction.Commit();
-        _logger.LogInformation(
-            "modcache.inventory.delta ModsRoot={ModsRoot} InventoryVersion={InventoryVersion} PackageCount={PackageCount} AddedCount={AddedCount} ChangedCount={ChangedCount} RemovedCount={RemovedCount} ElapsedMs={ElapsedMs}",
-            normalizedRoot,
-            inventoryVersion,
-            currentEntries.Count,
-            added.Count,
-            changed.Count,
-            removed.Length,
-            (DateTime.UtcNow - startedAt).TotalMilliseconds);
-
-        progress?.Report(new ModPackageInventoryRefreshProgress
+                Snapshot = new ModPackageInventorySnapshot
+                {
+                    ModsRootPath = normalizedRoot,
+                    InventoryVersion = inventoryVersion,
+                    Entries = currentEntries,
+                    LastValidatedUtcTicks = validatedUtcTicks
+                },
+                AddedEntries = added,
+                ChangedEntries = changed,
+                UnchangedEntries = unchanged,
+                RemovedPackagePaths = removed
+            });
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            Stage = "persist",
-            Percent = 100,
-            Current = currentEntries.Count,
-            Total = currentEntries.Count,
-            Detail = $"Validated {currentEntries.Count} package(s)."
-        });
-
-        return Task.FromResult(new ModPackageInventoryRefreshResult
-        {
-            Snapshot = new ModPackageInventorySnapshot
-            {
-                ModsRootPath = normalizedRoot,
-                InventoryVersion = inventoryVersion,
-                Entries = currentEntries,
-                LastValidatedUtcTicks = validatedUtcTicks
-            },
-            AddedEntries = added,
-            ChangedEntries = changed,
-            UnchangedEntries = unchanged,
-            RemovedPackagePaths = removed
-        });
+            _logger.LogInformation(
+                "modcache.inventory.cancel ModsRoot={ModsRoot} elapsedMs={ElapsedMs}",
+                normalizedRoot,
+                (DateTime.UtcNow - startedAt).TotalMilliseconds);
+            return Task.FromCanceled<ModPackageInventoryRefreshResult>(cancellationToken);
+        }
     }
 
     private IReadOnlyList<ModPackageInventoryEntry> ScanEntries(

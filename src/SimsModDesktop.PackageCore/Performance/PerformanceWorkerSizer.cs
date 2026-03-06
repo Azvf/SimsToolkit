@@ -34,7 +34,9 @@ public static class PerformanceWorkerSizer
 
     public static int ResolveTrayExportCopyWorkers(int? requestedWorkers = null)
     {
-        return Resolve(requestedWorkers, defaultWorkers: 4, min: 1, max: 8);
+        var cpuBased = (int)Math.Ceiling(CpuCount() / 2d);
+        var defaultWorkers = Math.Max(1, Math.Min(12, cpuBased));
+        return Resolve(requestedWorkers, defaultWorkers: defaultWorkers, min: 1, max: 12);
     }
 
     public static int ResolveTrayPreviewPageWorkers(int? requestedWorkers = null)

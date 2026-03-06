@@ -120,6 +120,49 @@ public sealed class ModPackageInventoryServiceTests
         Assert.Equal(first.Snapshot.InventoryVersion, second.Snapshot.InventoryVersion);
     }
 
+    [Fact]
+    public async Task RefreshAsync_CancelledDuringScan_DoesNotThrowSynchronously_AndDoesNotPersistPartialRows()
+    {
+        using var cacheDir = new TempDirectory("inventory-cache");
+        using var modsDir = new TempDirectory("inventory-mods");
+        var service = CreateService(cacheDir.Path);
+        using var cts = new CancellationTokenSource();
+
+        for (var index = 0; index < 200; index++)
+        {
+            CreatePackage(
+                modsDir.Path,
+                $"pkg-{index:D4}.package",
+                [1, 2, 3, 4],
+                new DateTime(2026, 3, 4, 10, 0, 0, DateTimeKind.Utc).AddSeconds(index));
+        }
+
+        var progress = new Progress<ModPackageInventoryRefreshProgress>(value =>
+        {
+            if (string.Equals(value.Stage, "scan", StringComparison.Ordinal) && value.Current >= 1)
+            {
+                cts.Cancel();
+            }
+        });
+
+        Task<ModPackageInventoryRefreshResult>? refreshTask = null;
+        Exception? invocationException = null;
+        try
+        {
+            refreshTask = service.RefreshAsync(modsDir.Path, progress, cts.Token);
+        }
+        catch (Exception ex)
+        {
+            invocationException = ex;
+        }
+
+        Assert.Null(invocationException);
+        Assert.NotNull(refreshTask);
+        _ = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await refreshTask!);
+        Assert.Equal(0, CountEntries(cacheDir.Path, modsDir.Path));
+        Assert.Null(GetRoot(cacheDir.Path, modsDir.Path));
+    }
+
     private static IModPackageInventoryService CreateService(string cacheRootPath)
     {
         var type = typeof(InfrastructureServiceRegistration).Assembly.GetType("SimsModDesktop.Infrastructure.Mods.SqliteModPackageInventoryService");
@@ -147,6 +190,11 @@ public sealed class ModPackageInventoryServiceTests
     private static InventoryEntryRow? GetEntry(string cacheRootPath, string modsRootPath, string packagePath)
     {
         using var connection = new AppCacheDatabase(cacheRootPath).OpenConnection();
+        if (!TableExists(connection, "ModPackageInventoryEntries"))
+        {
+            return null;
+        }
+
         using var command = connection.CreateCommand();
         command.CommandText =
             """
@@ -177,6 +225,11 @@ public sealed class ModPackageInventoryServiceTests
     private static InventoryRootRow? GetRoot(string cacheRootPath, string modsRootPath)
     {
         using var connection = new AppCacheDatabase(cacheRootPath).OpenConnection();
+        if (!TableExists(connection, "ModPackageInventoryRoots"))
+        {
+            return null;
+        }
+
         using var command = connection.CreateCommand();
         command.CommandText =
             """
@@ -202,6 +255,11 @@ public sealed class ModPackageInventoryServiceTests
     private static int CountEntries(string cacheRootPath, string modsRootPath)
     {
         using var connection = new AppCacheDatabase(cacheRootPath).OpenConnection();
+        if (!TableExists(connection, "ModPackageInventoryEntries"))
+        {
+            return 0;
+        }
+
         using var command = connection.CreateCommand();
         command.CommandText =
             """
@@ -211,6 +269,23 @@ public sealed class ModPackageInventoryServiceTests
             """;
         command.Parameters.AddWithValue("$modsRootPath", Path.GetFullPath(modsRootPath));
         return Convert.ToInt32(command.ExecuteScalar());
+    }
+
+    private static bool TableExists(System.Data.IDbConnection connection, string tableName)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name = $tableName;
+            """;
+        var tableNameParameter = command.CreateParameter();
+        tableNameParameter.ParameterName = "$tableName";
+        tableNameParameter.Value = tableName;
+        _ = command.Parameters.Add(tableNameParameter);
+        return Convert.ToInt32(command.ExecuteScalar()) > 0;
     }
 
     private sealed class InventoryEntryRow

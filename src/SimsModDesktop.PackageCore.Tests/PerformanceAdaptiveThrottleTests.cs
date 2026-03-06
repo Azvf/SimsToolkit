@@ -62,4 +62,41 @@ public sealed class PerformanceAdaptiveThrottleTests
         Assert.Equal(6, decision.RecommendedWorkers);
         Assert.Equal("throughput-drop", decision.Reason);
     }
+
+    [Fact]
+    public void Update_DownscalesOnSustainedWriterBackpressure()
+    {
+        var now = new DateTime(2026, 3, 5, 0, 0, 0, DateTimeKind.Utc);
+        var throttle = new PerformanceAdaptiveThrottle(
+            targetWorkers: 8,
+            minWorkers: 4,
+            startedAtUtc: now,
+            window: TimeSpan.FromSeconds(5));
+
+        throttle.Update(50, now.AddSeconds(5), workingSetBytes: 100, baselineWorkingSetBytes: 100, parseResultQueueFillRatio: 0.9d, writerCommitLatencyMs: 150d);
+        throttle.Update(100, now.AddSeconds(10), workingSetBytes: 100, baselineWorkingSetBytes: 100, parseResultQueueFillRatio: 0.9d, writerCommitLatencyMs: 150d);
+        var decision = throttle.Update(150, now.AddSeconds(15), workingSetBytes: 100, baselineWorkingSetBytes: 100, parseResultQueueFillRatio: 0.9d, writerCommitLatencyMs: 150d);
+
+        Assert.True(decision.Changed);
+        Assert.Equal(6, decision.RecommendedWorkers);
+        Assert.Equal("writer-backpressure", decision.Reason);
+    }
+
+    [Fact]
+    public void Update_DownscalesOnCommitLatencyWithBackpressure()
+    {
+        var now = new DateTime(2026, 3, 5, 0, 0, 0, DateTimeKind.Utc);
+        var throttle = new PerformanceAdaptiveThrottle(
+            targetWorkers: 8,
+            minWorkers: 4,
+            startedAtUtc: now,
+            window: TimeSpan.FromSeconds(5));
+
+        throttle.Update(40, now.AddSeconds(5), workingSetBytes: 100, baselineWorkingSetBytes: 100, parseResultQueueFillRatio: 0.7d, writerCommitLatencyMs: 800d);
+        var decision = throttle.Update(80, now.AddSeconds(10), workingSetBytes: 100, baselineWorkingSetBytes: 100, parseResultQueueFillRatio: 0.7d, writerCommitLatencyMs: 800d);
+
+        Assert.True(decision.Changed);
+        Assert.Equal(6, decision.RecommendedWorkers);
+        Assert.Equal("writer-commit-latency", decision.Reason);
+    }
 }
