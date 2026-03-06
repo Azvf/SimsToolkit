@@ -2,6 +2,7 @@ using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Application.TextureCompression;
+using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Application.Validation;
 using SimsModDesktop.TrayDependencyEngine;
 
@@ -345,7 +346,7 @@ public sealed class ToolkitActionPlanner : IToolkitActionPlanner
 
         input = new TrayPreviewInput
         {
-            TrayPath = Path.GetFullPath(trayPath),
+            PreviewSource = PreviewSourceRef.ForTrayRoot(Path.GetFullPath(trayPath)),
             PageSize = 50,
             PresetTypeFilter = NormalizeFilter(_trayPreview.PresetTypeFilter),
             BuildSizeFilter = NormalizeFilter(_trayPreview.BuildSizeFilter),

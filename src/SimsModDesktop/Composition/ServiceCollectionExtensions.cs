@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using SimsModDesktop.Application.Configuration;
 using SimsModDesktop.Application.Recovery;
 using SimsModDesktop.Application.ServiceRegistration;
 using SimsModDesktop.Presentation.Dialogs;
@@ -44,6 +45,17 @@ internal static class ServiceCollectionExtensions
 
         services.AddSingleton<IDbpfResourceReader, DbpfResourceReader>();
         services.AddSingleton<IPackageIndexCache, PackageIndexCache>();
+        services.AddSingleton<ITrayBundleAnalysisCache>(provider =>
+        {
+            var configurationProvider = provider.GetService<IConfigurationProvider>();
+            var maxEntries = configurationProvider?.GetConfigurationAsync<int?>("Performance.TrayBundleCache.MaxEntries")
+                .GetAwaiter()
+                .GetResult() ?? 64;
+            return new TrayBundleAnalysisCache(
+                maxEntries,
+                provider.GetService<IPathIdentityResolver>(),
+                provider.GetService<ILogger<TrayBundleAnalysisCache>>());
+        });
         services.AddSingleton<ITrayDependencyExportService, TrayDependencyExportService>();
         services.AddSingleton<ITrayDependencyAnalysisService, TrayDependencyAnalysisService>();
         services.AddTransient<MainWindow>();

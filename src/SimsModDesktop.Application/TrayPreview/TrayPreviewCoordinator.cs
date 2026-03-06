@@ -120,13 +120,13 @@ public sealed class TrayPreviewCoordinator : ITrayPreviewCoordinator
         };
     }
 
-    public void Invalidate(string? trayRootPath = null)
+    public void Invalidate(PreviewSourceRef? source = null)
     {
-        _previewService.Invalidate(trayRootPath);
+        _previewService.Invalidate(source?.SourceKey);
 
-        if (string.IsNullOrWhiteSpace(trayRootPath) ||
+        if (source is null ||
             _activeInput is null ||
-            _pathIdentityResolver.EqualsDirectory(_activeInput.TrayPath, trayRootPath))
+            PreviewSourcesEqual(_activeInput.PreviewSource, source))
         {
             Reset();
         }
@@ -145,7 +145,7 @@ public sealed class TrayPreviewCoordinator : ITrayPreviewCoordinator
     {
         return new SimsTrayPreviewRequest
         {
-            TrayPath = ResolveDirectoryPath(input.TrayPath),
+            PreviewSource = NormalizePreviewSource(input.PreviewSource),
             PageSize = input.PageSize,
             PresetTypeFilter = string.IsNullOrWhiteSpace(input.PresetTypeFilter) ? "All" : input.PresetTypeFilter.Trim(),
             BuildSizeFilter = string.IsNullOrWhiteSpace(input.BuildSizeFilter) ? "All" : input.BuildSizeFilter.Trim(),
@@ -158,7 +158,8 @@ public sealed class TrayPreviewCoordinator : ITrayPreviewCoordinator
 
     private string BuildFingerprint(TrayPreviewInput input)
     {
-        var trayPath = ResolveDirectoryPath(input.TrayPath)
+        var source = NormalizePreviewSource(input.PreviewSource);
+        var sourceKey = source.SourceKey
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
             .ToLowerInvariant();
         var presetTypeFilter = string.IsNullOrWhiteSpace(input.PresetTypeFilter) ? "all" : input.PresetTypeFilter.Trim().ToLowerInvariant();
@@ -170,7 +171,8 @@ public sealed class TrayPreviewCoordinator : ITrayPreviewCoordinator
 
         return string.Join(
             "|",
-            trayPath,
+            source.Kind,
+            sourceKey,
             input.PageSize,
             presetTypeFilter,
             buildSizeFilter,
@@ -180,20 +182,47 @@ public sealed class TrayPreviewCoordinator : ITrayPreviewCoordinator
             searchQuery);
     }
 
-    private string ResolveDirectoryPath(string path)
+    private PreviewSourceRef NormalizePreviewSource(PreviewSourceRef source)
     {
-        var resolved = _pathIdentityResolver.ResolveDirectory(path);
-        if (!string.IsNullOrWhiteSpace(resolved.CanonicalPath))
+        if (source.Kind == PreviewSourceKind.TrayRoot)
         {
-            return resolved.CanonicalPath;
+            var resolvedDirectory = _pathIdentityResolver.ResolveDirectory(source.SourceKey);
+            return source with
+            {
+                SourceKey = !string.IsNullOrWhiteSpace(resolvedDirectory.CanonicalPath)
+                    ? resolvedDirectory.CanonicalPath
+                    : !string.IsNullOrWhiteSpace(resolvedDirectory.FullPath)
+                        ? resolvedDirectory.FullPath
+                        : source.SourceKey.Trim().Trim('"')
+            };
         }
 
-        if (!string.IsNullOrWhiteSpace(resolved.FullPath))
+        var resolvedFile = _pathIdentityResolver.ResolveFile(source.SourceKey);
+        return source with
         {
-            return resolved.FullPath;
+            SourceKey = !string.IsNullOrWhiteSpace(resolvedFile.CanonicalPath)
+                ? resolvedFile.CanonicalPath
+                : !string.IsNullOrWhiteSpace(resolvedFile.FullPath)
+                    ? resolvedFile.FullPath
+                    : source.SourceKey.Trim().Trim('"')
+        };
+    }
+
+    private bool PreviewSourcesEqual(PreviewSourceRef left, PreviewSourceRef right)
+    {
+        if (left.Kind != right.Kind)
+        {
+            return false;
         }
 
-        return path.Trim().Trim('"');
+        var normalizedLeft = NormalizePreviewSource(left);
+        var normalizedRight = NormalizePreviewSource(right);
+        if (left.Kind == PreviewSourceKind.TrayRoot)
+        {
+            return _pathIdentityResolver.EqualsDirectory(normalizedLeft.SourceKey, normalizedRight.SourceKey);
+        }
+
+        return string.Equals(normalizedLeft.SourceKey, normalizedRight.SourceKey, StringComparison.OrdinalIgnoreCase);
     }
 }
 

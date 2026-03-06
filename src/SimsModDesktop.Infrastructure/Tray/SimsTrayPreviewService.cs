@@ -4,6 +4,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.PackageCore;
 using SimsModDesktop.PackageCore.Performance;
+using SimsModDesktop.Application.Saves;
+using SimsModDesktop.Infrastructure.Saves;
 
 namespace SimsModDesktop.Infrastructure.Tray;
 
@@ -36,8 +38,10 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
     private const int MaxCachedRootSnapshots = 8;
     private const int MaxCachedProjectedSnapshots = 32;
     private readonly TrayMetadataIndexStore _metadataIndexStore;
+    private readonly ITrayPreviewRootSnapshotStore _rootSnapshotStore;
     private readonly ITrayThumbnailService _trayThumbnailService;
     private readonly ITrayMetadataService _trayMetadataService;
+    private readonly ISavePreviewDescriptorStore _savePreviewDescriptorStore;
     private readonly ILogger<SimsTrayPreviewService> _logger;
     private readonly IPathIdentityResolver _pathIdentityResolver;
     private readonly object _cacheGate = new();
@@ -49,19 +53,19 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
     private readonly Dictionary<string, Task> _thumbnailCleanupTasks = new(StringComparer.OrdinalIgnoreCase);
 
     public SimsTrayPreviewService()
-        : this(null, null, null, null)
+        : this(null, null, null, null, null, null, null)
     {
     }
 
     public SimsTrayPreviewService(ITrayThumbnailService? trayThumbnailService)
-        : this(trayThumbnailService, null, null, null)
+        : this(trayThumbnailService, null, null, null, null, null, null)
     {
     }
 
     public SimsTrayPreviewService(
         ITrayThumbnailService? trayThumbnailService,
         ITrayMetadataService? trayMetadataService)
-        : this(trayThumbnailService, trayMetadataService, null, null)
+        : this(trayThumbnailService, trayMetadataService, null, null, null, null, null)
     {
     }
 
@@ -70,11 +74,15 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         ITrayMetadataService? trayMetadataService,
         TrayMetadataIndexStore? metadataIndexStore,
         ILogger<SimsTrayPreviewService>? logger = null,
-        IPathIdentityResolver? pathIdentityResolver = null)
+        IPathIdentityResolver? pathIdentityResolver = null,
+        ITrayPreviewRootSnapshotStore? rootSnapshotStore = null,
+        ISavePreviewDescriptorStore? savePreviewDescriptorStore = null)
     {
         _metadataIndexStore = metadataIndexStore ?? new TrayMetadataIndexStore();
+        _rootSnapshotStore = rootSnapshotStore ?? new TrayPreviewRootSnapshotStore();
         _trayThumbnailService = trayThumbnailService ?? new TrayThumbnailService();
         _trayMetadataService = trayMetadataService ?? new TrayMetadataService();
+        _savePreviewDescriptorStore = savePreviewDescriptorStore ?? new SavePreviewDescriptorStore();
         _logger = logger ?? NullLogger<SimsTrayPreviewService>.Instance;
         _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
     }
@@ -102,6 +110,7 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         return Task.Run(() =>
         {
             var snapshot = GetOrBuildSnapshot(request, cancellationToken);
+            var sourceKey = NormalizePreviewSourceKey(request.PreviewSource);
             var totalItems = snapshot.TotalItemCount;
             var pageSize = Math.Clamp(request.PageSize, 1, 500);
             var totalPages = Math.Max(1, (int)Math.Ceiling(totalItems / (double)pageSize));
@@ -116,7 +125,7 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
             {
                 var pageDescriptors = snapshot.RowDescriptors.Skip(skip).Take(pageSize).ToList();
                 items = BuildPageItems(
-                    NormalizeTrayRootPath(request.TrayPath),
+                    sourceKey,
                     pageDescriptors,
                     request.PageBuildWorkerCount,
                     cancellationToken);
@@ -208,55 +217,68 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         SimsTrayPreviewRequest request,
         CancellationToken cancellationToken)
     {
-        var normalizedTrayRoot = NormalizeTrayRootPath(request.TrayPath);
-        var trayPath = normalizedTrayRoot;
-        var directoryWriteUtcTicks = Directory.GetLastWriteTimeUtc(normalizedTrayRoot).Ticks;
+        var previewSource = request.PreviewSource;
+        var normalizedSourceKey = NormalizePreviewSourceKey(previewSource);
+        if (previewSource.Kind == PreviewSourceKind.SaveDescriptor)
+        {
+            return GetOrBuildSaveDescriptorRootSnapshot(normalizedSourceKey);
+        }
+
+        var trayPath = normalizedSourceKey;
+        var directoryWriteUtcTicks = Directory.GetLastWriteTimeUtc(normalizedSourceKey).Ticks;
 
         lock (_cacheGate)
         {
-            if (_rootSnapshotCache.TryGetValue(normalizedTrayRoot, out var cached) &&
+            if (_rootSnapshotCache.TryGetValue(normalizedSourceKey, out var cached) &&
                 cached.DirectoryWriteUtcTicks == directoryWriteUtcTicks)
             {
                 _logger.LogDebug(
                     "traypreview.rootsnapshot.hit trayRoot={TrayRoot} fingerprint={Fingerprint} rowCount={RowCount}",
-                    normalizedTrayRoot,
+                    normalizedSourceKey,
                     cached.RootFingerprint,
                     cached.RowDescriptors.Count);
                 return cached;
             }
         }
 
+        if (_rootSnapshotStore.TryLoad(normalizedSourceKey, directoryWriteUtcTicks, out var persisted))
+        {
+            var loaded = CreateRootSnapshot(persisted);
+            ScheduleThumbnailCleanup(trayPath, loaded.RowDescriptors.Select(row => row.Group.Key).ToArray());
+
+            lock (_cacheGate)
+            {
+                _rootSnapshotCache[normalizedSourceKey] = loaded;
+                RemoveProjectedSnapshotsByRoot_NoLock(normalizedSourceKey);
+                EnforceRootSnapshotCacheLimit_NoLock();
+            }
+
+            _logger.LogDebug(
+                "traypreview.rootsnapshot.persist.reuse trayRoot={TrayRoot} fingerprint={Fingerprint} rowCount={RowCount}",
+                normalizedSourceKey,
+                loaded.RootFingerprint,
+                loaded.RowDescriptors.Count);
+            return loaded;
+        }
+
         var startedAt = Environment.TickCount64;
         var built = BuildRootSnapshotCore(
             trayPath,
-            normalizedTrayRoot,
+            normalizedSourceKey,
             directoryWriteUtcTicks,
             cancellationToken);
+        _rootSnapshotStore.Save(ToRootSnapshotRecord(built));
 
         lock (_cacheGate)
         {
-            _rootSnapshotCache[normalizedTrayRoot] = built;
-            RemoveProjectedSnapshotsByRoot_NoLock(normalizedTrayRoot);
-
-            if (_rootSnapshotCache.Count > MaxCachedRootSnapshots)
-            {
-                var staleRoots = _rootSnapshotCache
-                    .OrderBy(pair => pair.Value.CachedAtUtc)
-                    .Take(_rootSnapshotCache.Count - MaxCachedRootSnapshots)
-                    .Select(pair => pair.Key)
-                    .ToList();
-
-                foreach (var staleRoot in staleRoots)
-                {
-                    _rootSnapshotCache.Remove(staleRoot);
-                    RemoveProjectedSnapshotsByRoot_NoLock(staleRoot);
-                }
-            }
+            _rootSnapshotCache[normalizedSourceKey] = built;
+            RemoveProjectedSnapshotsByRoot_NoLock(normalizedSourceKey);
+            EnforceRootSnapshotCacheLimit_NoLock();
         }
 
         _logger.LogDebug(
             "traypreview.rootsnapshot.miss trayRoot={TrayRoot} fingerprint={Fingerprint} rowCount={RowCount} elapsedMs={ElapsedMs}",
-            normalizedTrayRoot,
+            normalizedSourceKey,
             built.RootFingerprint,
             built.RowDescriptors.Count,
             Environment.TickCount64 - startedAt);
@@ -287,6 +309,22 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         }
 
         var filteredRows = orderedRows.ToList();
+        if (rootSnapshot.SourceKind == PreviewSourceKind.SaveDescriptor)
+        {
+            var materializedRows = filteredRows
+                .Select(CreateSaveDescriptorPreviewItem)
+                .ToList();
+            return new CachedSnapshot
+            {
+                CacheKey = cacheKey,
+                RootFingerprint = rootSnapshot.RootFingerprint,
+                Rows = materializedRows,
+                RowDescriptors = filteredRows,
+                Summary = CreateSummary(materializedRows),
+                CachedAtUtc = DateTime.UtcNow
+            };
+        }
+
         return new CachedSnapshot
         {
             CacheKey = cacheKey,
@@ -434,6 +472,8 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
 
         return new RootSnapshot
         {
+            SourceKind = PreviewSourceKind.TrayRoot,
+            SourceKey = normalizedTrayRoot,
             NormalizedTrayRoot = normalizedTrayRoot,
             DirectoryWriteUtcTicks = directoryWriteUtcTicks,
             RootFingerprint = BuildRootFingerprint(normalizedTrayRoot, directoryWriteUtcTicks, orderedRows),
@@ -452,6 +492,26 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         foreach (var staleProjectionKey in staleProjectionKeys)
         {
             _projectedSnapshotCache.Remove(staleProjectionKey);
+        }
+    }
+
+    private void EnforceRootSnapshotCacheLimit_NoLock()
+    {
+        if (_rootSnapshotCache.Count <= MaxCachedRootSnapshots)
+        {
+            return;
+        }
+
+        var staleRoots = _rootSnapshotCache
+            .OrderBy(pair => pair.Value.CachedAtUtc)
+            .Take(_rootSnapshotCache.Count - MaxCachedRootSnapshots)
+            .Select(pair => pair.Key)
+            .ToList();
+
+        foreach (var staleRoot in staleRoots)
+        {
+            _rootSnapshotCache.Remove(staleRoot);
+            RemoveProjectedSnapshotsByRoot_NoLock(staleRoot);
         }
     }
 
@@ -741,6 +801,176 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         }
 
         return trayRootPath.Trim().Trim('"');
+    }
+
+    private string NormalizePreviewSourceKey(PreviewSourceRef previewSource)
+    {
+        return previewSource.Kind switch
+        {
+            PreviewSourceKind.TrayRoot => NormalizeTrayRootPath(previewSource.SourceKey),
+            PreviewSourceKind.SaveDescriptor => NormalizeSavePath(previewSource.SourceKey),
+            _ => previewSource.SourceKey.Trim()
+        };
+    }
+
+    private string NormalizeSavePath(string saveFilePath)
+    {
+        var resolved = _pathIdentityResolver.ResolveFile(saveFilePath);
+        if (!string.IsNullOrWhiteSpace(resolved.CanonicalPath))
+        {
+            return resolved.CanonicalPath;
+        }
+
+        if (!string.IsNullOrWhiteSpace(resolved.FullPath))
+        {
+            return resolved.FullPath;
+        }
+
+        return saveFilePath.Trim().Trim('"');
+    }
+
+    private RootSnapshot GetOrBuildSaveDescriptorRootSnapshot(string normalizedSavePath)
+    {
+        var sourceInfo = new FileInfo(normalizedSavePath);
+        var sourceWriteTicks = sourceInfo.Exists ? sourceInfo.LastWriteTimeUtc.Ticks : 0;
+
+        lock (_cacheGate)
+        {
+            if (_rootSnapshotCache.TryGetValue(normalizedSavePath, out var cached) &&
+                cached.DirectoryWriteUtcTicks == sourceWriteTicks)
+            {
+                return cached;
+            }
+        }
+
+        if (!_savePreviewDescriptorStore.TryLoadDescriptor(normalizedSavePath, out var manifest) ||
+            !_savePreviewDescriptorStore.IsDescriptorCurrent(normalizedSavePath, manifest))
+        {
+            throw new InvalidOperationException($"Save preview descriptor is not ready: {normalizedSavePath}");
+        }
+
+        var built = BuildSaveDescriptorRootSnapshot(normalizedSavePath, manifest);
+        lock (_cacheGate)
+        {
+            _rootSnapshotCache[normalizedSavePath] = built;
+            RemoveProjectedSnapshotsByRoot_NoLock(normalizedSavePath);
+            EnforceRootSnapshotCacheLimit_NoLock();
+        }
+
+        return built;
+    }
+
+    private RootSnapshot BuildSaveDescriptorRootSnapshot(
+        string normalizedSavePath,
+        SavePreviewDescriptorManifest manifest)
+    {
+        var rows = manifest.Entries
+            .OrderBy(entry => entry.DisplayTitle, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(entry => entry.HouseholdId)
+            .Select(entry => CreateSaveDescriptorRowDescriptor(manifest, entry))
+            .ToList();
+
+        return new RootSnapshot
+        {
+            SourceKind = PreviewSourceKind.SaveDescriptor,
+            SourceKey = normalizedSavePath,
+            NormalizedTrayRoot = normalizedSavePath,
+            DirectoryWriteUtcTicks = manifest.SourceLastWriteTimeUtc.Ticks,
+            RootFingerprint = BuildRootFingerprint(
+                normalizedSavePath,
+                manifest.SourceLastWriteTimeUtc.Ticks,
+                rows),
+            RowDescriptors = rows,
+            CachedAtUtc = DateTime.UtcNow
+        };
+    }
+
+    private static PreviewRowDescriptor CreateSaveDescriptorRowDescriptor(
+        SavePreviewDescriptorManifest manifest,
+        SavePreviewDescriptorEntry entry)
+    {
+        var group = new GroupAccumulator(entry.TrayItemKey)
+        {
+            ItemName = entry.DisplayTitle,
+            TrayInstanceId = entry.StableInstanceIdHex,
+            TrayItemPath = string.Empty,
+            HasHouseholdAnchorFile = true,
+            FileCount = 1,
+            TotalBytes = 0,
+            LatestWriteTimeUtc = manifest.SourceLastWriteTimeUtc
+        };
+        group.Extensions.Add(".trayitem");
+        group.FileNames.Add($"{entry.DisplayTitle}.trayitem");
+
+        return new PreviewRowDescriptor
+        {
+            Group = group,
+            ChildGroups = Array.Empty<GroupAccumulator>(),
+            PresetType = "Household",
+            ItemName = entry.DisplayTitle,
+            FileListPreview = $"{Math.Max(0, entry.HouseholdSize)} sims",
+            NormalizedFallbackSearchText = NormalizeSearch(entry.SearchText),
+            FileCount = 1,
+            TotalBytes = 0,
+            LatestWriteTimeLocal = manifest.SourceLastWriteTimeUtc == DateTime.MinValue
+                ? DateTime.MinValue
+                : manifest.SourceLastWriteTimeUtc.ToLocalTime(),
+            SaveDescriptorEntry = entry,
+            SaveDescriptorSourcePath = manifest.SourceSavePath,
+            SaveDescriptorSourceLastWriteUtcTicks = manifest.SourceLastWriteTimeUtc.Ticks,
+            SaveDescriptorSchemaVersion = manifest.DescriptorSchemaVersion
+        };
+    }
+
+    private static SimsTrayPreviewItem CreateSaveDescriptorPreviewItem(PreviewRowDescriptor row)
+    {
+        var entry = row.SaveDescriptorEntry ?? throw new InvalidOperationException("Missing save descriptor entry.");
+        var contentFingerprint = string.Join(
+            "|",
+            "save-descriptor",
+            row.SaveDescriptorSourcePath,
+            entry.HouseholdId.ToString(CultureInfo.InvariantCulture),
+            row.SaveDescriptorSourceLastWriteUtcTicks.ToString(CultureInfo.InvariantCulture),
+            row.SaveDescriptorSchemaVersion);
+
+        return new SimsTrayPreviewItem
+        {
+            TrayItemKey = entry.TrayItemKey,
+            PresetType = "Household",
+            ChildItems = Array.Empty<SimsTrayPreviewItem>(),
+            DisplayTitle = entry.DisplayTitle,
+            DisplaySubtitle = entry.DisplaySubtitle,
+            DisplayDescription = entry.DisplayDescription,
+            DisplayPrimaryMeta = entry.DisplayPrimaryMeta,
+            DisplaySecondaryMeta = entry.DisplaySecondaryMeta,
+            DisplayTertiaryMeta = entry.DisplayTertiaryMeta,
+            DebugMetadata = new TrayDebugMetadata
+            {
+                TrayItemKey = entry.TrayItemKey,
+                TrayInstanceId = entry.StableInstanceIdHex,
+                ContentFingerprint = contentFingerprint,
+                FileCount = 1,
+                TotalMB = 0,
+                LatestWriteTimeLocal = row.LatestWriteTimeLocal,
+                Extensions = ".trayitem",
+                ResourceTypes = string.Empty,
+                FileListPreview = row.FileListPreview,
+                SourceFilePaths = Array.Empty<string>()
+            },
+            TrayRootPath = string.Empty,
+            TrayInstanceId = entry.StableInstanceIdHex,
+            ContentFingerprint = contentFingerprint,
+            SourceFilePaths = Array.Empty<string>(),
+            ItemName = entry.DisplayTitle,
+            AuthorId = string.Empty,
+            FileCount = 1,
+            TotalBytes = 0,
+            TotalMB = 0,
+            LatestWriteTimeLocal = row.LatestWriteTimeLocal,
+            ResourceTypes = string.Empty,
+            Extensions = ".trayitem",
+            FileListPreview = row.FileListPreview
+        };
     }
 
     private static PreviewRowDescriptor CreatePreviewRowDescriptor(
@@ -2071,8 +2301,121 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         return null;
     }
 
+    private static TrayPreviewRootSnapshotRecord ToRootSnapshotRecord(RootSnapshot snapshot)
+    {
+        return new TrayPreviewRootSnapshotRecord
+        {
+            TrayRootPath = snapshot.NormalizedTrayRoot,
+            DirectoryWriteUtcTicks = snapshot.DirectoryWriteUtcTicks,
+            RootFingerprint = snapshot.RootFingerprint,
+            CachedAtUtc = snapshot.CachedAtUtc,
+            Items = snapshot.RowDescriptors
+                .Select(row => new TrayPreviewRootItemRecord
+                {
+                    Group = ToGroupRecord(row.Group),
+                    ChildGroups = row.ChildGroups.Select(ToGroupRecord).ToArray(),
+                    PresetType = row.PresetType,
+                    ItemName = row.ItemName,
+                    FileListPreview = row.FileListPreview,
+                    NormalizedFallbackSearchText = row.NormalizedFallbackSearchText,
+                    FileCount = row.FileCount,
+                    TotalBytes = row.TotalBytes,
+                    LatestWriteUtcTicks = row.LatestWriteTimeLocal == DateTime.MinValue
+                        ? 0
+                        : row.LatestWriteTimeLocal.ToUniversalTime().Ticks
+                })
+                .ToArray()
+        };
+    }
+
+    private static RootSnapshot CreateRootSnapshot(TrayPreviewRootSnapshotRecord record)
+    {
+        return new RootSnapshot
+        {
+            SourceKind = PreviewSourceKind.TrayRoot,
+            SourceKey = record.TrayRootPath,
+            NormalizedTrayRoot = record.TrayRootPath,
+            DirectoryWriteUtcTicks = record.DirectoryWriteUtcTicks,
+            RootFingerprint = record.RootFingerprint,
+            CachedAtUtc = record.CachedAtUtc,
+            RowDescriptors = record.Items
+                .Select(item => new PreviewRowDescriptor
+                {
+                    Group = ToGroupAccumulator(item.Group),
+                    ChildGroups = item.ChildGroups.Select(ToGroupAccumulator).ToArray(),
+                    PresetType = item.PresetType,
+                    ItemName = item.ItemName,
+                    FileListPreview = item.FileListPreview,
+                    NormalizedFallbackSearchText = item.NormalizedFallbackSearchText,
+                    FileCount = item.FileCount,
+                    TotalBytes = item.TotalBytes,
+                    LatestWriteTimeLocal = item.LatestWriteUtcTicks <= 0
+                        ? DateTime.MinValue
+                        : new DateTime(item.LatestWriteUtcTicks, DateTimeKind.Utc).ToLocalTime()
+                })
+                .ToArray()
+        };
+    }
+
+    private static TrayPreviewGroupRecord ToGroupRecord(GroupAccumulator group)
+    {
+        return new TrayPreviewGroupRecord
+        {
+            Key = group.Key,
+            ItemName = group.ItemName,
+            TrayInstanceId = group.TrayInstanceId,
+            TrayItemPath = group.TrayItemPath,
+            HasHouseholdAnchorFile = group.HasHouseholdAnchorFile,
+            FileCount = group.FileCount,
+            TotalBytes = group.TotalBytes,
+            LatestWriteUtcTicks = group.LatestWriteTimeUtc == DateTime.MinValue
+                ? 0
+                : group.LatestWriteTimeUtc.ToUniversalTime().Ticks,
+            ResourceTypes = group.ResourceTypes
+                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            Extensions = group.Extensions
+                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            FileNames = group.FileNames.ToArray(),
+            SourceFiles = group.SourceFiles.ToArray()
+        };
+    }
+
+    private static GroupAccumulator ToGroupAccumulator(TrayPreviewGroupRecord record)
+    {
+        var group = new GroupAccumulator(record.Key)
+        {
+            ItemName = record.ItemName,
+            TrayInstanceId = record.TrayInstanceId,
+            TrayItemPath = record.TrayItemPath,
+            HasHouseholdAnchorFile = record.HasHouseholdAnchorFile,
+            FileCount = record.FileCount,
+            TotalBytes = record.TotalBytes,
+            LatestWriteTimeUtc = record.LatestWriteUtcTicks <= 0
+                ? DateTime.MinValue
+                : new DateTime(record.LatestWriteUtcTicks, DateTimeKind.Utc)
+        };
+
+        foreach (var value in record.ResourceTypes)
+        {
+            group.ResourceTypes.Add(value);
+        }
+
+        foreach (var value in record.Extensions)
+        {
+            group.Extensions.Add(value);
+        }
+
+        group.FileNames.AddRange(record.FileNames);
+        group.SourceFiles.AddRange(record.SourceFiles);
+        return group;
+    }
+
     private sealed class RootSnapshot
     {
+        public required PreviewSourceKind SourceKind { get; init; }
+        public required string SourceKey { get; init; }
         public required string NormalizedTrayRoot { get; init; }
         public required long DirectoryWriteUtcTicks { get; init; }
         public required string RootFingerprint { get; init; }
@@ -2103,6 +2446,10 @@ public sealed class SimsTrayPreviewService : ISimsTrayPreviewService
         public required int FileCount { get; init; }
         public required long TotalBytes { get; init; }
         public required DateTime LatestWriteTimeLocal { get; init; }
+        public SavePreviewDescriptorEntry? SaveDescriptorEntry { get; init; }
+        public string SaveDescriptorSourcePath { get; init; } = string.Empty;
+        public long SaveDescriptorSourceLastWriteUtcTicks { get; init; }
+        public string SaveDescriptorSchemaVersion { get; init; } = string.Empty;
     }
 
     private sealed class TrayMetadataIndexState

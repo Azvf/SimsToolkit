@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using SimsModDesktop.Application.Caching;
 using SimsModDesktop.Application.Configuration;
 using SimsModDesktop.Application.Execution;
 using SimsModDesktop.Application.Localization;
@@ -12,6 +13,7 @@ using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Application.TextureProcessing;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Infrastructure.Configuration;
+using SimsModDesktop.Infrastructure.Caching;
 using SimsModDesktop.Infrastructure.Localization;
 using SimsModDesktop.Infrastructure.Mods;
 using SimsModDesktop.Infrastructure.Saves;
@@ -49,11 +51,15 @@ public static class InfrastructureServiceRegistration
         services.AddSingleton<ITextureEncodeService, BcnTextureEncodeService>();
         services.AddSingleton<ITextureTranscodePipeline, TextureTranscodePipeline>();
         services.AddSingleton<ITextureCompressionService, TextureCompressionService>();
+        services.AddSingleton<IListQueryCache, InMemoryListQueryCache>();
 
         services.AddSingleton<IModPackageTextureAnalysisStore, SqliteModPackageTextureAnalysisStore>();
         services.AddSingleton<IModPackageTextureEditStore, SqliteModPackageTextureEditStore>();
         services.AddSingleton<IModPackageTextureEditService, ModPackageTextureEditService>();
-        services.AddSingleton<IModItemIndexStore, SqliteModItemIndexStore>();
+        services.AddSingleton<IModItemIndexStore>(provider =>
+            new SqliteModItemIndexStore(
+                provider.GetService<Microsoft.Extensions.Logging.ILogger<SqliteModItemIndexStore>>(),
+                provider.GetRequiredService<IListQueryCache>()));
         services.AddSingleton<IModPackageInventoryService, SqliteModPackageInventoryService>();
         services.AddSingleton<IModItemCatalogService, SqliteModItemCatalogService>();
         services.AddSingleton<IModItemInspectService, SqliteModItemInspectService>();
@@ -62,6 +68,7 @@ public static class InfrastructureServiceRegistration
         services.AddSingleton<IAppCacheMaintenanceService, AppCacheMaintenanceService>();
         services.AddSingleton<TrayThumbnailCacheStore>();
         services.AddSingleton<TrayMetadataIndexStore>();
+        services.AddSingleton<ITrayPreviewRootSnapshotStore, TrayPreviewRootSnapshotStore>();
         services.AddSingleton<TrayEmbeddedImageExtractor>();
         services.AddSingleton<ITrayMetadataService, TrayMetadataService>();
         services.AddSingleton<ITrayThumbnailService, TrayThumbnailService>();
@@ -74,7 +81,10 @@ public static class InfrastructureServiceRegistration
         services.AddSingleton<ITS4SimAppearanceService>(provider =>
             (ITS4SimAppearanceService)provider.GetRequiredService<ISaveAppearanceLinkService>());
         services.AddSingleton<IHouseholdTrayExporter, HouseholdTrayExporter>();
-        services.AddSingleton<ISavePreviewCacheStore, SavePreviewCacheStore>();
+        services.AddSingleton<ISavePreviewDescriptorStore, SavePreviewDescriptorStore>();
+        services.AddSingleton<ISavePreviewDescriptorBuilder, SavePreviewDescriptorBuilder>();
+        services.AddSingleton<ISavePreviewArtifactStore, SavePreviewArtifactStore>();
+        services.AddSingleton<ISavePreviewArtifactProvider, SavePreviewArtifactProvider>();
         services.AddSingleton<ISaveHouseholdCoordinator, SaveHouseholdCoordinator>();
 
         services.AddSingleton<ITS4PathDiscoveryService, TS4PathDiscoveryService>();

@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Application.Caching;
 using SimsModDesktop.PackageCore;
+using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.TrayDependencyEngine;
@@ -58,7 +59,7 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
             () => Surface.HasSelection && IsTrayDependencyCacheReady && !IsDependencyCacheWarmupBlocking,
             disableWhileRunning: false);
 
-        Surface.Configure(Filter, () => Filter.TrayRoot, PreviewSurfaceSelectionMode.Multiple, autoLoad: false);
+        Surface.Configure(Filter, BuildCurrentPreviewInput, PreviewSurfaceSelectionMode.Multiple, autoLoad: false);
         Surface.SetActionButtons(
         [
             new PreviewSurfaceActionButtonViewModel { Label = "Refresh", Command = Surface.RefreshCommand },
@@ -147,6 +148,16 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         IsTrayDependencyCacheReady = false;
         SetTrayDependencyCacheWarmupState(false, 0, string.Empty, string.Empty);
         Surface.ResetAfterCacheClear();
+    }
+
+    private TrayPreviewInput? BuildCurrentPreviewInput()
+    {
+        if (string.IsNullOrWhiteSpace(Filter.TrayRoot) || !Directory.Exists(Filter.TrayRoot))
+        {
+            return null;
+        }
+
+        return Filter.BuildInput(PreviewSourceRef.ForTrayRoot(Filter.TrayRoot));
     }
 
     public Task EnsureLoadedAsync(bool forceReload = false)
@@ -357,10 +368,17 @@ public sealed class TrayPreviewWorkspaceViewModel : ObservableObject
         var warmupDetached = false;
         try
         {
-            await _cacheWarmupController.EnsureTrayWorkspaceReadyAsync(
-                modsPath,
-                CreateCacheWarmupHost(operationId, cancellationToken),
-                cancellationToken).ConfigureAwait(false);
+            var warmupHost = CreateCacheWarmupHost(operationId, cancellationToken);
+            _ = await _cacheWarmupController.AttachToInflightTrayWarmupIfAny(
+                    modsPath,
+                    warmupHost,
+                    cancellationToken)
+                .ConfigureAwait(false)
+                ?? await _cacheWarmupController.EnsureTrayWorkspaceReadyAsync(
+                    modsPath,
+                    warmupHost,
+                    cancellationToken)
+                .ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             warmupCompleted = true;
 

@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using SimsModDesktop.Application.Caching;
 using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Presentation.Shell;
 using SimsModDesktop.Presentation.Services;
@@ -19,6 +20,9 @@ public static class PresentationServiceRegistration
         services.AddSingleton<ShellNavigationState>();
         services.AddSingleton<INavigationService, NavigationService>();
         services.AddSingleton<ITrayDependenciesLauncher, TrayDependenciesLauncher>();
+        services.AddSingleton<IUiActivityMonitor, UiActivityMonitor>();
+        services.AddSingleton<IBackgroundCachePrewarmCoordinator, BackgroundCachePrewarmCoordinator>();
+        services.AddSingleton<AppIdlePrewarmBootstrapper>();
         services.AddSingleton<MainWindowStatusController>();
         services.AddSingleton<MainWindowSettingsPersistenceController>();
         services.AddSingleton<MainWindowRecoveryController>();

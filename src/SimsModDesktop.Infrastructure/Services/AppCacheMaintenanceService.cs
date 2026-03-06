@@ -93,6 +93,7 @@ public sealed class AppCacheMaintenanceService : IAppCacheMaintenanceService
             var directoryTargets = new[]
             {
                 Path.Combine(_cacheRootPath, "SavePreview"),
+                Path.Combine(_cacheRootPath, "SavePreviewArtifacts"),
                 Path.Combine(_cacheRootPath, "TrayPreviewThumbnails", "thumbs")
             };
             var fileTargets = new[]

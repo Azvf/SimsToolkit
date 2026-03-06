@@ -13,8 +13,7 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
     private readonly IPackageIndexCache _packageIndexCache;
     private readonly ILogger<TrayDependencyExportService> _logger;
     private readonly IPathIdentityResolver _pathIdentityResolver;
-    private readonly TrayBundleLoader _bundleLoader = new();
-    private readonly TraySearchExtractor _searchExtractor = new();
+    private readonly ITrayBundleAnalysisCache _bundleAnalysisCache;
     private readonly DirectMatchEngine _directMatchEngine = new();
     private readonly DependencyExpandEngine _dependencyExpandEngine;
     private readonly ModFileExporter _fileExporter;
@@ -23,11 +22,13 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
         IPackageIndexCache packageIndexCache,
         IDbpfResourceReader? resourceReader = null,
         ILogger<TrayDependencyExportService>? logger = null,
-        IPathIdentityResolver? pathIdentityResolver = null)
+        IPathIdentityResolver? pathIdentityResolver = null,
+        ITrayBundleAnalysisCache? bundleAnalysisCache = null)
     {
         _packageIndexCache = packageIndexCache;
         _logger = logger ?? NullLogger<TrayDependencyExportService>.Instance;
         _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
+        _bundleAnalysisCache = bundleAnalysisCache ?? new TrayBundleAnalysisCache(pathIdentityResolver: _pathIdentityResolver);
         _dependencyExpandEngine = new DependencyExpandEngine(resourceReader ?? new DbpfResourceReader(), _logger);
         _fileExporter = new ModFileExporter(_logger);
     }
@@ -160,7 +161,15 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
                 TrayDependencyExportStage.ParsingTray,
                 35);
 
-            if (!_bundleLoader.TryLoad(request.TraySourceFiles, issues, out var bundle))
+            var bundleAnalysis = await _bundleAnalysisCache
+                .GetOrLoadAsync(
+                    request.TrayRootPath,
+                    request.TrayItemKey,
+                    request.TraySourceFiles,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            issues.AddRange(bundleAnalysis.Issues);
+            if (!bundleAnalysis.Success)
             {
                 return BuildResult(
                     copiedTrayFileCount,
@@ -177,16 +186,12 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
                         expandedMatchCount));
             }
 
-            bundleTrayItemFileCount = bundle.TrayItemPaths.Count;
-            bundleAuxiliaryFileCount =
-                bundle.HhiPaths.Count +
-                bundle.SgiPaths.Count +
-                bundle.HouseholdBinaryPaths.Count +
-                bundle.BlueprintPaths.Count +
-                bundle.RoomPaths.Count;
-            var searchKeys = _searchExtractor.Extract(bundle, issues);
-            candidateResourceKeyCount = searchKeys.ResourceKeys.Length;
-            candidateIdCount = CountCandidateIds(searchKeys);
+            var bundle = bundleAnalysis.Bundle;
+            bundleTrayItemFileCount = bundleAnalysis.BundleTrayItemFileCount;
+            bundleAuxiliaryFileCount = bundleAnalysis.BundleAuxiliaryFileCount;
+            var searchKeys = bundleAnalysis.SearchKeys;
+            candidateResourceKeyCount = bundleAnalysis.CandidateResourceKeyCount;
+            candidateIdCount = bundleAnalysis.CandidateIdCount;
 
             cancellationToken.ThrowIfCancellationRequested();
             Report(progress, TrayDependencyExportStage.MatchingDirectReferences, 45, "Matching direct references...");
@@ -518,29 +523,6 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
             DbRoundTrips = dbRoundTrips,
             ExpandElapsedMs = expandElapsedMs
         };
-    }
-
-    private static int CountCandidateIds(TraySearchKeys keys)
-    {
-        var ids = new HashSet<ulong>();
-        Add(keys.CasPartIds);
-        Add(keys.SkinToneIds);
-        Add(keys.SimAspirationIds);
-        Add(keys.SimTraitIds);
-        Add(keys.CasPresetIds);
-        Add(keys.FaceSliderIds);
-        Add(keys.BodySliderIds);
-        Add(keys.ObjectDefinitionIds);
-        Add(keys.LotTraitIds);
-        return ids.Count;
-
-        void Add(IReadOnlyList<ulong> values)
-        {
-            for (var index = 0; index < values.Count; index++)
-            {
-                ids.Add(values[index]);
-            }
-        }
     }
 
     private bool MatchesModsRoot(PackageIndexSnapshot snapshot, string modsRootPath)

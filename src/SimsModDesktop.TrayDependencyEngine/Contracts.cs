@@ -18,6 +18,17 @@ public interface ITrayDependencyAnalysisService
         CancellationToken cancellationToken = default);
 }
 
+public interface ITrayBundleAnalysisCache
+{
+    Task<TrayBundleAnalysisResult> GetOrLoadAsync(
+        string trayRootPath,
+        string trayItemKey,
+        IReadOnlyList<string> traySourceFiles,
+        CancellationToken cancellationToken = default);
+
+    void Reset(string? trayRootPath = null);
+}
+
 public sealed record TrayDependencyExportRequest
 {
     public required string ItemTitle { get; init; }
@@ -58,6 +69,30 @@ public sealed record TrayDependencyExportResult
     public bool HasMissingReferenceWarnings { get; init; }
     public IReadOnlyList<TrayDependencyIssue> Issues { get; init; } = Array.Empty<TrayDependencyIssue>();
     public TrayDependencyExportDiagnostics? Diagnostics { get; init; }
+}
+
+public sealed record TrayBundleAnalysisCacheKey
+{
+    public required string CanonicalTrayRoot { get; init; }
+    public required string TrayItemKey { get; init; }
+    public required string ContentFingerprint { get; init; }
+}
+
+public sealed record TrayBundleAnalysisResult
+{
+    public bool Success { get; init; }
+    public required TrayBundleAnalysisCacheKey CacheKey { get; init; }
+    public IReadOnlyList<TrayDependencyIssue> Issues { get; init; } = Array.Empty<TrayDependencyIssue>();
+    public TrayFileBundle Bundle { get; init; } = new();
+    public TraySearchKeys SearchKeys { get; init; } = new();
+    public int InputSourceFileCount { get; init; }
+    public int BundleTrayItemFileCount { get; init; }
+    public int BundleAuxiliaryFileCount { get; init; }
+    public int CandidateResourceKeyCount { get; init; }
+    public int CandidateIdCount { get; init; }
+    public int SourceFileCount { get; init; }
+    public int BundleFileCount { get; init; }
+    public bool FromCache { get; init; }
 }
 
 public sealed record TrayDependencyExportDiagnostics

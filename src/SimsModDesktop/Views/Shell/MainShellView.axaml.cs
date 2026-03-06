@@ -1,12 +1,14 @@
 using Avalonia.Controls;
 using Avalonia.Data.Converters;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Diagnostics;
+using SimsModDesktop.Presentation.Services;
 using SimsModDesktop.Presentation.ViewModels.Shell;
 
 namespace SimsModDesktop.Views.Shell;
@@ -17,13 +19,17 @@ public partial class MainShellView : UserControl
     private MainShellViewModel? _shellVm;
     private bool _hasQueuedFirstContentVisible;
     private readonly ILogger<MainShellView> _logger;
+    private readonly IUiActivityMonitor? _uiActivityMonitor;
 
     public MainShellView()
     {
         InitializeComponent();
         _logger = App.Services?.GetService<ILogger<MainShellView>>() ?? NullLogger<MainShellView>.Instance;
+        _uiActivityMonitor = App.Services?.GetService<IUiActivityMonitor>();
         DataContextChanged += OnDataContextChanged;
         AttachedToVisualTree += (_, _) => QueueFirstContentVisible();
+        AddHandler(PointerPressedEvent, OnUiInteractionObserved, RoutingStrategies.Tunnel | RoutingStrategies.Bubble, handledEventsToo: true);
+        AddHandler(KeyDownEvent, OnUiInteractionObserved, RoutingStrategies.Tunnel | RoutingStrategies.Bubble, handledEventsToo: true);
     }
 
     private void OnDataContextChanged(object? sender, EventArgs e)
@@ -139,5 +145,10 @@ public partial class MainShellView : UserControl
         Dispatcher.UIThread.Post(
             () => AppStartupTelemetry.MarkFirstContentVisible(),
             DispatcherPriority.Background);
+    }
+
+    private void OnUiInteractionObserved(object? sender, RoutedEventArgs e)
+    {
+        _uiActivityMonitor?.RecordInteraction();
     }
 }

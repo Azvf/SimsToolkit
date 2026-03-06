@@ -1,3 +1,4 @@
+using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.SaveData.Models;
 
 namespace SimsModDesktop.Application.Saves;
@@ -6,13 +7,18 @@ public interface ISaveHouseholdCoordinator
 {
     IReadOnlyList<SaveFileEntry> GetSaveFiles(string savesRootPath);
     bool TryLoadHouseholds(string saveFilePath, out SaveHouseholdSnapshot? snapshot, out string error);
-    bool TryGetPreviewCacheManifest(string saveFilePath, out SavePreviewCacheManifest manifest);
-    bool IsPreviewCacheCurrent(string saveFilePath, SavePreviewCacheManifest manifest);
-    string GetPreviewCacheRoot(string saveFilePath);
-    Task<SavePreviewCacheBuildResult> BuildPreviewCacheAsync(
+    bool TryGetPreviewDescriptor(string saveFilePath, out SavePreviewDescriptorManifest manifest);
+    bool IsPreviewDescriptorCurrent(string saveFilePath, SavePreviewDescriptorManifest manifest);
+    PreviewSourceRef GetPreviewSource(string saveFilePath);
+    Task<SavePreviewDescriptorBuildResult> BuildPreviewDescriptorAsync(
         string saveFilePath,
-        IProgress<SavePreviewCacheBuildProgress>? progress = null,
+        IProgress<SavePreviewDescriptorBuildProgress>? progress = null,
         CancellationToken cancellationToken = default);
-    void ClearPreviewCache(string saveFilePath);
+    Task<string?> EnsurePreviewArtifactAsync(
+        string saveFilePath,
+        string householdKey,
+        string purpose,
+        CancellationToken cancellationToken = default);
+    void ClearPreviewData(string saveFilePath);
     SaveHouseholdExportResult Export(SaveHouseholdExportRequest request);
 }

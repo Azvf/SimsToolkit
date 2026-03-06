@@ -1,3 +1,4 @@
+using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 
@@ -131,11 +132,11 @@ public class TrayLikePreviewFilterViewModel : ObservableObject
         protected set => SetProperty(ref _pageSize, Math.Max(1, value));
     }
 
-    public virtual TrayPreviewInput BuildInput(string trayPath)
+    public virtual TrayPreviewInput BuildInput(PreviewSourceRef previewSource)
     {
         return new TrayPreviewInput
         {
-            TrayPath = trayPath,
+            PreviewSource = previewSource,
             PageSize = PageSize,
             PresetTypeFilter = NormalizeFilter(PresetTypeFilter),
             BuildSizeFilter = NormalizeFilter(BuildSizeFilter),

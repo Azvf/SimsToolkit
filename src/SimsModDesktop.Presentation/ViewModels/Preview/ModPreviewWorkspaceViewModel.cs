@@ -1,8 +1,10 @@
 using System.ComponentModel;
 using Avalonia.Threading;
 using SimsModDesktop.Application.Caching;
+using SimsModDesktop.Application.Configuration;
 using SimsModDesktop.Application.Mods;
 using SimsModDesktop.Application.TextureCompression;
+using SimsModDesktop.Presentation.Services;
 using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 using SimsModDesktop.Presentation.ViewModels.Panels;
@@ -15,11 +17,14 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
     private readonly IModItemCatalogService _catalogService;
     private readonly IModItemIndexScheduler _indexScheduler;
     private readonly MainWindowCacheWarmupController _cacheWarmupController;
+    private readonly IUiActivityMonitor _uiActivityMonitor;
+    private readonly IConfigurationProvider? _configurationProvider;
     private readonly object _eventLock = new();
 
     private CancellationTokenSource? _refreshCts;
     private CancellationTokenSource? _fastEventCts;
     private CancellationTokenSource? _deepEventCts;
+    private CancellationTokenSource? _queryPrimeCts;
     private HashSet<string> _pendingDeepKeys = new(StringComparer.OrdinalIgnoreCase);
     private bool _isBusy;
     private bool _isActive;
@@ -46,12 +51,16 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
         MainWindowCacheWarmupController cacheWarmupController,
         IModItemInspectService inspectService,
         IModPackageTextureEditService textureEditService,
-        IFileDialogService fileDialogService)
+        IFileDialogService fileDialogService,
+        IUiActivityMonitor? uiActivityMonitor = null,
+        IConfigurationProvider? configurationProvider = null)
     {
         _filter = filter;
         _catalogService = catalogService;
         _indexScheduler = indexScheduler;
         _cacheWarmupController = cacheWarmupController;
+        _uiActivityMonitor = uiActivityMonitor ?? new UiActivityMonitor();
+        _configurationProvider = configurationProvider;
         Inspect = new ModItemInspectViewModel(inspectService, textureEditService, fileDialogService);
 
         CatalogItems = new PatchableObservableCollection<ModItemListItemViewModel>();
@@ -231,6 +240,7 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
         _isActive = isActive;
         if (!_isActive)
         {
+            CancelQueryPrime();
             if (HasValidModsPath)
             {
                 _cacheWarmupController.PauseModsWarmup(
@@ -270,6 +280,7 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
 
     public void ResetAfterCacheClear()
     {
+        CancelQueryPrime();
         _cacheWarmupController.Reset();
         CatalogItems.ReplaceAllStable(Array.Empty<ModItemListItemViewModel>());
         SelectedItem = null;
@@ -291,6 +302,7 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
     {
         _hasPendingRefresh = false;
         CancelEventThrottles();
+        CancelQueryPrime();
         _refreshCts?.Cancel();
         _refreshCts?.Dispose();
         _refreshCts = new CancellationTokenSource();
@@ -399,6 +411,7 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
                 if (warmupCompleted)
                 {
                     SetCacheWarmupState(false, 100, string.Empty, string.Empty);
+                    ScheduleIdleNextPagePrime();
                 }
                 else if (!warmupPaused)
                 {
@@ -489,16 +502,7 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
     private Task<ModItemCatalogPage> QueryCurrentPageAsync(CancellationToken cancellationToken)
     {
         return _catalogService.QueryPageAsync(
-            new ModItemCatalogQuery
-            {
-                ModsRoot = _filter.ModsRoot,
-                SearchQuery = _filter.SearchQuery,
-                EntityKindFilter = _filter.PackageTypeFilter,
-                SubTypeFilter = _filter.ScopeFilter,
-                SortBy = _filter.SortBy,
-                PageIndex = _currentPage,
-                PageSize = 50
-            },
+            BuildQuery(_currentPage),
             cancellationToken);
     }
 
@@ -579,6 +583,7 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
     private void OnFilterPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         OnPropertyChanged(nameof(HasValidModsPath));
+        CancelQueryPrime();
         if (string.Equals(e.PropertyName, nameof(ModPreviewPanelViewModel.ModsRoot), StringComparison.Ordinal))
         {
             _cacheWarmupController.Reset();
@@ -711,6 +716,100 @@ public sealed class ModPreviewWorkspaceViewModel : ObservableObject
         {
             _pendingDeepKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
+    }
+
+    private void ScheduleIdleNextPagePrime()
+    {
+        if (!_isActive ||
+            IsBusy ||
+            !HasValidModsPath ||
+            _currentPage >= _totalPages ||
+            !GetConfigBool("Performance.IdlePrewarm.ModQueryPrimeEnabled", true))
+        {
+            return;
+        }
+
+        CancelQueryPrime();
+        _queryPrimeCts = new CancellationTokenSource();
+        var token = _queryPrimeCts.Token;
+        var nextPageQuery = BuildQuery(_currentPage + 1);
+        var idleDelay = TimeSpan.FromMilliseconds(Math.Max(1000, GetConfigInt("Performance.IdlePrewarm.DelayMs", 10000)));
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                // Wait for the user to stop interacting before priming the next page query.
+                while (!token.IsCancellationRequested)
+                {
+                    if (!_isActive || IsBusy || !HasValidModsPath)
+                    {
+                        return;
+                    }
+
+                    if (DateTimeOffset.UtcNow - _uiActivityMonitor.LastInteractionUtc >= idleDelay)
+                    {
+                        _cacheWarmupController.QueueModsQueryIdlePrewarm(nextPageQuery, "workspace-idle");
+                        return;
+                    }
+
+                    await Task.Delay(250, token).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }, token);
+    }
+
+    private void CancelQueryPrime()
+    {
+        try
+        {
+            _queryPrimeCts?.Cancel();
+        }
+        catch
+        {
+        }
+        finally
+        {
+            _queryPrimeCts?.Dispose();
+            _queryPrimeCts = null;
+        }
+    }
+
+    private ModItemCatalogQuery BuildQuery(int pageIndex)
+    {
+        return new ModItemCatalogQuery
+        {
+            ModsRoot = _filter.ModsRoot,
+            SearchQuery = _filter.SearchQuery,
+            EntityKindFilter = _filter.PackageTypeFilter,
+            SubTypeFilter = _filter.ScopeFilter,
+            SortBy = _filter.SortBy,
+            PageIndex = Math.Max(1, pageIndex),
+            PageSize = 50
+        };
+    }
+
+    private bool GetConfigBool(string key, bool defaultValue)
+    {
+        if (_configurationProvider is null)
+        {
+            return defaultValue;
+        }
+
+        return _configurationProvider.GetConfigurationAsync<bool?>(key).GetAwaiter().GetResult() ?? defaultValue;
+    }
+
+    private int GetConfigInt(string key, int defaultValue)
+    {
+        if (_configurationProvider is null)
+        {
+            return defaultValue;
+        }
+
+        return _configurationProvider.GetConfigurationAsync<int?>(key).GetAwaiter().GetResult() ?? defaultValue;
     }
 
     private MainWindowCacheWarmupHost CreateCacheWarmupHost()

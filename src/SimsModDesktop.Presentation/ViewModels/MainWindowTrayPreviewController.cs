@@ -301,7 +301,7 @@ public sealed class MainWindowTrayPreviewController
             SetTrayPreviewSummary(host, result.Summary);
             SetTrayPreviewPage(host, result.Page, result.LoadedPageCount);
 
-            host.AppendLog($"[preview] trayPath={input.TrayPath}");
+            host.AppendLog($"[preview] previewSource={input.PreviewSource.Kind}:{input.PreviewSource.SourceKey}");
             if (!string.IsNullOrWhiteSpace(input.AuthorFilter))
             {
                 host.AppendLog($"[preview] authorFilter={input.AuthorFilter}");

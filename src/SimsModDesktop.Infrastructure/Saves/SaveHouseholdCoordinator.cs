@@ -11,32 +11,30 @@ public sealed class SaveHouseholdCoordinator : ISaveHouseholdCoordinator
     private readonly ISaveCatalogService _saveCatalogService;
     private readonly ISaveHouseholdReader _saveHouseholdReader;
     private readonly IHouseholdTrayExporter _householdTrayExporter;
-    private readonly ISavePreviewCacheStore _savePreviewCacheStore;
-    private readonly ISavePreviewCacheBuilder _savePreviewCacheBuilder;
+    private readonly ISavePreviewDescriptorStore _savePreviewDescriptorStore;
+    private readonly ISavePreviewDescriptorBuilder _savePreviewDescriptorBuilder;
+    private readonly ISavePreviewArtifactProvider _savePreviewArtifactProvider;
     private readonly ITrayMetadataService _trayMetadataService;
     private readonly ISimsTrayPreviewService _simsTrayPreviewService;
-    private readonly IConfigurationProvider _configurationProvider;
-    private readonly Dictionary<string, SaveHouseholdSnapshot> _snapshotCache =
-        new(StringComparer.OrdinalIgnoreCase);
 
     public SaveHouseholdCoordinator(
         ISaveCatalogService saveCatalogService,
         ISaveHouseholdReader saveHouseholdReader,
         IHouseholdTrayExporter householdTrayExporter,
-        ISavePreviewCacheStore savePreviewCacheStore,
-        ISavePreviewCacheBuilder savePreviewCacheBuilder,
+        ISavePreviewDescriptorStore savePreviewDescriptorStore,
+        ISavePreviewDescriptorBuilder savePreviewDescriptorBuilder,
+        ISavePreviewArtifactProvider savePreviewArtifactProvider,
         ITrayMetadataService trayMetadataService,
-        ISimsTrayPreviewService simsTrayPreviewService,
-        IConfigurationProvider configurationProvider)
+        ISimsTrayPreviewService simsTrayPreviewService)
     {
         _saveCatalogService = saveCatalogService;
         _saveHouseholdReader = saveHouseholdReader;
         _householdTrayExporter = householdTrayExporter;
-        _savePreviewCacheStore = savePreviewCacheStore;
-        _savePreviewCacheBuilder = savePreviewCacheBuilder;
+        _savePreviewDescriptorStore = savePreviewDescriptorStore;
+        _savePreviewDescriptorBuilder = savePreviewDescriptorBuilder;
+        _savePreviewArtifactProvider = savePreviewArtifactProvider;
         _trayMetadataService = trayMetadataService;
         _simsTrayPreviewService = simsTrayPreviewService;
-        _configurationProvider = configurationProvider;
     }
 
     public IReadOnlyList<SaveFileEntry> GetSaveFiles(string savesRootPath)
@@ -52,7 +50,6 @@ public sealed class SaveHouseholdCoordinator : ISaveHouseholdCoordinator
         try
         {
             snapshot = _saveHouseholdReader.Load(saveFilePath);
-            _snapshotCache[NormalizePath(saveFilePath)] = snapshot;
             return true;
         }
         catch (Exception ex)
@@ -62,45 +59,49 @@ public sealed class SaveHouseholdCoordinator : ISaveHouseholdCoordinator
         }
     }
 
-    public bool TryGetPreviewCacheManifest(string saveFilePath, out SavePreviewCacheManifest manifest)
+    public bool TryGetPreviewDescriptor(string saveFilePath, out SavePreviewDescriptorManifest manifest)
     {
-        return _savePreviewCacheStore.TryLoad(saveFilePath, out manifest);
+        return _savePreviewDescriptorStore.TryLoadDescriptor(saveFilePath, out manifest);
     }
 
-    public bool IsPreviewCacheCurrent(string saveFilePath, SavePreviewCacheManifest manifest)
+    public bool IsPreviewDescriptorCurrent(string saveFilePath, SavePreviewDescriptorManifest manifest)
     {
         ArgumentNullException.ThrowIfNull(manifest);
-        return _savePreviewCacheStore.IsCurrent(saveFilePath, manifest);
+        return _savePreviewDescriptorStore.IsDescriptorCurrent(saveFilePath, manifest);
     }
 
-    public string GetPreviewCacheRoot(string saveFilePath)
+    public PreviewSourceRef GetPreviewSource(string saveFilePath)
     {
-        return _savePreviewCacheStore.GetCacheRootPath(saveFilePath);
+        return PreviewSourceRef.ForSaveDescriptor(NormalizePath(saveFilePath));
     }
 
-    public async Task<SavePreviewCacheBuildResult> BuildPreviewCacheAsync(
+    public async Task<SavePreviewDescriptorBuildResult> BuildPreviewDescriptorAsync(
         string saveFilePath,
-        IProgress<SavePreviewCacheBuildProgress>? progress = null,
+        IProgress<SavePreviewDescriptorBuildProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var round2ParallelEnabled = await _configurationProvider
-            .GetConfigurationAsync<bool?>("Performance.Round2.SavePreviewParallelEnabled", cancellationToken)
-            .ConfigureAwait(false);
-        var options = round2ParallelEnabled == false
-            ? new SavePreviewBuildOptions
-            {
-                WorkerCount = 1,
-                ContinueOnItemFailure = true
-            }
-            : null;
-        return await _savePreviewCacheBuilder
-            .BuildAsync(saveFilePath, options, progress, cancellationToken)
+        return await _savePreviewDescriptorBuilder
+            .BuildAsync(saveFilePath, progress, cancellationToken)
             .ConfigureAwait(false);
     }
 
-    public void ClearPreviewCache(string saveFilePath)
+    public Task<string?> EnsurePreviewArtifactAsync(
+        string saveFilePath,
+        string householdKey,
+        string purpose,
+        CancellationToken cancellationToken = default)
     {
-        _savePreviewCacheStore.Clear(saveFilePath);
+        return _savePreviewArtifactProvider.EnsureBundleAsync(
+            saveFilePath,
+            householdKey,
+            purpose,
+            cancellationToken);
+    }
+
+    public void ClearPreviewData(string saveFilePath)
+    {
+        _savePreviewDescriptorStore.ClearDescriptor(saveFilePath);
+        _savePreviewArtifactProvider.Clear(saveFilePath);
     }
 
     public SaveHouseholdExportResult Export(SaveHouseholdExportRequest request)
@@ -133,7 +134,7 @@ public sealed class SaveHouseholdCoordinator : ISaveHouseholdCoordinator
             var summary = _simsTrayPreviewService
                 .BuildSummaryAsync(new SimsTrayPreviewRequest
                 {
-                    TrayPath = result.ExportDirectory
+                    PreviewSource = PreviewSourceRef.ForTrayRoot(result.ExportDirectory)
                 })
                 .GetAwaiter()
                 .GetResult();

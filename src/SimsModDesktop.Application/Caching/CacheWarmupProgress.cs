@@ -4,7 +4,9 @@ public enum CacheWarmupDomain
 {
     ModsCatalog,
     TrayDependency,
-    TrayPreviewMetadata
+    TrayPreviewMetadata,
+    SavePreviewDescriptor,
+    SavePreviewArtifact
 }
 
 public sealed record CacheWarmupProgress

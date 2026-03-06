@@ -7,6 +7,6 @@ public interface ITrayPreviewCoordinator
     bool TryGetCached(TrayPreviewInput input, out TrayPreviewLoadResult result);
     Task<TrayPreviewLoadResult> LoadAsync(TrayPreviewInput input, CancellationToken cancellationToken = default);
     Task<TrayPreviewPageResult> LoadPageAsync(int requestedPageIndex, CancellationToken cancellationToken = default);
-    void Invalidate(string? trayRootPath = null);
+    void Invalidate(PreviewSourceRef? source = null);
     void Reset();
 }

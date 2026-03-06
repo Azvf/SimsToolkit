@@ -1,8 +1,10 @@
+using SimsModDesktop.Application.TrayPreview;
+
 namespace SimsModDesktop.Application.Requests;
 
 public sealed record TrayPreviewInput
 {
-    public required string TrayPath { get; init; }
+    public required PreviewSourceRef PreviewSource { get; init; }
     public int PageSize { get; init; } = 50;
     public string PresetTypeFilter { get; init; } = "All";
     public string BuildSizeFilter { get; init; } = "All";

@@ -1,3 +1,4 @@
+using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Application.Requests;
 
 namespace SimsModDesktop.Presentation.ViewModels.Preview;
@@ -18,9 +19,9 @@ public sealed class SavePreviewFilterViewModel : TrayLikePreviewFilterViewModel
         PresetTypeFilter = "Household";
     }
 
-    public override TrayPreviewInput BuildInput(string trayPath)
+    public override TrayPreviewInput BuildInput(PreviewSourceRef previewSource)
     {
-        var input = base.BuildInput(trayPath);
+        var input = base.BuildInput(previewSource);
         return input with
         {
             PresetTypeFilter = "Household",

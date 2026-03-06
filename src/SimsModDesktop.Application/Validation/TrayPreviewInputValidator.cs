@@ -1,3 +1,4 @@
+using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Application.Requests;
 
 namespace SimsModDesktop.Application.Validation;
@@ -21,15 +22,23 @@ public sealed class TrayPreviewInputValidator : IActionInputValidator<TrayPrevie
     {
         error = string.Empty;
 
-        if (string.IsNullOrWhiteSpace(input.TrayPath))
+        if (input.PreviewSource is null || string.IsNullOrWhiteSpace(input.PreviewSource.SourceKey))
         {
-            error = "TrayPath is required for tray preview.";
+            error = "Preview source is required for tray preview.";
             return false;
         }
 
-        if (!Directory.Exists(input.TrayPath))
+        if (input.PreviewSource.Kind == PreviewSourceKind.TrayRoot &&
+            !Directory.Exists(input.PreviewSource.SourceKey))
         {
-            error = "TrayPath does not exist.";
+            error = "Tray root does not exist.";
+            return false;
+        }
+
+        if (input.PreviewSource.Kind == PreviewSourceKind.SaveDescriptor &&
+            !File.Exists(input.PreviewSource.SourceKey))
+        {
+            error = "Save file does not exist.";
             return false;
         }
 

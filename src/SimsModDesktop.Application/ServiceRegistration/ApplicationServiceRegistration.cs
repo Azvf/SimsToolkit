@@ -4,7 +4,6 @@ using SimsModDesktop.Application.Mods;
 using SimsModDesktop.Application.Modules;
 using SimsModDesktop.Application.Recovery;
 using SimsModDesktop.Application.Requests;
-using SimsModDesktop.Application.Saves;
 using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Application.TextureCompression;
 using SimsModDesktop.Application.TrayPreview;
@@ -40,7 +39,6 @@ public static class ApplicationServiceRegistration
         services.AddSingleton<IModPackageTextureAnalysisService, ModPackageTextureAnalysisService>();
 
         services.AddSingleton<IOperationRecoveryCoordinator, OperationRecoveryCoordinator>();
-        services.AddSingleton<ISavePreviewCacheBuilder, SavePreviewCacheBuilder>();
         services.AddSingleton<IMainWindowSettingsProjection, MainWindowSettingsProjection>();
 
         return services;

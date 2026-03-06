@@ -5,6 +5,7 @@ using System.Globalization;
 using SimsModDesktop.Application.Configuration;
 using SimsModDesktop.Application.Caching;
 using SimsModDesktop.Application.Mods;
+using SimsModDesktop.Application.Saves;
 using SimsModDesktop.PackageCore;
 using SimsModDesktop.Presentation.Diagnostics;
 using SimsModDesktop.TrayDependencyEngine;
@@ -13,12 +14,20 @@ namespace SimsModDesktop.Presentation.ViewModels;
 
 public sealed class MainWindowCacheWarmupController
 {
+    private const string TrayDependencySnapshotPrewarmJobType = "TrayDependencySnapshotPrewarm";
+    private const string ModCatalogQueryPrimeJobType = "ModCatalogQueryPrime";
+    private const string SavePreviewDescriptorPrimeJobType = "SavePreviewDescriptorPrime";
+    private const string SavePreviewArtifactPrimeJobType = "SavePreviewArtifactPrime";
+    private const string SourceKeyScopeSeparator = "\u001F";
     private readonly IModPackageInventoryService _inventoryService;
     private readonly IModItemIndexScheduler _indexScheduler;
+    private readonly IModItemCatalogService? _modItemCatalogService;
+    private readonly ISaveHouseholdCoordinator? _saveHouseholdCoordinator;
     private readonly IPackageIndexCache _packageIndexCache;
     private readonly ILogger<MainWindowCacheWarmupController> _logger;
     private readonly IPathIdentityResolver _pathIdentityResolver;
     private readonly IConfigurationProvider? _configurationProvider;
+    private readonly IBackgroundCachePrewarmCoordinator? _backgroundCachePrewarmCoordinator;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _rootGates = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, ModPackageInventoryRefreshResult> _inventoryResults = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, InventoryRefreshTaskSession> _inventoryRefreshTasks = new(StringComparer.OrdinalIgnoreCase);
@@ -26,24 +35,34 @@ public sealed class MainWindowCacheWarmupController
     private readonly ConcurrentDictionary<string, PackageIndexSnapshot> _trayReadySnapshots = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, WarmupTaskSession<ModPackageInventoryRefreshResult>> _modsWarmupTasks = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, WarmupTaskSession<PackageIndexSnapshot>> _trayWarmupTasks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, WarmupTaskSession<SavePreviewDescriptorBuildResult>> _saveDescriptorWarmupTasks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, WarmupTaskSession<string?>> _saveArtifactWarmupTasks = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, FileSystemWatcher> _rootWatchers = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, WarmupStateSnapshot> _modsWarmupStates = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, WarmupStateSnapshot> _trayWarmupStates = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, WarmupStateSnapshot> _saveDescriptorWarmupStates = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, WarmupStateSnapshot> _saveArtifactWarmupStates = new(StringComparer.OrdinalIgnoreCase);
 
     public MainWindowCacheWarmupController(
         IModPackageInventoryService inventoryService,
         IModItemIndexScheduler indexScheduler,
         IPackageIndexCache packageIndexCache,
         ILogger<MainWindowCacheWarmupController> logger,
+        IModItemCatalogService? modItemCatalogService = null,
+        ISaveHouseholdCoordinator? saveHouseholdCoordinator = null,
         IPathIdentityResolver? pathIdentityResolver = null,
-        IConfigurationProvider? configurationProvider = null)
+        IConfigurationProvider? configurationProvider = null,
+        IBackgroundCachePrewarmCoordinator? backgroundCachePrewarmCoordinator = null)
     {
         _inventoryService = inventoryService;
         _indexScheduler = indexScheduler;
+        _modItemCatalogService = modItemCatalogService;
+        _saveHouseholdCoordinator = saveHouseholdCoordinator;
         _packageIndexCache = packageIndexCache;
         _logger = logger;
         _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
         _configurationProvider = configurationProvider;
+        _backgroundCachePrewarmCoordinator = backgroundCachePrewarmCoordinator;
     }
 
     internal enum WarmupRunState
@@ -460,6 +479,425 @@ public sealed class MainWindowCacheWarmupController
         }
     }
 
+    internal bool QueueTrayDependencyIdlePrewarm(string modsRootPath, string trigger)
+    {
+        if (_backgroundCachePrewarmCoordinator is null || string.IsNullOrWhiteSpace(modsRootPath))
+        {
+            return false;
+        }
+
+        var normalizedRoot = ResolveDirectoryPath(modsRootPath);
+        if (string.IsNullOrWhiteSpace(normalizedRoot) || !Directory.Exists(normalizedRoot))
+        {
+            return false;
+        }
+
+        var key = BuildTrayPrewarmJobKey(normalizedRoot);
+        var queued = _backgroundCachePrewarmCoordinator.TryQueue(
+            key,
+            cancellationToken => EnsureTrayWorkspaceReadyAsync(
+                normalizedRoot,
+                CreateDetachedWarmupHost("traycache", trigger),
+                cancellationToken),
+            $"Tray dependency snapshot prewarm for {normalizedRoot}");
+        if (queued)
+        {
+            _logger.LogInformation(
+                "traycache.prewarm.queue modsRoot={ModsRoot} trigger={Trigger}",
+                normalizedRoot,
+                trigger);
+        }
+
+        return queued;
+    }
+
+    internal bool QueueModsQueryIdlePrewarm(ModItemCatalogQuery query, string trigger)
+    {
+        if (_backgroundCachePrewarmCoordinator is null ||
+            _modItemCatalogService is null ||
+            string.IsNullOrWhiteSpace(query.ModsRoot))
+        {
+            return false;
+        }
+
+        var normalizedQuery = NormalizeModCatalogQuery(query);
+        if (string.IsNullOrWhiteSpace(normalizedQuery.ModsRoot) || !Directory.Exists(normalizedQuery.ModsRoot))
+        {
+            return false;
+        }
+
+        var key = BuildModCatalogPrewarmJobKey(normalizedQuery);
+        var queued = _backgroundCachePrewarmCoordinator.TryQueue(
+            key,
+            cancellationToken => PrimeModCatalogQueryAsync(normalizedQuery, trigger, cancellationToken),
+            $"Mods catalog query prewarm for {normalizedQuery.ModsRoot}");
+        if (queued)
+        {
+            _logger.LogInformation(
+                "modquery.prewarm.queue modsRoot={ModsRoot} trigger={Trigger} fingerprint={Fingerprint}",
+                normalizedQuery.ModsRoot,
+                trigger,
+                BuildModQueryFingerprint(normalizedQuery));
+        }
+
+        return queued;
+    }
+
+    internal bool TryGetModsQueryPrewarmState(
+        ModItemCatalogQuery query,
+        out BackgroundPrewarmJobState? state)
+    {
+        state = null;
+        if (_backgroundCachePrewarmCoordinator is null || string.IsNullOrWhiteSpace(query.ModsRoot))
+        {
+            return false;
+        }
+
+        var normalizedQuery = NormalizeModCatalogQuery(query);
+        if (string.IsNullOrWhiteSpace(normalizedQuery.ModsRoot))
+        {
+            return false;
+        }
+
+        return _backgroundCachePrewarmCoordinator.TryGetState(
+            BuildModCatalogPrewarmJobKey(normalizedQuery),
+            out state);
+    }
+
+    internal bool TryGetTrayPrewarmState(
+        string modsRootPath,
+        out BackgroundPrewarmJobState? state)
+    {
+        state = null;
+        if (_backgroundCachePrewarmCoordinator is null || string.IsNullOrWhiteSpace(modsRootPath))
+        {
+            return false;
+        }
+
+        var normalizedRoot = ResolveDirectoryPath(modsRootPath);
+        return _backgroundCachePrewarmCoordinator.TryGetState(
+            BuildTrayPrewarmJobKey(normalizedRoot),
+            out state);
+    }
+
+    internal async Task<SavePreviewDescriptorBuildResult> EnsureSavePreviewDescriptorReadyAsync(
+        string saveFilePath,
+        MainWindowCacheWarmupHost host,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(saveFilePath);
+        ArgumentNullException.ThrowIfNull(host);
+        ArgumentNullException.ThrowIfNull(_saveHouseholdCoordinator);
+
+        var normalizedSavePath = ResolveFilePath(saveFilePath);
+        if (_saveHouseholdCoordinator.TryGetPreviewDescriptor(normalizedSavePath, out var currentManifest) &&
+            _saveHouseholdCoordinator.IsPreviewDescriptorCurrent(normalizedSavePath, currentManifest))
+        {
+            var readyProgress = new CacheWarmupProgress
+            {
+                Domain = CacheWarmupDomain.SavePreviewDescriptor,
+                Stage = "ready",
+                Percent = 100,
+                Current = currentManifest.ReadyHouseholdCount,
+                Total = currentManifest.TotalHouseholdCount,
+                Detail = "Save preview descriptor is ready.",
+                IsBlocking = true
+            };
+            host.ReportProgress(readyProgress);
+            _saveDescriptorWarmupStates[normalizedSavePath] = new WarmupStateSnapshot
+            {
+                State = WarmupRunState.Completed,
+                Progress = readyProgress,
+                Message = "Warmup completed."
+            };
+
+            return new SavePreviewDescriptorBuildResult
+            {
+                Succeeded = true,
+                Manifest = currentManifest
+            };
+        }
+
+        var versionToken = BuildSaveVersionToken(normalizedSavePath);
+        var warmupKey = BuildSaveDescriptorWarmupKey(normalizedSavePath, versionToken);
+        var rootGate = GetRootGate(normalizedSavePath);
+        WarmupTaskSession<SavePreviewDescriptorBuildResult> session;
+        await rootGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_saveDescriptorWarmupTasks.TryGetValue(warmupKey, out var existingSession) &&
+                existingSession.State == WarmupRunState.Running &&
+                !existingSession.Task.IsCompleted)
+            {
+                session = existingSession;
+            }
+            else
+            {
+                session = CreateSaveDescriptorWarmupTaskSession(normalizedSavePath, versionToken);
+                _saveDescriptorWarmupTasks[warmupKey] = session;
+            }
+        }
+        finally
+        {
+            rootGate.Release();
+        }
+
+        var hostHandle = session.AttachHost(host);
+        try
+        {
+            return await session.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            session.DetachHost(hostHandle);
+        }
+    }
+
+    internal async Task<SavePreviewDescriptorBuildResult?> AttachToInflightSavePreviewDescriptorWarmupIfAny(
+        string saveFilePath,
+        MainWindowCacheWarmupHost host,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(saveFilePath);
+        ArgumentNullException.ThrowIfNull(host);
+
+        var normalizedSavePath = ResolveFilePath(saveFilePath);
+        var session = _saveDescriptorWarmupTasks.Values
+            .Where(candidate =>
+                string.Equals(candidate.ModsRoot, normalizedSavePath, StringComparison.OrdinalIgnoreCase) &&
+                candidate.State == WarmupRunState.Running &&
+                !candidate.Task.IsCompleted)
+            .OrderByDescending(candidate => candidate.UpdatedAtUtc)
+            .FirstOrDefault();
+        if (session is null)
+        {
+            return null;
+        }
+
+        var hostHandle = session.AttachHost(host);
+        try
+        {
+            return await session.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            session.DetachHost(hostHandle);
+        }
+    }
+
+    internal bool QueueSavePreviewDescriptorIdlePrewarm(string saveFilePath, string trigger)
+    {
+        if (_backgroundCachePrewarmCoordinator is null ||
+            _saveHouseholdCoordinator is null ||
+            string.IsNullOrWhiteSpace(saveFilePath))
+        {
+            return false;
+        }
+
+        var normalizedSavePath = ResolveFilePath(saveFilePath);
+        if (string.IsNullOrWhiteSpace(normalizedSavePath) || !File.Exists(normalizedSavePath))
+        {
+            return false;
+        }
+
+        var queued = _backgroundCachePrewarmCoordinator.TryQueue(
+            BuildSaveDescriptorPrewarmJobKey(normalizedSavePath),
+            cancellationToken => EnsureSavePreviewDescriptorReadyAsync(
+                normalizedSavePath,
+                CreateDetachedWarmupHost("savepreview.descriptor", trigger),
+                cancellationToken),
+            $"Save preview descriptor prewarm for {normalizedSavePath}");
+        if (queued)
+        {
+            _logger.LogInformation(
+                "savepreview.descriptor.prewarm.queue savePath={SavePath} trigger={Trigger}",
+                normalizedSavePath,
+                trigger);
+        }
+
+        return queued;
+    }
+
+    internal async Task<string?> EnsureSavePreviewArtifactReadyAsync(
+        string saveFilePath,
+        string householdKey,
+        string purpose,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(saveFilePath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(householdKey);
+        ArgumentNullException.ThrowIfNull(_saveHouseholdCoordinator);
+
+        var normalizedSavePath = ResolveFilePath(saveFilePath);
+        var normalizedHouseholdKey = householdKey.Trim();
+        var versionToken = BuildSaveVersionToken(normalizedSavePath);
+        var warmupKey = BuildSaveArtifactWarmupKey(normalizedSavePath, normalizedHouseholdKey, versionToken);
+        var rootGate = GetRootGate(normalizedSavePath + SourceKeyScopeSeparator + normalizedHouseholdKey);
+        WarmupTaskSession<string?> session;
+        await rootGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_saveArtifactWarmupTasks.TryGetValue(warmupKey, out var existingSession) &&
+                existingSession.State == WarmupRunState.Running &&
+                !existingSession.Task.IsCompleted)
+            {
+                session = existingSession;
+            }
+            else
+            {
+                session = CreateSaveArtifactWarmupTaskSession(normalizedSavePath, normalizedHouseholdKey, purpose, versionToken);
+                _saveArtifactWarmupTasks[warmupKey] = session;
+            }
+        }
+        finally
+        {
+            rootGate.Release();
+        }
+
+        return await session.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async Task<string?> AttachToInflightSavePreviewArtifactWarmupIfAny(
+        string saveFilePath,
+        string householdKey,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(saveFilePath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(householdKey);
+
+        var normalizedSavePath = ResolveFilePath(saveFilePath);
+        var normalizedHouseholdKey = householdKey.Trim();
+        var session = _saveArtifactWarmupTasks.Values
+            .Where(candidate =>
+                string.Equals(candidate.ModsRoot, BuildSaveArtifactSessionSource(normalizedSavePath, normalizedHouseholdKey), StringComparison.OrdinalIgnoreCase) &&
+                candidate.State == WarmupRunState.Running &&
+                !candidate.Task.IsCompleted)
+            .OrderByDescending(candidate => candidate.UpdatedAtUtc)
+            .FirstOrDefault();
+        if (session is null)
+        {
+            return null;
+        }
+
+        return await session.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    internal bool QueueSavePreviewArtifactIdlePrewarm(
+        string saveFilePath,
+        string householdKey,
+        string trigger)
+    {
+        if (_backgroundCachePrewarmCoordinator is null ||
+            _saveHouseholdCoordinator is null ||
+            string.IsNullOrWhiteSpace(saveFilePath) ||
+            string.IsNullOrWhiteSpace(householdKey))
+        {
+            return false;
+        }
+
+        var normalizedSavePath = ResolveFilePath(saveFilePath);
+        var normalizedHouseholdKey = householdKey.Trim();
+        if (string.IsNullOrWhiteSpace(normalizedSavePath) || !File.Exists(normalizedSavePath))
+        {
+            return false;
+        }
+
+        var queued = _backgroundCachePrewarmCoordinator.TryQueue(
+            BuildSaveArtifactPrewarmJobKey(normalizedSavePath, normalizedHouseholdKey),
+            cancellationToken => EnsureSavePreviewArtifactReadyAsync(
+                normalizedSavePath,
+                normalizedHouseholdKey,
+                trigger,
+                cancellationToken),
+            $"Save preview artifact prewarm for {normalizedSavePath}:{normalizedHouseholdKey}");
+        if (queued)
+        {
+            _logger.LogInformation(
+                "savepreview.artifact.prewarm.queue savePath={SavePath} householdKey={HouseholdKey} trigger={Trigger}",
+                normalizedSavePath,
+                normalizedHouseholdKey,
+                trigger);
+        }
+
+        return queued;
+    }
+
+    internal bool TryGetSavePreviewDescriptorPrewarmState(
+        string saveFilePath,
+        out BackgroundPrewarmJobState? state)
+    {
+        state = null;
+        if (_backgroundCachePrewarmCoordinator is null || string.IsNullOrWhiteSpace(saveFilePath))
+        {
+            return false;
+        }
+
+        return _backgroundCachePrewarmCoordinator.TryGetState(
+            BuildSaveDescriptorPrewarmJobKey(ResolveFilePath(saveFilePath)),
+            out state);
+    }
+
+    internal bool TryGetSavePreviewArtifactPrewarmState(
+        string saveFilePath,
+        string householdKey,
+        out BackgroundPrewarmJobState? state)
+    {
+        state = null;
+        if (_backgroundCachePrewarmCoordinator is null ||
+            string.IsNullOrWhiteSpace(saveFilePath) ||
+            string.IsNullOrWhiteSpace(householdKey))
+        {
+            return false;
+        }
+
+        return _backgroundCachePrewarmCoordinator.TryGetState(
+            BuildSaveArtifactPrewarmJobKey(ResolveFilePath(saveFilePath), householdKey.Trim()),
+            out state);
+    }
+
+    internal void CancelSavePreviewWarmup(string saveFilePath, string reason)
+    {
+        if (string.IsNullOrWhiteSpace(saveFilePath))
+        {
+            return;
+        }
+
+        var normalizedSavePath = ResolveFilePath(saveFilePath);
+        CancelSaveSessions(normalizedSavePath, reason);
+    }
+
+    internal async Task<PackageIndexSnapshot?> AttachToInflightTrayWarmupIfAny(
+        string modsRootPath,
+        MainWindowCacheWarmupHost host,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(modsRootPath);
+        ArgumentNullException.ThrowIfNull(host);
+
+        var normalizedRoot = ResolveDirectoryPath(modsRootPath);
+        var session = _trayWarmupTasks.Values
+            .Where(candidate =>
+                string.Equals(candidate.ModsRoot, normalizedRoot, StringComparison.OrdinalIgnoreCase) &&
+                candidate.State == WarmupRunState.Running &&
+                !candidate.Task.IsCompleted)
+            .OrderByDescending(candidate => candidate.InventoryVersion)
+            .FirstOrDefault();
+        if (session is null)
+        {
+            return null;
+        }
+
+        var hostHandle = session.AttachHost(host);
+        try
+        {
+            return await session.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            session.DetachHost(hostHandle);
+        }
+    }
+
     internal void PauseModsWarmup(string modsRootPath, string reason)
     {
         PauseWarmup(CacheWarmupDomain.ModsCatalog, modsRootPath, reason);
@@ -818,6 +1256,65 @@ public sealed class MainWindowCacheWarmupController
         return session;
     }
 
+    private WarmupTaskSession<SavePreviewDescriptorBuildResult> CreateSaveDescriptorWarmupTaskSession(
+        string normalizedSavePath,
+        string versionToken)
+    {
+        var session = new WarmupTaskSession<SavePreviewDescriptorBuildResult>
+        {
+            WarmupKey = BuildSaveDescriptorWarmupKey(normalizedSavePath, versionToken),
+            ModsRoot = normalizedSavePath,
+            InventoryVersion = 0,
+            Domain = CacheWarmupDomain.SavePreviewDescriptor,
+            WorkerCts = new CancellationTokenSource(),
+            Task = Task.FromResult(new SavePreviewDescriptorBuildResult())
+        };
+        session.MarkRunning("Warmup running.");
+        _saveDescriptorWarmupStates[normalizedSavePath] = session.ToStateSnapshot();
+        session.Task = RunSaveDescriptorWarmupSessionAsync(normalizedSavePath, session);
+        _ = session.Task.ContinueWith(
+            _ =>
+            {
+                session.WorkerCts.Dispose();
+                _saveDescriptorWarmupStates[normalizedSavePath] = session.ToStateSnapshot();
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+        return session;
+    }
+
+    private WarmupTaskSession<string?> CreateSaveArtifactWarmupTaskSession(
+        string normalizedSavePath,
+        string householdKey,
+        string purpose,
+        string versionToken)
+    {
+        var sessionSource = BuildSaveArtifactSessionSource(normalizedSavePath, householdKey);
+        var session = new WarmupTaskSession<string?>
+        {
+            WarmupKey = BuildSaveArtifactWarmupKey(normalizedSavePath, householdKey, versionToken),
+            ModsRoot = sessionSource,
+            InventoryVersion = 0,
+            Domain = CacheWarmupDomain.SavePreviewArtifact,
+            WorkerCts = new CancellationTokenSource(),
+            Task = Task.FromResult<string?>(null)
+        };
+        session.MarkRunning("Warmup running.");
+        _saveArtifactWarmupStates[sessionSource] = session.ToStateSnapshot();
+        session.Task = RunSaveArtifactWarmupSessionAsync(normalizedSavePath, householdKey, purpose, session);
+        _ = session.Task.ContinueWith(
+            _ =>
+            {
+                session.WorkerCts.Dispose();
+                _saveArtifactWarmupStates[sessionSource] = session.ToStateSnapshot();
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+        return session;
+    }
+
     private async Task<ModPackageInventoryRefreshResult> RunModsWarmupSessionAsync(
         string normalizedRoot,
         ModPackageInventoryRefreshResult inventory,
@@ -964,6 +1461,134 @@ public sealed class MainWindowCacheWarmupController
         }
     }
 
+    private async Task<SavePreviewDescriptorBuildResult> RunSaveDescriptorWarmupSessionAsync(
+        string normalizedSavePath,
+        WarmupTaskSession<SavePreviewDescriptorBuildResult> session)
+    {
+        try
+        {
+            var result = await _saveHouseholdCoordinator!
+                .BuildPreviewDescriptorAsync(
+                    normalizedSavePath,
+                    new Progress<SavePreviewDescriptorBuildProgress>(progress =>
+                    {
+                        session.PublishProgress(new CacheWarmupProgress
+                        {
+                            Domain = CacheWarmupDomain.SavePreviewDescriptor,
+                            Stage = "build",
+                            Percent = progress.Percent,
+                            Current = progress.Percent,
+                            Total = 100,
+                            Detail = string.IsNullOrWhiteSpace(progress.Detail)
+                                ? "Preparing save preview descriptor..."
+                                : progress.Detail,
+                            IsBlocking = true
+                        });
+                        _saveDescriptorWarmupStates[normalizedSavePath] = session.ToStateSnapshot();
+                    }),
+                    session.WorkerCts.Token)
+                .ConfigureAwait(false);
+            if (!result.Succeeded)
+            {
+                throw new InvalidOperationException(result.Error ?? "Failed to build save preview descriptor.");
+            }
+
+            var manifest = result.Manifest ?? new SavePreviewDescriptorManifest();
+            var readyProgress = new CacheWarmupProgress
+            {
+                Domain = CacheWarmupDomain.SavePreviewDescriptor,
+                Stage = "ready",
+                Percent = 100,
+                Current = manifest.ReadyHouseholdCount,
+                Total = manifest.TotalHouseholdCount,
+                Detail = "Save preview descriptor is ready.",
+                IsBlocking = true
+            };
+            session.PublishProgress(readyProgress);
+            session.MarkCompleted(readyProgress, "Warmup completed.");
+            _saveDescriptorWarmupStates[normalizedSavePath] = session.ToStateSnapshot();
+            return result;
+        }
+        catch (OperationCanceledException) when (session.WorkerCts.IsCancellationRequested)
+        {
+            session.MarkPaused("Warmup paused.");
+            session.PublishProgress(BuildPausedProgress(
+                CacheWarmupDomain.SavePreviewDescriptor,
+                session.LastProgress,
+                "Save preview descriptor warmup paused."));
+            _saveDescriptorWarmupStates[normalizedSavePath] = session.ToStateSnapshot();
+            throw;
+        }
+        catch (Exception ex)
+        {
+            session.MarkFailed(ex, "Warmup failed.");
+            _saveDescriptorWarmupStates[normalizedSavePath] = session.ToStateSnapshot();
+            throw;
+        }
+    }
+
+    private async Task<string?> RunSaveArtifactWarmupSessionAsync(
+        string normalizedSavePath,
+        string householdKey,
+        string purpose,
+        WarmupTaskSession<string?> session)
+    {
+        var sessionSource = BuildSaveArtifactSessionSource(normalizedSavePath, householdKey);
+        try
+        {
+            session.PublishProgress(new CacheWarmupProgress
+            {
+                Domain = CacheWarmupDomain.SavePreviewArtifact,
+                Stage = "prepare",
+                Percent = 0,
+                Current = 0,
+                Total = 1,
+                Detail = "Preparing save preview artifact...",
+                IsBlocking = false
+            });
+            _saveArtifactWarmupStates[sessionSource] = session.ToStateSnapshot();
+            _ = await EnsureSavePreviewDescriptorReadyAsync(
+                normalizedSavePath,
+                CreateDetachedWarmupHost("savepreview.descriptor", purpose),
+                session.WorkerCts.Token).ConfigureAwait(false);
+            var artifactRoot = await _saveHouseholdCoordinator!
+                .EnsurePreviewArtifactAsync(normalizedSavePath, householdKey, purpose, session.WorkerCts.Token)
+                .ConfigureAwait(false);
+            var readyProgress = new CacheWarmupProgress
+            {
+                Domain = CacheWarmupDomain.SavePreviewArtifact,
+                Stage = "ready",
+                Percent = 100,
+                Current = string.IsNullOrWhiteSpace(artifactRoot) ? 0 : 1,
+                Total = 1,
+                Detail = string.IsNullOrWhiteSpace(artifactRoot)
+                    ? "Save preview artifact is unavailable."
+                    : "Save preview artifact is ready.",
+                IsBlocking = false
+            };
+            session.PublishProgress(readyProgress);
+            session.MarkCompleted(readyProgress, "Warmup completed.");
+            _saveArtifactWarmupStates[sessionSource] = session.ToStateSnapshot();
+            return artifactRoot;
+        }
+        catch (OperationCanceledException) when (session.WorkerCts.IsCancellationRequested)
+        {
+            session.MarkPaused("Warmup paused.");
+            session.PublishProgress(BuildPausedProgress(
+                CacheWarmupDomain.SavePreviewArtifact,
+                session.LastProgress,
+                "Save preview artifact warmup paused."));
+            _saveArtifactWarmupStates[sessionSource] = session.ToStateSnapshot();
+            throw;
+        }
+        catch (Exception ex)
+        {
+            session.MarkFailed(ex, "Warmup failed.");
+            _saveArtifactWarmupStates[sessionSource] = session.ToStateSnapshot();
+            throw;
+        }
+    }
+
     private static CacheWarmupProgress BuildPausedProgress(
         CacheWarmupDomain domain,
         CacheWarmupProgress lastProgress,
@@ -1047,6 +1672,8 @@ public sealed class MainWindowCacheWarmupController
 
     internal void Reset()
     {
+        _backgroundCachePrewarmCoordinator?.Reset("warmup-reset");
+
         foreach (var session in _inventoryRefreshTasks.Values)
         {
             SafeCancelToken(session.WorkerCts);
@@ -1062,14 +1689,28 @@ public sealed class MainWindowCacheWarmupController
             SafeCancelToken(session.WorkerCts);
         }
 
+        foreach (var session in _saveDescriptorWarmupTasks.Values)
+        {
+            SafeCancelToken(session.WorkerCts);
+        }
+
+        foreach (var session in _saveArtifactWarmupTasks.Values)
+        {
+            SafeCancelToken(session.WorkerCts);
+        }
+
         _inventoryResults.Clear();
         _inventoryRefreshTasks.Clear();
         _modsReadyInventoryVersions.Clear();
         _trayReadySnapshots.Clear();
         _modsWarmupTasks.Clear();
         _trayWarmupTasks.Clear();
+        _saveDescriptorWarmupTasks.Clear();
+        _saveArtifactWarmupTasks.Clear();
         _modsWarmupStates.Clear();
         _trayWarmupStates.Clear();
+        _saveDescriptorWarmupStates.Clear();
+        _saveArtifactWarmupStates.Clear();
         _rootGates.Clear();
         foreach (var watcher in _rootWatchers.Values)
         {
@@ -1290,6 +1931,15 @@ public sealed class MainWindowCacheWarmupController
 
     private void InvalidateRootCaches(string normalizedRoot, string reason, string changedPath)
     {
+        _backgroundCachePrewarmCoordinator?.CancelBySource(
+            normalizedRoot,
+            $"invalidate:{reason}",
+            TrayDependencySnapshotPrewarmJobType);
+        _backgroundCachePrewarmCoordinator?.CancelBySource(
+            normalizedRoot,
+            $"invalidate:{reason}",
+            ModCatalogQueryPrimeJobType);
+
         var invalidated = false;
         invalidated |= _inventoryResults.TryRemove(normalizedRoot, out _);
         invalidated |= _modsReadyInventoryVersions.TryRemove(normalizedRoot, out _);
@@ -1390,6 +2040,167 @@ public sealed class MainWindowCacheWarmupController
         return domain.ToString() + "|" + normalizedRoot + "|" + inventoryVersion.ToString(CultureInfo.InvariantCulture);
     }
 
+    private static BackgroundPrewarmJobKey BuildTrayPrewarmJobKey(string normalizedRoot)
+    {
+        return new BackgroundPrewarmJobKey
+        {
+            JobType = TrayDependencySnapshotPrewarmJobType,
+            SourceKey = normalizedRoot
+        };
+    }
+
+    private static BackgroundPrewarmJobKey BuildSaveDescriptorPrewarmJobKey(string normalizedSavePath)
+    {
+        return new BackgroundPrewarmJobKey
+        {
+            JobType = SavePreviewDescriptorPrimeJobType,
+            SourceKey = normalizedSavePath
+        };
+    }
+
+    private static BackgroundPrewarmJobKey BuildSaveArtifactPrewarmJobKey(string normalizedSavePath, string householdKey)
+    {
+        return new BackgroundPrewarmJobKey
+        {
+            JobType = SavePreviewArtifactPrimeJobType,
+            SourceKey = BuildSaveArtifactSessionSource(normalizedSavePath, householdKey)
+        };
+    }
+
+    private static string BuildSaveDescriptorWarmupKey(string normalizedSavePath, string versionToken)
+    {
+        return string.Join(
+            "|",
+            CacheWarmupDomain.SavePreviewDescriptor,
+            normalizedSavePath,
+            versionToken);
+    }
+
+    private static string BuildSaveArtifactWarmupKey(string normalizedSavePath, string householdKey, string versionToken)
+    {
+        return string.Join(
+            "|",
+            CacheWarmupDomain.SavePreviewArtifact,
+            normalizedSavePath,
+            householdKey,
+            versionToken);
+    }
+
+    private static string BuildSaveArtifactSessionSource(string normalizedSavePath, string householdKey)
+    {
+        return normalizedSavePath + SourceKeyScopeSeparator + householdKey;
+    }
+
+    private static string BuildSaveVersionToken(string normalizedSavePath)
+    {
+        var file = new FileInfo(normalizedSavePath);
+        if (!file.Exists)
+        {
+            return "missing";
+        }
+
+        return string.Join(
+            ":",
+            file.Length.ToString(CultureInfo.InvariantCulture),
+            file.LastWriteTimeUtc.Ticks.ToString(CultureInfo.InvariantCulture));
+    }
+
+    private void CancelSaveSessions(string normalizedSavePath, string reason)
+    {
+        _backgroundCachePrewarmCoordinator?.CancelBySource(
+            normalizedSavePath,
+            reason,
+            SavePreviewDescriptorPrimeJobType);
+        _backgroundCachePrewarmCoordinator?.CancelBySource(
+            normalizedSavePath,
+            reason,
+            SavePreviewArtifactPrimeJobType);
+
+        foreach (var entry in _saveDescriptorWarmupTasks.ToArray())
+        {
+            if (!string.Equals(entry.Value.ModsRoot, normalizedSavePath, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            SafeCancelToken(entry.Value.WorkerCts);
+            _saveDescriptorWarmupTasks.TryRemove(entry.Key, out _);
+        }
+
+        foreach (var entry in _saveArtifactWarmupTasks.ToArray())
+        {
+            if (!entry.Value.ModsRoot.StartsWith(normalizedSavePath + SourceKeyScopeSeparator, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            SafeCancelToken(entry.Value.WorkerCts);
+            _saveArtifactWarmupTasks.TryRemove(entry.Key, out _);
+        }
+
+        _saveDescriptorWarmupStates.TryRemove(normalizedSavePath, out _);
+        foreach (var key in _saveArtifactWarmupStates.Keys.Where(key =>
+                     key.StartsWith(normalizedSavePath + SourceKeyScopeSeparator, StringComparison.OrdinalIgnoreCase)).ToArray())
+        {
+            _saveArtifactWarmupStates.TryRemove(key, out _);
+        }
+    }
+
+    private BackgroundPrewarmJobKey BuildModCatalogPrewarmJobKey(ModItemCatalogQuery query)
+    {
+        var sourceVersion = new CacheSourceVersion
+        {
+            SourceKind = "mods-query",
+            SourceKey = query.ModsRoot,
+            VersionToken = BuildModQueryFingerprint(query)
+        };
+
+        return new BackgroundPrewarmJobKey
+        {
+            JobType = ModCatalogQueryPrimeJobType,
+            SourceKey = BuildScopedSourceKey(sourceVersion)
+        };
+    }
+
+    private async Task PrimeModCatalogQueryAsync(
+        ModItemCatalogQuery query,
+        string trigger,
+        CancellationToken cancellationToken)
+    {
+        await EnsureModsWorkspaceReadyAsync(
+            query.ModsRoot,
+            CreateDetachedWarmupHost("modquery", trigger),
+            cancellationToken).ConfigureAwait(false);
+        _ = await _modItemCatalogService!
+            .QueryPageAsync(query, cancellationToken)
+            .ConfigureAwait(false);
+        _logger.LogInformation(
+            "modquery.prewarm.done modsRoot={ModsRoot} trigger={Trigger} fingerprint={Fingerprint} pageSize={PageSize}",
+            query.ModsRoot,
+            trigger,
+            BuildModQueryFingerprint(query),
+            query.PageSize);
+    }
+
+    private MainWindowCacheWarmupHost CreateDetachedWarmupHost(string category, string trigger)
+    {
+        return new MainWindowCacheWarmupHost
+        {
+            ReportProgress = _ => { },
+            AppendLog = message =>
+            {
+                if (!string.IsNullOrWhiteSpace(message))
+                {
+                    _logger.LogInformation(
+                        "{Category}.prewarm.log trigger={Trigger} message={Message}",
+                        category,
+                        trigger,
+                        message);
+                }
+            }
+        };
+    }
+
     private static void SafeCancelToken(CancellationTokenSource? cancellationTokenSource)
     {
         if (cancellationTokenSource is null)
@@ -1441,5 +2252,47 @@ public sealed class MainWindowCacheWarmupController
         }
 
         return path.Trim().Trim('"');
+    }
+
+    private ModItemCatalogQuery NormalizeModCatalogQuery(ModItemCatalogQuery query)
+    {
+        return new ModItemCatalogQuery
+        {
+            ModsRoot = ResolveDirectoryPath(query.ModsRoot),
+            SearchQuery = query.SearchQuery?.Trim() ?? string.Empty,
+            EntityKindFilter = NormalizeQueryValue(query.EntityKindFilter, "All"),
+            SubTypeFilter = NormalizeQueryValue(query.SubTypeFilter, "All"),
+            SortBy = NormalizeQueryValue(query.SortBy, "Last Indexed"),
+            PageIndex = Math.Max(1, query.PageIndex),
+            PageSize = Math.Max(1, query.PageSize)
+        };
+    }
+
+    private static string BuildModQueryFingerprint(ModItemCatalogQuery query)
+    {
+        return string.Join(
+            SourceKeyScopeSeparator,
+            query.EntityKindFilter,
+            query.SubTypeFilter,
+            query.SortBy,
+            query.SearchQuery,
+            query.PageIndex.ToString(CultureInfo.InvariantCulture),
+            query.PageSize.ToString(CultureInfo.InvariantCulture));
+    }
+
+    private static string BuildScopedSourceKey(CacheSourceVersion sourceVersion)
+    {
+        return string.Join(
+            SourceKeyScopeSeparator,
+            sourceVersion.SourceKey,
+            sourceVersion.SourceKind,
+            sourceVersion.VersionToken);
+    }
+
+    private static string NormalizeQueryValue(string? value, string fallback)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? fallback
+            : value.Trim();
     }
 }

@@ -25,8 +25,7 @@ public sealed class TrayDependencyAnalysisService : ITrayDependencyAnalysisServi
         ".sgi"
     };
 
-    private readonly TrayBundleLoader _bundleLoader = new();
-    private readonly TraySearchExtractor _searchExtractor = new();
+    private readonly ITrayBundleAnalysisCache _bundleAnalysisCache;
     private readonly DirectMatchEngine _directMatchEngine = new();
     private readonly DependencyExpandEngine _dependencyExpandEngine;
     private readonly ModFileExporter _fileExporter;
@@ -36,11 +35,13 @@ public sealed class TrayDependencyAnalysisService : ITrayDependencyAnalysisServi
     public TrayDependencyAnalysisService(
         IDbpfResourceReader? resourceReader = null,
         IPathIdentityResolver? pathIdentityResolver = null,
-        ILogger<TrayDependencyAnalysisService>? logger = null)
+        ILogger<TrayDependencyAnalysisService>? logger = null,
+        ITrayBundleAnalysisCache? bundleAnalysisCache = null)
     {
         _logger = logger ?? NullLogger<TrayDependencyAnalysisService>.Instance;
         _dependencyExpandEngine = new DependencyExpandEngine(resourceReader ?? new DbpfResourceReader(), _logger);
         _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
+        _bundleAnalysisCache = bundleAnalysisCache ?? new TrayBundleAnalysisCache(pathIdentityResolver: _pathIdentityResolver);
         _fileExporter = new ModFileExporter(_logger);
     }
 
@@ -69,12 +70,20 @@ public sealed class TrayDependencyAnalysisService : ITrayDependencyAnalysisServi
             cancellationToken.ThrowIfCancellationRequested();
             Report(progress, TrayDependencyAnalysisStage.ParsingTray, 40, "Parsing tray references...");
 
-            if (!_bundleLoader.TryLoad(traySourceFiles, issues, out var bundle))
+            var bundleAnalysis = await _bundleAnalysisCache
+                .GetOrLoadAsync(
+                    request.TrayPath,
+                    request.TrayItemKey,
+                    traySourceFiles,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            issues.AddRange(bundleAnalysis.Issues);
+            if (!bundleAnalysis.Success)
             {
                 return BuildResult(Array.Empty<TrayDependencyAnalysisRow>(), Array.Empty<TrayDependencyAnalysisRow>(), issues);
             }
 
-            var searchKeys = _searchExtractor.Extract(bundle, issues);
+            var searchKeys = bundleAnalysis.SearchKeys;
 
             cancellationToken.ThrowIfCancellationRequested();
             Report(progress, TrayDependencyAnalysisStage.MatchingDirectReferences, 55, "Matching direct references...");

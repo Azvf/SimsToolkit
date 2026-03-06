@@ -1,7 +1,11 @@
 using SimsModDesktop.Application.Saves;
+using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.TrayPreview;
+using SimsModDesktop.Application.Configuration;
 using SimsModDesktop.PackageCore;
+using Avalonia.Threading;
 using SimsModDesktop.Presentation.Dialogs;
+using SimsModDesktop.Presentation.Services;
 using SimsModDesktop.SaveData.Models;
 using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 using SimsModDesktop.Presentation.ViewModels.Preview;
@@ -14,10 +18,15 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
     private readonly IFileDialogService _fileDialogService;
     private readonly ITrayDependenciesLauncher _trayDependenciesLauncher;
     private readonly IPathIdentityResolver _pathIdentityResolver;
+    private readonly IUiActivityMonitor _uiActivityMonitor;
+    private readonly IConfigurationProvider? _configurationProvider;
+    private readonly MainWindowCacheWarmupController? _cacheWarmupController;
 
     private CancellationTokenSource? _selectionLoadCts;
     private CancellationTokenSource? _cacheBuildCts;
+    private CancellationTokenSource? _artifactPrimeCts;
     private string _pendingSelectedSavePath = string.Empty;
+    private string _pendingSelectedPreviewHouseholdKey = string.Empty;
     private string _savesPath = string.Empty;
     private string _exportRootPath = string.Empty;
     private bool _generateThumbnails = true;
@@ -31,7 +40,7 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
     private IReadOnlyList<SaveFileEntry> _saveFiles = Array.Empty<SaveFileEntry>();
     private SaveFileEntry? _selectedSave;
     private SaveHouseholdSnapshot? _currentSnapshot;
-    private SavePreviewCacheManifest? _currentManifest;
+    private SavePreviewDescriptorManifest? _currentManifest;
     private SaveHouseholdItem? _selectedPreviewHousehold;
 
     public SaveWorkspaceViewModel(
@@ -40,18 +49,25 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
         ITrayDependenciesLauncher trayDependenciesLauncher,
         ITrayPreviewCoordinator trayPreviewCoordinator,
         ITrayThumbnailService trayThumbnailService,
-        IPathIdentityResolver? pathIdentityResolver = null)
+        MainWindowCacheWarmupController? cacheWarmupController = null,
+        IPathIdentityResolver? pathIdentityResolver = null,
+        IUiActivityMonitor? uiActivityMonitor = null,
+        IConfigurationProvider? configurationProvider = null)
     {
         _coordinator = coordinator;
         _fileDialogService = fileDialogService;
         _trayDependenciesLauncher = trayDependenciesLauncher;
+        _cacheWarmupController = cacheWarmupController;
         _pathIdentityResolver = pathIdentityResolver ?? new SystemPathIdentityResolver();
+        _uiActivityMonitor = uiActivityMonitor ?? new UiActivityMonitor();
+        _configurationProvider = configurationProvider;
 
         Filter = new SavePreviewFilterViewModel();
         Surface = new TrayLikePreviewSurfaceViewModel(trayPreviewCoordinator, trayThumbnailService);
-        Surface.Configure(Filter, ResolveCurrentCacheRoot, PreviewSurfaceSelectionMode.Single);
+        Surface.Configure(Filter, BuildCurrentPreviewInput, PreviewSurfaceSelectionMode.Single);
         Surface.SetFooter("Save Preview", ExportSummaryText);
         Surface.PropertyChanged += OnSurfacePropertyChanged;
+        Surface.PreviewItems.CollectionChanged += (_, _) => TryRestoreSelectedPreviewItem();
 
         RefreshSavesCommand = new AsyncRelayCommand(RefreshSavesAsync, () => !IsBusy);
         BrowseExportRootCommand = new AsyncRelayCommand(BrowseExportRootAsync, () => !IsBusy);
@@ -94,6 +110,7 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
                 _hasPendingRefresh = false;
                 CancelSelectionLoad();
                 CancelCacheBuild();
+                CancelArtifactPrime();
                 SaveFiles = Array.Empty<SaveFileEntry>();
                 SelectedSave = null;
                 _currentSnapshot = null;
@@ -101,7 +118,7 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
                 _selectedPreviewHousehold = null;
                 CacheStatusText = "Saves path is missing or does not exist.";
                 StatusText = "Set a valid Saves path to scan save slots.";
-                Surface.NotifyTrayPathChanged();
+                Surface.NotifyPreviewSourceChanged();
             }
             else
             {
@@ -242,7 +259,7 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
                 return SelectedSave.DisplayLabel;
             }
 
-            return $"{SelectedSave.FileName} | Ready {_currentManifest.ReadyHouseholdCount}/{_currentManifest.TotalHouseholdCount} | Failed {_currentManifest.FailedHouseholdCount} | Blocked {_currentManifest.BlockedHouseholdCount}";
+            return $"{SelectedSave.FileName} | Ready {_currentManifest.ReadyHouseholdCount}/{_currentManifest.TotalHouseholdCount} | Blocked {_currentManifest.BlockedHouseholdCount}";
         }
     }
 
@@ -257,6 +274,7 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
         ArgumentNullException.ThrowIfNull(settings);
         ExportRootPath = settings.LastExportRoot;
         _pendingSelectedSavePath = NormalizePath(settings.SelectedSavePath);
+        _pendingSelectedPreviewHouseholdKey = settings.SelectedPreviewHouseholdKey?.Trim() ?? string.Empty;
         Filter.SearchQuery = settings.SearchQuery;
         Filter.HouseholdSizeFilter = settings.HouseholdSizeFilter;
         Filter.LayoutMode = settings.LayoutMode;
@@ -268,7 +286,8 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
         return new AppSettings.SavesSettings
         {
             LastExportRoot = ExportRootPath,
-            SelectedSavePath = SelectedSave?.FilePath ?? string.Empty,
+            SelectedSavePath = SelectedSave?.FilePath ?? _pendingSelectedSavePath,
+            SelectedPreviewHouseholdKey = Surface.SelectedPreviewItem?.TrayItemKey ?? _pendingSelectedPreviewHouseholdKey,
             SearchQuery = Filter.SearchQuery,
             HouseholdSizeFilter = Filter.HouseholdSizeFilter,
             LayoutMode = Filter.LayoutMode,
@@ -288,6 +307,7 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
         {
             CancelSelectionLoad();
             CancelCacheBuild();
+            CancelArtifactPrime();
             return;
         }
 
@@ -299,9 +319,19 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
 
         if (SelectedSave is not null)
         {
-            Surface.NotifyTrayPathChanged(invalidateCaches: true);
-            _ = EnsureCurrentSnapshotAsync();
+            _ = HandleSelectedSaveChangedAsync();
         }
+    }
+
+    public void ResetAfterCacheClear()
+    {
+        CancelSelectionLoad();
+        CancelCacheBuild();
+        CancelArtifactPrime();
+        _currentSnapshot = null;
+        _currentManifest = null;
+        _selectedPreviewHousehold = null;
+        Surface.ResetAfterCacheClear();
     }
 
     private async Task RefreshSavesAsync()
@@ -309,6 +339,7 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
         if (!HasValidSavesPath)
         {
             _hasPendingRefresh = false;
+            CancelArtifactPrime();
             SaveFiles = Array.Empty<SaveFileEntry>();
             SelectedSave = null;
             StatusText = "Saves path is missing or does not exist.";
@@ -356,7 +387,7 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
             return;
         }
 
-        await BuildPreviewCacheAsync(SelectedSave, forceRefreshPreview: true);
+        await BuildPreviewDescriptorAsync(SelectedSave, forceRefreshPreview: true);
     }
 
     private async Task ClearSelectedSaveCacheAsync()
@@ -369,11 +400,13 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
         var selectedSavePath = NormalizePath(SelectedSave.FilePath);
         CancelSelectionLoad();
         CancelCacheBuild();
+        CancelArtifactPrime();
 
         IsBusy = true;
         try
         {
-            await Task.Run(() => _coordinator.ClearPreviewCache(selectedSavePath));
+            _cacheWarmupController?.CancelSavePreviewWarmup(selectedSavePath, "clear-preview-data");
+            await Task.Run(() => _coordinator.ClearPreviewData(selectedSavePath));
 
             if (SelectedSave is null ||
                 !string.Equals(NormalizePath(SelectedSave.FilePath), selectedSavePath, StringComparison.OrdinalIgnoreCase))
@@ -384,10 +417,13 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
             _currentManifest = null;
             _selectedPreviewHousehold = null;
             _currentSnapshot = null;
-            CacheStatusText = "Cache cleared.";
+            _pendingSelectedPreviewHouseholdKey = string.Empty;
+            CacheStatusText = "Preview cache cleared. Rebuild descriptor to reload.";
             StatusText = "Selected save preview cache was cleared.";
             OnPropertyChanged(nameof(SelectedSaveSummary));
-            Surface.NotifyTrayPathChanged(invalidateCaches: true);
+            Surface.ClearCurrentSource(
+                "Preview cache cleared. Rebuild descriptor to reload.",
+                PreviewSourceRef.ForSaveDescriptor(selectedSavePath));
         }
         finally
         {
@@ -422,26 +458,28 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
         {
             CancelSelectionLoad();
             CancelCacheBuild();
+            CancelArtifactPrime();
             _currentSnapshot = null;
             _currentManifest = null;
             _selectedPreviewHousehold = null;
             CacheStatusText = "No save selected.";
-            Surface.NotifyTrayPathChanged();
+            Surface.NotifyPreviewSourceChanged();
             return;
         }
 
         _pendingSelectedSavePath = NormalizePath(SelectedSave.FilePath);
+        CancelArtifactPrime();
         var selectedSave = SelectedSave;
-        if (_coordinator.TryGetPreviewCacheManifest(selectedSave.FilePath, out var manifest) &&
-            _coordinator.IsPreviewCacheCurrent(selectedSave.FilePath, manifest))
+        if (_coordinator.TryGetPreviewDescriptor(selectedSave.FilePath, out var manifest) &&
+            _coordinator.IsPreviewDescriptorCurrent(selectedSave.FilePath, manifest))
         {
             _currentManifest = manifest;
             _currentSnapshot = null;
             _selectedPreviewHousehold = null;
-            CacheStatusText = $"Cached: Ready {manifest.ReadyHouseholdCount}, Failed {manifest.FailedHouseholdCount}, Blocked {manifest.BlockedHouseholdCount}";
-            StatusText = $"Loaded cached preview for {selectedSave.FileName}.";
+            CacheStatusText = $"Descriptor ready: Ready {manifest.ReadyHouseholdCount}, Blocked {manifest.BlockedHouseholdCount}";
+            StatusText = $"Loaded preview descriptor for {selectedSave.FileName}.";
             OnPropertyChanged(nameof(SelectedSaveSummary));
-            Surface.NotifyTrayPathChanged(invalidateCaches: true);
+            Surface.NotifyPreviewSourceChanged(invalidateCaches: true);
             _ = EnsureCurrentSnapshotAsync();
             return;
         }
@@ -449,31 +487,53 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
         _currentManifest = null;
         _currentSnapshot = null;
         _selectedPreviewHousehold = null;
-        CacheStatusText = "No preview cache yet. Building...";
-        StatusText = $"Building preview cache for {selectedSave.FileName}...";
+        CacheStatusText = "No preview descriptor yet. Building...";
+        StatusText = $"Building preview descriptor for {selectedSave.FileName}...";
         OnPropertyChanged(nameof(SelectedSaveSummary));
 
-        await BuildPreviewCacheAsync(selectedSave, forceRefreshPreview: true);
+        await BuildPreviewDescriptorAsync(selectedSave, forceRefreshPreview: true);
     }
 
-    private async Task BuildPreviewCacheAsync(SaveFileEntry selectedSave, bool forceRefreshPreview)
+    private async Task BuildPreviewDescriptorAsync(SaveFileEntry selectedSave, bool forceRefreshPreview)
     {
         CancelSelectionLoad();
         CancelCacheBuild();
+        CancelArtifactPrime();
         var cts = new CancellationTokenSource();
         _cacheBuildCts = cts;
 
         IsBuildingCache = true;
         try
         {
-            var progress = new Progress<SavePreviewCacheBuildProgress>(update =>
+            SavePreviewDescriptorBuildResult result;
+            if (_cacheWarmupController is not null)
             {
-                CacheStatusText = string.IsNullOrWhiteSpace(update.Detail)
-                    ? $"Building cache... {update.Percent}%"
-                    : $"{update.Detail} ({update.Percent}%)";
-            });
+                var host = new MainWindowCacheWarmupHost
+                {
+                    ReportProgress = progress =>
+                    {
+                        CacheStatusText = string.IsNullOrWhiteSpace(progress.Detail)
+                            ? $"Building descriptor... {progress.Percent}%"
+                            : $"{progress.Detail} ({progress.Percent}%)";
+                    },
+                    AppendLog = _ => { }
+                };
+                result = await _cacheWarmupController.EnsureSavePreviewDescriptorReadyAsync(
+                    selectedSave.FilePath,
+                    host,
+                    cts.Token);
+            }
+            else
+            {
+                var progress = new Progress<SavePreviewDescriptorBuildProgress>(update =>
+                {
+                    CacheStatusText = string.IsNullOrWhiteSpace(update.Detail)
+                        ? $"Building descriptor... {update.Percent}%"
+                        : $"{update.Detail} ({update.Percent}%)";
+                });
+                result = await _coordinator.BuildPreviewDescriptorAsync(selectedSave.FilePath, progress, cts.Token);
+            }
 
-            var result = await _coordinator.BuildPreviewCacheAsync(selectedSave.FilePath, progress, cts.Token);
             if (cts.IsCancellationRequested ||
                 SelectedSave is null ||
                 !string.Equals(NormalizePath(SelectedSave.FilePath), NormalizePath(selectedSave.FilePath), StringComparison.OrdinalIgnoreCase))
@@ -484,7 +544,7 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
             if (!result.Succeeded)
             {
                 CacheStatusText = string.IsNullOrWhiteSpace(result.Error)
-                    ? "Failed to build preview cache."
+                    ? "Failed to build preview descriptor."
                     : result.Error;
                 if (!string.IsNullOrWhiteSpace(result.Error))
                 {
@@ -499,7 +559,7 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
 
                 if (forceRefreshPreview)
                 {
-                    Surface.NotifyTrayPathChanged(invalidateCaches: true);
+                    Surface.NotifyPreviewSourceChanged(invalidateCaches: true);
                 }
 
                 return;
@@ -508,15 +568,17 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
             _currentSnapshot = result.Snapshot ?? _currentSnapshot;
             _currentManifest = result.Manifest;
             CacheStatusText = _currentManifest is null
-                ? "Cache ready."
-                : $"Cache ready: {_currentManifest.ReadyHouseholdCount}/{_currentManifest.TotalHouseholdCount} households";
-            StatusText = $"Loaded save {selectedSave.FileName} and refreshed its preview cache.";
+                ? "Descriptor ready."
+                : $"Descriptor ready: {_currentManifest.ReadyHouseholdCount}/{_currentManifest.TotalHouseholdCount} households";
+            StatusText = $"Loaded save {selectedSave.FileName} and refreshed its preview descriptor.";
             OnPropertyChanged(nameof(SelectedSaveSummary));
 
             if (forceRefreshPreview)
             {
-                Surface.NotifyTrayPathChanged(invalidateCaches: true);
+                Surface.NotifyPreviewSourceChanged(invalidateCaches: true);
             }
+
+            TryRestoreSelectedPreviewItem();
         }
         catch (OperationCanceledException)
         {
@@ -540,7 +602,10 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
             return;
         }
 
+        CancelArtifactPrime();
+        _pendingSelectedPreviewHouseholdKey = Surface.SelectedPreviewItem?.TrayItemKey ?? string.Empty;
         ResolveSelectedPreviewHousehold();
+        ScheduleIdleArtifactPrime();
         AnalyzeDependenciesCommand.NotifyCanExecuteChanged();
         ExportCommand.NotifyCanExecuteChanged();
     }
@@ -591,6 +656,7 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
 
             _currentSnapshot = loadResult.Snapshot;
             ResolveSelectedPreviewHousehold();
+            ScheduleIdleArtifactPrime();
             OnPropertyChanged(nameof(SelectedSaveSummary));
             ExportCommand.NotifyCanExecuteChanged();
             return true;
@@ -628,6 +694,70 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
         _selectedPreviewHousehold = _currentSnapshot.Households.FirstOrDefault(item => item.HouseholdId == matchedEntry.HouseholdId);
     }
 
+    private void TryRestoreSelectedPreviewItem()
+    {
+        if (Surface.PreviewItems.Count == 0)
+        {
+            return;
+        }
+
+        var targetKey = _pendingSelectedPreviewHouseholdKey;
+        var currentSelection = Surface.SelectedPreviewItem;
+        if (!string.IsNullOrWhiteSpace(targetKey) &&
+            currentSelection is not null &&
+            string.Equals(currentSelection.TrayItemKey, targetKey, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(targetKey) &&
+            currentSelection is not null &&
+            IsReadyPreviewItem(currentSelection.TrayItemKey))
+        {
+            return;
+        }
+
+        var targetItem = !string.IsNullOrWhiteSpace(targetKey)
+            ? Surface.PreviewItems.FirstOrDefault(item =>
+                string.Equals(item.Item.TrayItemKey, targetKey, StringComparison.OrdinalIgnoreCase))
+            : null;
+        if (targetItem is null && _currentManifest is not null)
+        {
+            var readyKeys = _currentManifest.Entries
+                .Where(entry => string.Equals(entry.BuildState, "Ready", StringComparison.OrdinalIgnoreCase))
+                .Select(entry => entry.TrayItemKey)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            targetItem = Surface.PreviewItems.FirstOrDefault(item => readyKeys.Contains(item.Item.TrayItemKey));
+        }
+
+        targetItem ??= Surface.PreviewItems.FirstOrDefault();
+        if (targetItem is null)
+        {
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (Surface.SelectedPreviewItem is null ||
+                !string.Equals(Surface.SelectedPreviewItem.TrayItemKey, targetItem.Item.TrayItemKey, StringComparison.OrdinalIgnoreCase))
+            {
+                Surface.ApplySelection(targetItem, controlPressed: false, shiftPressed: false);
+            }
+        });
+    }
+
+    private bool IsReadyPreviewItem(string trayItemKey)
+    {
+        if (string.IsNullOrWhiteSpace(trayItemKey) || _currentManifest is null)
+        {
+            return false;
+        }
+
+        return _currentManifest.Entries.Any(entry =>
+            string.Equals(entry.TrayItemKey, trayItemKey, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(entry.BuildState, "Ready", StringComparison.OrdinalIgnoreCase));
+    }
+
     private async Task AnalyzeDependenciesAsync()
     {
         if (SelectedSave is null || Surface.SelectedPreviewItem is null)
@@ -635,16 +765,26 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
             return;
         }
 
-        var trayPath = ResolveCurrentCacheRoot();
-        if (string.IsNullOrWhiteSpace(trayPath) || !Directory.Exists(trayPath))
-        {
-            StatusText = "The selected save does not have a preview cache yet.";
-            return;
-        }
-
         IsBusy = true;
         try
         {
+            var trayPath = _cacheWarmupController is not null
+                ? await _cacheWarmupController.EnsureSavePreviewArtifactReadyAsync(
+                    SelectedSave.FilePath,
+                    Surface.SelectedPreviewItem.TrayItemKey,
+                    "tray-dependency-analysis")
+                : await _coordinator
+                    .EnsurePreviewArtifactAsync(
+                        SelectedSave.FilePath,
+                        Surface.SelectedPreviewItem.TrayItemKey,
+                        "tray-dependency-analysis")
+                    .ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(trayPath) || !Directory.Exists(trayPath))
+            {
+                StatusText = "The selected save household is not ready for dependency analysis yet.";
+                return;
+            }
+
             await _trayDependenciesLauncher.RunForTrayItemAsync(trayPath, Surface.SelectedPreviewItem.TrayItemKey);
             StatusText = "Started tray dependency analysis for the selected save household.";
         }
@@ -730,11 +870,25 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
         }
     }
 
-    private string ResolveCurrentCacheRoot()
+    private TrayPreviewInput? BuildCurrentPreviewInput()
     {
-        return SelectedSave is null
-            ? string.Empty
-            : _coordinator.GetPreviewCacheRoot(SelectedSave.FilePath);
+        if (SelectedSave is null)
+        {
+            return null;
+        }
+
+        if (_currentManifest is null)
+        {
+            return null;
+        }
+
+        var normalizedSavePath = NormalizePath(SelectedSave.FilePath);
+        if (string.IsNullOrWhiteSpace(normalizedSavePath) || !File.Exists(normalizedSavePath))
+        {
+            return null;
+        }
+
+        return Filter.BuildInput(PreviewSourceRef.ForSaveDescriptor(normalizedSavePath));
     }
 
     private void CancelCacheBuild()
@@ -767,6 +921,109 @@ public sealed class SaveWorkspaceViewModel : ObservableObject
             _selectionLoadCts?.Dispose();
             _selectionLoadCts = null;
         }
+    }
+
+    private void ScheduleIdleArtifactPrime()
+    {
+        if (!_isActive ||
+            IsBusy ||
+            SelectedSave is null ||
+            Surface.SelectedPreviewItem is null ||
+            _selectedPreviewHousehold is null ||
+            !GetConfigBool("Performance.IdlePrewarm.SaveArtifactPrimeEnabled", true))
+        {
+            return;
+        }
+
+        CancelArtifactPrime();
+        _artifactPrimeCts = new CancellationTokenSource();
+        var token = _artifactPrimeCts.Token;
+        var saveFilePath = SelectedSave.FilePath;
+        var trayItemKey = Surface.SelectedPreviewItem.TrayItemKey;
+        var idleDelay = TimeSpan.FromMilliseconds(Math.Max(1000, GetConfigInt("Performance.IdlePrewarm.DelayMs", 10000)));
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (!token.IsCancellationRequested)
+                {
+                    if (!_isActive || IsBusy || SelectedSave is null || Surface.SelectedPreviewItem is null)
+                    {
+                        return;
+                    }
+
+                    if (!string.Equals(SelectedSave.FilePath, saveFilePath, StringComparison.OrdinalIgnoreCase) ||
+                        !string.Equals(Surface.SelectedPreviewItem.TrayItemKey, trayItemKey, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return;
+                    }
+
+                    if (DateTimeOffset.UtcNow - _uiActivityMonitor.LastInteractionUtc >= idleDelay)
+                    {
+                        if (_cacheWarmupController is not null)
+                        {
+                            _ = _cacheWarmupController.QueueSavePreviewArtifactIdlePrewarm(
+                                saveFilePath,
+                                trayItemKey,
+                                "workspace-idle");
+                        }
+                        else
+                        {
+                            _ = await _coordinator
+                                .EnsurePreviewArtifactAsync(
+                                    saveFilePath,
+                                    trayItemKey,
+                                    "workspace-idle",
+                                    token)
+                                .ConfigureAwait(false);
+                        }
+                        return;
+                    }
+
+                    await Task.Delay(250, token).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }, token);
+    }
+
+    private void CancelArtifactPrime()
+    {
+        try
+        {
+            _artifactPrimeCts?.Cancel();
+        }
+        catch
+        {
+        }
+        finally
+        {
+            _artifactPrimeCts?.Dispose();
+            _artifactPrimeCts = null;
+        }
+    }
+
+    private bool GetConfigBool(string key, bool defaultValue)
+    {
+        if (_configurationProvider is null)
+        {
+            return defaultValue;
+        }
+
+        return _configurationProvider.GetConfigurationAsync<bool?>(key).GetAwaiter().GetResult() ?? defaultValue;
+    }
+
+    private int GetConfigInt(string key, int defaultValue)
+    {
+        if (_configurationProvider is null)
+        {
+            return defaultValue;
+        }
+
+        return _configurationProvider.GetConfigurationAsync<int?>(key).GetAwaiter().GetResult() ?? defaultValue;
     }
 
     private void NotifyStateChanged()

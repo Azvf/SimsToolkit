@@ -1,15 +1,23 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using SimsModDesktop.Application.Caching;
 using SimsModDesktop.Presentation.Diagnostics;
+using SimsModDesktop.Presentation.Services;
 using SimsModDesktop.Presentation.ViewModels.Infrastructure;
+using SimsModDesktop.Presentation.ViewModels.Saves;
+using SimsModDesktop.TrayDependencyEngine;
 
 namespace SimsModDesktop.Presentation.ViewModels.Shell;
 
 public sealed class ShellSystemOperationsController : ObservableObject
 {
     private readonly MainWindowViewModel _workspaceVm;
+    private readonly SaveWorkspaceViewModel? _savesVm;
     private readonly IGameLaunchService _gameLaunchService;
     private readonly IAppCacheMaintenanceService _appCacheMaintenanceService;
+    private readonly ITrayBundleAnalysisCache? _trayBundleAnalysisCache;
+    private readonly AppIdlePrewarmBootstrapper? _idlePrewarmBootstrapper;
+    private readonly IListQueryCache? _listQueryCache;
     private readonly ILogger<ShellSystemOperationsController> _logger;
 
     private string _launchGameStatus = string.Empty;
@@ -17,13 +25,21 @@ public sealed class ShellSystemOperationsController : ObservableObject
 
     public ShellSystemOperationsController(
         MainWindowViewModel workspaceVm,
+        SaveWorkspaceViewModel? savesVm,
         IGameLaunchService gameLaunchService,
         IAppCacheMaintenanceService appCacheMaintenanceService,
-        ILogger<ShellSystemOperationsController>? logger = null)
+        ILogger<ShellSystemOperationsController>? logger = null,
+        ITrayBundleAnalysisCache? trayBundleAnalysisCache = null,
+        AppIdlePrewarmBootstrapper? idlePrewarmBootstrapper = null,
+        IListQueryCache? listQueryCache = null)
     {
         _workspaceVm = workspaceVm;
+        _savesVm = savesVm;
         _gameLaunchService = gameLaunchService;
         _appCacheMaintenanceService = appCacheMaintenanceService;
+        _trayBundleAnalysisCache = trayBundleAnalysisCache;
+        _idlePrewarmBootstrapper = idlePrewarmBootstrapper;
+        _listQueryCache = listQueryCache;
         _logger = logger ?? NullLogger<ShellSystemOperationsController>.Instance;
     }
 
@@ -96,8 +112,12 @@ public sealed class ShellSystemOperationsController : ObservableObject
             var result = await _appCacheMaintenanceService.ClearAsync();
             if (result.Success)
             {
+                _idlePrewarmBootstrapper?.Reset();
+                _trayBundleAnalysisCache?.Reset();
+                _listQueryCache?.Clear();
                 _workspaceVm.ModPreviewWorkspace.ResetAfterCacheClear();
                 _workspaceVm.TrayPreviewWorkspace.ResetAfterCacheClear();
+                _savesVm?.ResetAfterCacheClear();
                 if (isTraySectionActive)
                 {
                     await _workspaceVm.TrayPreviewWorkspace.EnsureLoadedAsync(forceReload: true);

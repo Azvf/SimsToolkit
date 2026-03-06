@@ -143,6 +143,7 @@ public sealed class AppSettings
     {
         public string LastExportRoot { get; set; } = string.Empty;
         public string SelectedSavePath { get; set; } = string.Empty;
+        public string SelectedPreviewHouseholdKey { get; set; } = string.Empty;
         public string SearchQuery { get; set; } = string.Empty;
         public string HouseholdSizeFilter { get; set; } = "All";
         public string LayoutMode { get; set; } = "Entry";

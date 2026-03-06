@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
+using SimsModDesktop.Application.Requests;
 using SimsModDesktop.Application.TrayPreview;
 using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 using SimsModDesktop.Presentation.ViewModels.Panels;
@@ -29,7 +30,7 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
     private readonly HashSet<string> _selectedKeys = new(StringComparer.OrdinalIgnoreCase);
 
     private TrayLikePreviewFilterViewModel? _filter;
-    private Func<string>? _trayPathProvider;
+    private Func<TrayPreviewInput?>? _inputProvider;
     private CancellationTokenSource? _autoReloadCts;
     private CancellationTokenSource? _thumbnailCts;
     private bool _isBusy;
@@ -62,7 +63,7 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
         PreviewItems.CollectionChanged += OnPreviewItemsChanged;
         ActionButtons = new ObservableCollection<PreviewSurfaceActionButtonViewModel>();
 
-        RefreshCommand = new AsyncRelayCommand(RefreshAsync, () => HasValidTrayPath);
+        RefreshCommand = new AsyncRelayCommand(RefreshAsync, () => HasValidPreviewInput);
         PrevPageCommand = new AsyncRelayCommand(LoadPreviousPageAsync, () => CanGoPrevPage);
         NextPageCommand = new AsyncRelayCommand(LoadNextPageAsync, () => CanGoNextPage);
         JumpPageCommand = new AsyncRelayCommand(JumpPageAsync, () => CanJumpPage);
@@ -179,12 +180,11 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
         }
     }
 
-    public bool HasValidTrayPath
+    public bool HasValidPreviewInput
     {
         get
         {
-            var trayPath = _trayPathProvider?.Invoke() ?? string.Empty;
-            return !string.IsNullOrWhiteSpace(trayPath) && Directory.Exists(trayPath);
+            return _inputProvider?.Invoke() is not null;
         }
     }
 
@@ -229,12 +229,12 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
 
     public void Configure(
         TrayLikePreviewFilterViewModel filter,
-        Func<string> trayPathProvider,
+        Func<TrayPreviewInput?> inputProvider,
         PreviewSurfaceSelectionMode selectionMode,
         bool autoLoad = true)
     {
         ArgumentNullException.ThrowIfNull(filter);
-        ArgumentNullException.ThrowIfNull(trayPathProvider);
+        ArgumentNullException.ThrowIfNull(inputProvider);
 
         if (_filter is not null)
         {
@@ -242,7 +242,7 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
         }
 
         _filter = filter;
-        _trayPathProvider = trayPathProvider;
+        _inputProvider = inputProvider;
         _selectionMode = selectionMode;
         _filter.PropertyChanged += OnFilterPropertyChanged;
 
@@ -251,7 +251,7 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
         OnPropertyChanged(nameof(ShowSelectAllAction));
         OnPropertyChanged(nameof(IsEntryMode));
         OnPropertyChanged(nameof(IsGridMode));
-        OnPropertyChanged(nameof(HasValidTrayPath));
+        OnPropertyChanged(nameof(HasValidPreviewInput));
         RefreshCommand.NotifyCanExecuteChanged();
 
         _backgroundLoadingPaused = !autoLoad;
@@ -278,13 +278,13 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
         FooterText = text;
     }
 
-    public void NotifyTrayPathChanged(bool invalidateCaches = false)
+    public void NotifyPreviewSourceChanged(bool invalidateCaches = false)
     {
-        OnPropertyChanged(nameof(HasValidTrayPath));
+        OnPropertyChanged(nameof(HasValidPreviewInput));
         RefreshCommand.NotifyCanExecuteChanged();
         if (invalidateCaches)
         {
-            _trayPreviewCoordinator.Invalidate(_trayPathProvider?.Invoke());
+            _trayPreviewCoordinator.Invalidate(_inputProvider?.Invoke()?.PreviewSource);
         }
 
         if (_backgroundLoadingPaused)
@@ -319,9 +319,28 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
         ClearItems(statusText);
     }
 
+    public void ClearCurrentSource(string statusText, PreviewSourceRef? source = null)
+    {
+        _autoReloadCts?.Cancel();
+        _autoReloadCts?.Dispose();
+        _autoReloadCts = null;
+
+        if (source is null)
+        {
+            _trayPreviewCoordinator.Reset();
+        }
+        else
+        {
+            _trayPreviewCoordinator.Invalidate(source);
+        }
+
+        _hasLoadedOnce = false;
+        ClearItems(statusText);
+    }
+
     public Task EnsureLoadedAsync(bool forceReload = false)
     {
-        if (!HasValidTrayPath || IsBusy)
+        if (!HasValidPreviewInput || IsBusy)
         {
             return Task.CompletedTask;
         }
@@ -395,7 +414,7 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
 
     public async Task RefreshAsync()
     {
-        if (_filter is null || _trayPathProvider is null)
+        if (_filter is null || _inputProvider is null)
         {
             return;
         }
@@ -403,10 +422,10 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
         _backgroundLoadingPaused = false;
         _refreshRequestedWhilePaused = false;
 
-        var trayPath = _trayPathProvider.Invoke();
-        if (string.IsNullOrWhiteSpace(trayPath) || !Directory.Exists(trayPath))
+        var input = _inputProvider.Invoke();
+        if (input is null)
         {
-            await ExecuteOnUiAsync(() => ClearItems("Set a valid Tray path to load preview items.")).ConfigureAwait(false);
+            await ExecuteOnUiAsync(() => ClearItems("Set a valid preview source to load preview items.")).ConfigureAwait(false);
             return;
         }
 
@@ -418,7 +437,6 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
 
         try
         {
-            var input = _filter.BuildInput(trayPath);
             if (_trayPreviewCoordinator.TryGetCached(input, out var cached))
             {
                 await ExecuteOnUiAsync(() =>
@@ -457,7 +475,7 @@ public sealed class TrayLikePreviewSurfaceViewModel : ObservableObject, IDisposa
 
     public async Task LoadPageAsync(int requestedPageIndex)
     {
-        if (!HasValidTrayPath)
+        if (!HasValidPreviewInput)
         {
             return;
         }

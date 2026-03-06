@@ -1,11 +1,13 @@
 using System.ComponentModel;
 using Microsoft.Extensions.Logging;
+using SimsModDesktop.Application.Mods;
 using SimsModDesktop.Application.Recovery;
 using SimsModDesktop.Application.Settings;
 using SimsModDesktop.Presentation.Dialogs;
 using SimsModDesktop.Presentation.Diagnostics;
 using SimsModDesktop.Presentation.ViewModels.Infrastructure;
 using SimsModDesktop.Presentation.ViewModels.Saves;
+using SimsModDesktop.Presentation.Services;
 
 namespace SimsModDesktop.Presentation.ViewModels.Shell;
 
@@ -17,6 +19,7 @@ public sealed class MainShellViewModel : ObservableObject
     private readonly ShellSettingsController _settingsController;
     private readonly ShellSystemOperationsController _systemOperationsController;
     private readonly IOperationRecoveryCoordinator? _operationRecoveryCoordinator;
+    private readonly AppIdlePrewarmBootstrapper? _idlePrewarmBootstrapper;
     private readonly ILogger<MainShellViewModel> _logger;
 
     private AppSection _selectedSection = AppSection.Toolkit;
@@ -32,7 +35,8 @@ public sealed class MainShellViewModel : ObservableObject
         ShellSettingsController settingsController,
         ShellSystemOperationsController systemOperationsController,
         ILogger<MainShellViewModel> logger,
-        IOperationRecoveryCoordinator? operationRecoveryCoordinator = null)
+        IOperationRecoveryCoordinator? operationRecoveryCoordinator = null,
+        AppIdlePrewarmBootstrapper? idlePrewarmBootstrapper = null)
     {
         _workspaceVm = workspaceVm;
         _savesVm = savesVm;
@@ -41,6 +45,7 @@ public sealed class MainShellViewModel : ObservableObject
         _systemOperationsController = systemOperationsController;
         _logger = logger;
         _operationRecoveryCoordinator = operationRecoveryCoordinator;
+        _idlePrewarmBootstrapper = idlePrewarmBootstrapper;
 
         SelectSectionCommand = new RelayCommand<string>(SelectSection);
         LaunchGameCommand = new AsyncRelayCommand(LaunchGameAsync, () => CanLaunchGame);
@@ -237,6 +242,26 @@ public sealed class MainShellViewModel : ObservableObject
         SelectedSection = _navigation.SelectedSection;
         ApplyNavigationToWorkspace();
         timing.Mark("navigation.bound");
+        _idlePrewarmBootstrapper?.QueueTrayDependencyStartupPrewarm(
+            ModsPath,
+            () => _workspaceVm.IsBusy || _workspaceVm.HasRunningTrayExportTasks);
+        _idlePrewarmBootstrapper?.QueueModCatalogStartupPrewarm(
+            new ModItemCatalogQuery
+            {
+                ModsRoot = ModsPath,
+                SearchQuery = _workspaceVm.ModPreview.SearchQuery,
+                EntityKindFilter = _workspaceVm.ModPreview.PackageTypeFilter,
+                SubTypeFilter = _workspaceVm.ModPreview.ScopeFilter,
+                SortBy = _workspaceVm.ModPreview.SortBy,
+                PageIndex = 1,
+                PageSize = 50
+            },
+            () => _workspaceVm.IsBusy || _workspaceVm.HasRunningTrayExportTasks);
+        var saveSettings = _savesVm.ToSettings();
+        _idlePrewarmBootstrapper?.QueueSavePreviewStartupPrewarm(
+            saveSettings.SelectedSavePath,
+            saveSettings.SelectedPreviewHouseholdKey,
+            () => _workspaceVm.IsBusy || _workspaceVm.HasRunningTrayExportTasks || _savesVm.IsBusy);
 
         if (_operationRecoveryCoordinator is not null)
         {
@@ -250,6 +275,7 @@ public sealed class MainShellViewModel : ObservableObject
 
     public async Task PersistSettingsAsync()
     {
+        _idlePrewarmBootstrapper?.Reset();
         await _workspaceVm.PersistSettingsAsync();
         await _settingsController.PersistAsync(SelectedSection);
     }

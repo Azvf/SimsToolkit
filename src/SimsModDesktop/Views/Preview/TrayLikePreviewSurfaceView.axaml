@@ -284,7 +284,7 @@
                                        Text="{Binding StatusText}" />
                             <Button Classes="secondary"
                                     MinWidth="150"
-                                    IsVisible="{Binding HasValidTrayPath}"
+                                    IsVisible="{Binding HasValidPreviewInput}"
                                     Content="Load Preview"
                                     Command="{Binding RefreshCommand}" />
                         </StackPanel>

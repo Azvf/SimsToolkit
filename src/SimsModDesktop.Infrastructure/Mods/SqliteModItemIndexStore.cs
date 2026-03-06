@@ -1,5 +1,6 @@
 using Dapper;
 using System.Diagnostics;
+using SimsModDesktop.Application.Caching;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using SimsModDesktop.Application.TextureCompression;
@@ -10,28 +11,35 @@ namespace SimsModDesktop.Infrastructure.Mods;
 public sealed class SqliteModItemIndexStore : IModItemIndexStore
 {
     private const int SchemaVersion = 5;
-    private const int MaxCountCacheEntries = 256;
+    private const string CountCacheDomain = "modindex.count";
+    private const string PageCacheDomain = "modindex.page";
     private readonly AppCacheDatabase _database;
     private readonly ILogger<SqliteModItemIndexStore> _logger;
-    private readonly object _countCacheGate = new();
-    private readonly Dictionary<QueryCountCacheKey, int> _countCache = new();
-    private readonly Dictionary<QueryCountCacheKey, LinkedListNode<QueryCountCacheKey>> _countCacheNodes = new();
-    private readonly LinkedList<QueryCountCacheKey> _countCacheLru = new();
+    private readonly IListQueryCache? _queryCache;
 
-    public SqliteModItemIndexStore(ILogger<SqliteModItemIndexStore>? logger = null)
-        : this(new AppCacheDatabase(), logger)
+    public SqliteModItemIndexStore(
+        ILogger<SqliteModItemIndexStore>? logger = null,
+        IListQueryCache? queryCache = null)
+        : this(new AppCacheDatabase(), logger, queryCache)
     {
     }
 
-    public SqliteModItemIndexStore(string cacheRootPath, ILogger<SqliteModItemIndexStore>? logger = null)
-        : this(new AppCacheDatabase(cacheRootPath), logger)
+    public SqliteModItemIndexStore(
+        string cacheRootPath,
+        ILogger<SqliteModItemIndexStore>? logger = null,
+        IListQueryCache? queryCache = null)
+        : this(new AppCacheDatabase(cacheRootPath), logger, queryCache)
     {
     }
 
-    private SqliteModItemIndexStore(AppCacheDatabase database, ILogger<SqliteModItemIndexStore>? logger)
+    private SqliteModItemIndexStore(
+        AppCacheDatabase database,
+        ILogger<SqliteModItemIndexStore>? logger,
+        IListQueryCache? queryCache)
     {
         _database = database;
         _logger = logger ?? NullLogger<SqliteModItemIndexStore>.Instance;
+        _queryCache = queryCache;
     }
 
     public Task<ModPackageIndexState?> TryGetPackageStateAsync(string packagePath, CancellationToken cancellationToken = default)
@@ -78,7 +86,7 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
         }
 
         transaction.Commit();
-        InvalidateCountCache();
+        InvalidateQueryCache();
         startedAt.Stop();
         _logger.LogInformation(
             "modindex.write.setbatch Stage={Stage} PackageCount={PackageCount} ItemCount={ItemCount} TextureCount={TextureCount} ElapsedMs={ElapsedMs}",
@@ -122,7 +130,7 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
         }
 
         transaction.Commit();
-        InvalidateCountCache();
+        InvalidateQueryCache();
         startedAt.Stop();
         _logger.LogInformation(
             "modindex.write.setbatch Stage={Stage} PackageCount={PackageCount} ItemCount={ItemCount} TextureCount={TextureCount} ElapsedMs={ElapsedMs}",
@@ -151,14 +159,13 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
         using var transaction = connection.BeginTransaction();
         DeletePackageRows(connection, transaction, NormalizePath(packagePath));
         transaction.Commit();
-        InvalidateCountCache();
+        InvalidateQueryCache();
         return Task.CompletedTask;
     }
 
     public Task<ModItemCatalogPage> QueryPageAsync(ModItemCatalogQuery query, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        using var connection = OpenConnection();
 
         var pageIndex = Math.Max(1, query.PageIndex);
         var pageSize = Math.Max(1, query.PageSize);
@@ -191,6 +198,26 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
             kindFilter ?? string.Empty,
             subTypeFilter ?? string.Empty,
             ftsQuery ?? string.Empty);
+        var pageCacheKey = BuildPageCacheKey(
+            rootPrefix,
+            kindFilter,
+            subTypeFilter,
+            ftsQuery,
+            query.SortBy,
+            pageIndex,
+            pageSize);
+
+        if (TryGetCachedPage(pageCacheKey, out var cachedPage))
+        {
+            _logger.LogDebug(
+                "modindex.querycache.hit pageKey={PageKey} pageIndex={PageIndex} pageSize={PageSize}",
+                pageCacheKey,
+                pageIndex,
+                pageSize);
+            return Task.FromResult(cachedPage);
+        }
+
+        using var connection = OpenConnection();
 
         int totalItems;
         IEnumerable<IndexedItemRow> rows;
@@ -282,14 +309,21 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
         }
 
         var totalPages = Math.Max(1, (int)Math.Ceiling(totalItems / (double)pageSize));
-        return Task.FromResult(new ModItemCatalogPage
+        var page = new ModItemCatalogPage
         {
             Items = rows.Select(ToListRow).ToArray(),
             TotalItems = totalItems,
             PageIndex = Math.Min(pageIndex, totalPages),
             PageSize = pageSize,
             TotalPages = totalPages
-        });
+        };
+        SetCachedPage(pageCacheKey, page);
+        _logger.LogDebug(
+            "modindex.querycache.miss pageKey={PageKey} pageIndex={PageIndex} pageSize={PageSize}",
+            pageCacheKey,
+            pageIndex,
+            pageSize);
+        return Task.FromResult(page);
     }
 
     public Task<ModItemInspectDetail?> TryGetInspectAsync(string itemKey, CancellationToken cancellationToken = default)
@@ -371,7 +405,7 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
         }
 
         transaction.Commit();
-        InvalidateCountCache();
+        InvalidateQueryCache();
         return Task.CompletedTask;
     }
 
@@ -868,62 +902,45 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
 
     private bool TryGetCachedCount(QueryCountCacheKey key, out int value)
     {
-        lock (_countCacheGate)
+        if (_queryCache is not null)
         {
-            if (!_countCache.TryGetValue(key, out value))
-            {
-                return false;
-            }
-
-            if (_countCacheNodes.TryGetValue(key, out var node))
-            {
-                _countCacheLru.Remove(node);
-                _countCacheLru.AddFirst(node);
-            }
-
-            return true;
+            return _queryCache.TryGet<int>(CountCacheDomain, BuildCountCacheKey(key), out value);
         }
+
+        value = default;
+        return false;
     }
 
     private void SetCachedCount(QueryCountCacheKey key, int value)
     {
-        lock (_countCacheGate)
-        {
-            if (_countCache.TryGetValue(key, out _))
-            {
-                _countCache[key] = value;
-                if (_countCacheNodes.TryGetValue(key, out var existingNode))
-                {
-                    _countCacheLru.Remove(existingNode);
-                    _countCacheLru.AddFirst(existingNode);
-                }
-
-                return;
-            }
-
-            if (_countCache.Count >= MaxCountCacheEntries &&
-                _countCacheLru.Last is LinkedListNode<QueryCountCacheKey> tail)
-            {
-                _countCache.Remove(tail.Value);
-                _countCacheNodes.Remove(tail.Value);
-                _countCacheLru.RemoveLast();
-            }
-
-            _countCache[key] = value;
-            var node = new LinkedListNode<QueryCountCacheKey>(key);
-            _countCacheLru.AddFirst(node);
-            _countCacheNodes[key] = node;
-        }
+        _queryCache?.Set(CountCacheDomain, BuildCountCacheKey(key), value);
     }
 
-    private void InvalidateCountCache()
+    private bool TryGetCachedPage(string key, out ModItemCatalogPage page)
     {
-        lock (_countCacheGate)
+        if (_queryCache is not null)
         {
-            _countCache.Clear();
-            _countCacheNodes.Clear();
-            _countCacheLru.Clear();
+            if (_queryCache.TryGet(PageCacheDomain, key, out ModItemCatalogPage? cachedPage) &&
+                cachedPage is not null)
+            {
+                page = cachedPage;
+                return true;
+            }
         }
+
+        page = default!;
+        return false;
+    }
+
+    private void SetCachedPage(string key, ModItemCatalogPage page)
+    {
+        _queryCache?.Set(PageCacheDomain, key, page);
+    }
+
+    private void InvalidateQueryCache()
+    {
+        _queryCache?.InvalidateDomain(CountCacheDomain);
+        _queryCache?.InvalidateDomain(PageCacheDomain);
     }
 
     private void LogQueryPlan(System.Data.IDbConnection connection, string sql, object parameters, string mode)
@@ -1386,6 +1403,36 @@ public sealed class SqliteModItemIndexStore : IModItemIndexStore
         string KindFilter,
         string SubTypeFilter,
         string SearchPattern);
+
+    private static string BuildCountCacheKey(QueryCountCacheKey key)
+    {
+        return string.Join(
+            "\u001F",
+            key.RootPrefix,
+            key.KindFilter,
+            key.SubTypeFilter,
+            key.SearchPattern);
+    }
+
+    private static string BuildPageCacheKey(
+        string? rootPrefix,
+        string? kindFilter,
+        string? subTypeFilter,
+        string? searchPattern,
+        string? sortBy,
+        int pageIndex,
+        int pageSize)
+    {
+        return string.Join(
+            "\u001F",
+            rootPrefix ?? string.Empty,
+            kindFilter ?? string.Empty,
+            subTypeFilter ?? string.Empty,
+            searchPattern ?? string.Empty,
+            (sortBy ?? string.Empty).Trim(),
+            pageIndex.ToString(),
+            pageSize.ToString());
+    }
 
     private readonly record struct TextureDedupKey(
         string ItemKey,
