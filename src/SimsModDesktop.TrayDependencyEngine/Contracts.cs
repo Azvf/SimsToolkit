@@ -29,6 +29,7 @@ public sealed record TrayDependencyExportRequest
     public required string ModsExportRoot { get; init; }
     public PackageIndexSnapshot? PreloadedSnapshot { get; init; }
     public int? CopyWorkerCount { get; init; }
+    public bool RequireGraphFastPath { get; init; } = true;
 }
 
 public sealed record TrayDependencyAnalysisRequest
@@ -69,6 +70,11 @@ public sealed record TrayDependencyExportDiagnostics
     public int SnapshotPackageCount { get; init; }
     public int DirectMatchCount { get; init; }
     public int ExpandedMatchCount { get; init; }
+    public string ExpansionMode { get; init; } = "legacy";
+    public int GraphVisitedNodes { get; init; }
+    public long GraphVisitedEdges { get; init; }
+    public int DbRoundTrips { get; init; }
+    public long ExpandElapsedMs { get; init; }
 }
 
 public sealed record TrayDependencyAnalysisResult
@@ -205,7 +211,18 @@ public sealed record PackageIndexSnapshot
     public required string ModsRootPath { get; init; }
     public long InventoryVersion { get; init; }
     public required IReadOnlyList<IndexedPackageFile> Packages { get; init; }
+    public PackageDependencyGraph? DependencyGraph { get; init; }
+    public bool IsDependencyGraphReady { get; init; }
+    public long GraphBuildVersion { get; init; }
     internal ITrayDependencyLookup Lookup { get; init; } = EmptyTrayDependencyLookup.Instance;
+}
+
+public sealed record PackageDependencyGraph
+{
+    public int PackageCount { get; init; }
+    public required long[] EdgeOffsets { get; init; }
+    public required int[] EdgeTargets { get; init; }
+    public required string[] PackagePathsById { get; init; }
 }
 
 internal interface ITrayDependencyLookup
@@ -293,7 +310,21 @@ public sealed record PackageIndexBuildRequest
     public IReadOnlyList<string> RemovedPackagePaths { get; init; } = Array.Empty<string>();
     public int? ParseWorkerCount { get; init; }
     public int? WriteBatchSize { get; init; }
+    public int? ParseResultChannelCapacity { get; init; }
+    public int? CommitBatchSize { get; init; }
+    public int? CommitIntervalMs { get; init; }
+    public bool? UseAdaptiveThrottleV2 { get; init; }
+    public bool? UseIncrementalOrphanCleanup { get; init; }
+    public bool ForceFullOrphanCleanup { get; init; }
     public bool? UseParallelPipeline { get; init; }
+    public bool BuildDependencyGraph { get; init; } = true;
+    public TrayPerformanceTier PerformanceTier { get; init; } = TrayPerformanceTier.High;
+}
+
+public enum TrayPerformanceTier
+{
+    Balanced,
+    High
 }
 
 public sealed record PackageIndexBuildFile

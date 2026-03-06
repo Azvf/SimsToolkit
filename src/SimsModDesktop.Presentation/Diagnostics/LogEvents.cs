@@ -25,6 +25,10 @@ internal static class LogEvents
     public const string TrayExportSnapshotBlocked = "trayexport.snapshot.blocked";
     public const string TrayExportRollbackStart = "trayexport.rollback.start";
     public const string TrayExportRollbackDone = "trayexport.rollback.done";
+    public const string TrayGraphBuildStart = "traygraph.build.start";
+    public const string TrayGraphBuildDone = "traygraph.build.done";
+    public const string TrayGraphBuildFail = "traygraph.build.fail";
+    public const string TrayExportExpandGraph = "trayexport.expand.graph";
 
     public const string TextureCompressWhatIf = "texture.compress.whatif";
     public const string TextureCompressDecodeStart = "texture.compress.decode.start";

@@ -146,6 +146,51 @@ public sealed class TrayDependencyEngineCoreTests
     }
 
     [Fact]
+    public async Task PackageIndexCache_CancelledBuild_PersistsCheckpointRowsForResume()
+    {
+        using var modsRoot = new TempDirectory("tray-cancel-mods");
+        using var cacheRoot = new TempDirectory("tray-cancel-cache");
+        for (var i = 0; i < 600; i++)
+        {
+            var packagePath = Path.Combine(modsRoot.Path, $"sample-{i:D4}.package");
+            WritePackage(packagePath, [new PackageSpec(SupportedResourceType, 0, FirstInstance + (ulong)i, [1, 2, 3, 4])]);
+        }
+
+        var cache = new PackageIndexCache(cacheRoot.Path);
+        var request = CreateBuildRequest(modsRoot.Path) with
+        {
+            WriteBatchSize = 8,
+            ParseWorkerCount = 4,
+            CommitBatchSize = 8,
+            CommitIntervalMs = 100
+        };
+        using var cancellation = new CancellationTokenSource();
+        _ = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await cache.BuildSnapshotAsync(
+                request,
+                new Progress<TrayDependencyExportProgress>(progress =>
+                {
+                    if (progress.Percent >= 70)
+                    {
+                        cancellation.Cancel();
+                    }
+                }),
+                cancellation.Token));
+
+        var dbPath = Path.Combine(cacheRoot.Path, "cache.db");
+        var checkpointRows = await CountAllCachePackageRowsAsync(dbPath);
+        Assert.True(checkpointRows > 0);
+
+        var resumed = await cache.BuildSnapshotAsync(request);
+        Assert.Equal(request.PackageFiles.Count, resumed.Packages.Count);
+        var reloaded = await cache.TryLoadSnapshotAsync(modsRoot.Path, request.InventoryVersion);
+        Assert.NotNull(reloaded);
+        Assert.Equal(request.PackageFiles.Count, reloaded!.Packages.Count);
+
+        SqliteConnection.ClearAllPools();
+    }
+
+    [Fact]
     public async Task PackageIndexCache_TryLoadSnapshot_MigratesAliasRootToCanonicalRoot()
     {
         using var modsRoot = new TempDirectory("tray-alias-mods");
@@ -218,7 +263,8 @@ public sealed class TrayDependencyEngineCoreTests
             ModsRootPath = modsRoot.Path,
             TrayExportRoot = Path.Combine(exportRoot.Path, "Session_0xsession", "Tray"),
             ModsExportRoot = Path.Combine(exportRoot.Path, "Session_0xsession", "Mods"),
-            PreloadedSnapshot = preloadedSnapshot
+            PreloadedSnapshot = preloadedSnapshot,
+            RequireGraphFastPath = false
         };
 
         var result = await service.ExportAsync(request);
@@ -327,11 +373,45 @@ public sealed class TrayDependencyEngineCoreTests
         await RemoveRootManifestRowsAsync(cacheDbPath, orphanRoot.Path);
         Assert.Equal(1L, await CountCachePackageRowsByPathAsync(cacheDbPath, orphanPath));
 
-        _ = await BuildSnapshotAsync(cache, activeRoot.Path);
+        _ = await cache.BuildSnapshotAsync(CreateBuildRequest(activeRoot.Path) with
+        {
+            ForceFullOrphanCleanup = true
+        });
 
         Assert.Equal(0L, await CountCachePackageRowsByPathAsync(cacheDbPath, orphanPath));
         Assert.Equal(1L, await CountCachePackageRowsByPathAsync(cacheDbPath, activePath));
         Assert.Equal(1L, await LoadCacheEntryRowCountAsync(cacheDbPath));
+    }
+
+    [Fact]
+    public async Task PackageIndexCache_IncrementalCleanup_SkipsGlobalSweep_WhenNoDelta()
+    {
+        using var orphanRoot = new TempDirectory("tray-incremental-orphan-root");
+        using var activeRoot = new TempDirectory("tray-incremental-active-root");
+        using var cacheRoot = new TempDirectory("tray-incremental-cache");
+        var orphanPath = Path.Combine(orphanRoot.Path, "orphan.package");
+        var activePath = Path.Combine(activeRoot.Path, "active.package");
+        WritePackage(orphanPath, [new PackageSpec(SupportedResourceType, 0, FirstInstance, [1, 2, 3, 4])]);
+        WritePackage(activePath, [new PackageSpec(SupportedResourceType, 0, SecondInstance, [5, 6, 7, 8])]);
+
+        var cache = new PackageIndexCache(cacheRoot.Path);
+        _ = await BuildSnapshotAsync(cache, orphanRoot.Path);
+        var cacheDbPath = Path.Combine(cacheRoot.Path, "cache.db");
+        await RemoveRootManifestRowsAsync(cacheDbPath, orphanRoot.Path);
+        Assert.Equal(1L, await CountCachePackageRowsByPathAsync(cacheDbPath, orphanPath));
+
+        _ = await BuildSnapshotAsync(cache, activeRoot.Path);
+
+        Assert.Equal(1L, await CountCachePackageRowsByPathAsync(cacheDbPath, orphanPath));
+        Assert.Equal(1L, await CountCachePackageRowsByPathAsync(cacheDbPath, activePath));
+
+        _ = await cache.BuildSnapshotAsync(CreateBuildRequest(activeRoot.Path) with
+        {
+            ForceFullOrphanCleanup = true
+        });
+
+        Assert.Equal(0L, await CountCachePackageRowsByPathAsync(cacheDbPath, orphanPath));
+        Assert.Equal(1L, await CountCachePackageRowsByPathAsync(cacheDbPath, activePath));
     }
 
     [Fact]
@@ -615,6 +695,15 @@ public sealed class TrayDependencyEngineCoreTests
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(1) FROM TrayCachePackage WHERE PackagePath = @PackagePath;";
         command.Parameters.AddWithValue("@PackagePath", Path.GetFullPath(packagePath));
+        return Convert.ToInt64(await command.ExecuteScalarAsync());
+    }
+
+    private static async Task<long> CountAllCachePackageRowsAsync(string cacheDbPath)
+    {
+        await using var connection = new SqliteConnection($"Data Source={cacheDbPath};Mode=ReadWrite;Pooling=False;");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(1) FROM TrayCachePackage;";
         return Convert.ToInt64(await command.ExecuteScalarAsync());
     }
 

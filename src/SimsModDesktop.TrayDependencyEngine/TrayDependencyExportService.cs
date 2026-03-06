@@ -9,6 +9,7 @@ namespace SimsModDesktop.TrayDependencyEngine;
 
 public sealed class TrayDependencyExportService : ITrayDependencyExportService
 {
+    private static readonly bool EnableGraphLegacyDiffValidation = IsGraphLegacyDiffValidationEnabled();
     private readonly IPackageIndexCache _packageIndexCache;
     private readonly ILogger<TrayDependencyExportService> _logger;
     private readonly IPathIdentityResolver _pathIdentityResolver;
@@ -53,6 +54,11 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
             var snapshotPackageCount = 0;
             var directMatchCount = 0;
             var expandedMatchCount = 0;
+            var expansionMode = "legacy";
+            var graphVisitedNodes = 0;
+            var graphVisitedEdges = 0L;
+            var dbRoundTrips = 0;
+            var expandElapsedMs = 0L;
             var resolvedModsRoot = ResolveDirectory(request.ModsRootPath);
             _logger.LogInformation(
                 "{Event} status={Status} trayItemKey={TrayItemKey} title={ItemTitle} sourceFiles={SourceFileCount} modsPath={ModsPath} preloadedSnapshot={HasPreloadedSnapshot}",
@@ -193,6 +199,7 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
                 45);
 
             using var lookupSession = snapshot.Lookup.OpenSession();
+            var sqliteLookupSession = lookupSession as SqliteTrayDependencyLookupSession;
 
             var directMatch = _directMatchEngine.Match(searchKeys, lookupSession);
             issues.AddRange(directMatch.Issues);
@@ -218,12 +225,105 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
                 TrayDependencyExportStage.ExpandingDependencies,
                 65);
 
-            var expansion = _dependencyExpandEngine.Expand(
-                directMatch,
-                lookupSession,
-                cancellationToken);
-            issues.AddRange(expansion.Issues);
-            expandedMatchCount = expansion.ExpandedMatches.Count;
+            var directPaths = directMatch.DirectMatches
+                .Select(match => match.FilePath)
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var expandedPaths = Array.Empty<string>();
+            DependencyExpandResult? precomputedLegacyExpansion = null;
+            var expandTiming = Stopwatch.StartNew();
+            var dbRoundTripsBeforeExpand = sqliteLookupSession?.EstimatedDbRoundTrips ?? 0;
+            if (request.RequireGraphFastPath &&
+                snapshot.IsDependencyGraphReady &&
+                snapshot.DependencyGraph is not null)
+            {
+                var graphTraversal = PackageDependencyGraphTraversal.Traverse(
+                    snapshot.DependencyGraph,
+                    directMatch.DirectMatches,
+                    cancellationToken);
+                if (graphTraversal.HadSeedMatch)
+                {
+                    expansionMode = "graph";
+                    graphVisitedNodes = graphTraversal.VisitedNodes;
+                    graphVisitedEdges = graphTraversal.VisitedEdges;
+                    expandedPaths = graphTraversal.FilePaths
+                        .Where(path => !string.IsNullOrWhiteSpace(path))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToArray();
+                    expandedMatchCount = expandedPaths.Count(path =>
+                        !directPaths.Contains(path, StringComparer.OrdinalIgnoreCase));
+                    _logger.LogInformation(
+                        "trayexport.expand.graph trayItemKey={TrayItemKey} seeds={SeedCount} visitedNodes={VisitedNodes} visitedEdges={VisitedEdges} resolvedCount={ResolvedCount}",
+                        request.TrayItemKey,
+                        directPaths.Length,
+                        graphVisitedNodes,
+                        graphVisitedEdges,
+                        expandedPaths.Length);
+                    if (EnableGraphLegacyDiffValidation)
+                    {
+                        precomputedLegacyExpansion = _dependencyExpandEngine.Expand(
+                            directMatch,
+                            lookupSession,
+                            cancellationToken);
+                        var legacyPaths = precomputedLegacyExpansion.ExpandedMatches
+                            .Select(match => match.FilePath)
+                            .Where(path => !string.IsNullOrWhiteSpace(path))
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .ToArray();
+                        if (!SetEqualsIgnoreCase(expandedPaths, legacyPaths))
+                        {
+                            expansionMode = "legacy";
+                            graphVisitedNodes = 0;
+                            graphVisitedEdges = 0;
+                            expandedPaths = legacyPaths;
+                            expandedMatchCount = precomputedLegacyExpansion.ExpandedMatches.Count;
+                            _logger.LogWarning(
+                                "trayexport.expand.graph.diff trayItemKey={TrayItemKey} graphCount={GraphCount} legacyCount={LegacyCount}",
+                                request.TrayItemKey,
+                                graphTraversal.FilePaths.Count,
+                                legacyPaths.Length);
+                        }
+                        else
+                        {
+                            _logger.LogInformation(
+                                "trayexport.expand.graph.diffmatch trayItemKey={TrayItemKey} count={ResolvedCount}",
+                                request.TrayItemKey,
+                                legacyPaths.Length);
+                        }
+                    }
+                }
+            }
+
+            if (!string.Equals(expansionMode, "graph", StringComparison.Ordinal))
+            {
+                if (request.RequireGraphFastPath &&
+                    (snapshot.DependencyGraph is null || !snapshot.IsDependencyGraphReady))
+                {
+                    _logger.LogWarning(
+                        "trayexport.expand.graph.unavailable trayItemKey={TrayItemKey} requireGraphFastPath={RequireGraphFastPath} graphReady={GraphReady}",
+                        request.TrayItemKey,
+                        request.RequireGraphFastPath,
+                        snapshot.IsDependencyGraphReady);
+                }
+
+                var expansion = precomputedLegacyExpansion ?? _dependencyExpandEngine.Expand(
+                    directMatch,
+                    lookupSession,
+                    cancellationToken);
+                issues.AddRange(expansion.Issues);
+                expandedMatchCount = expansion.ExpandedMatches.Count;
+                expandedPaths = expansion.ExpandedMatches
+                    .Select(match => match.FilePath)
+                    .Where(path => !string.IsNullOrWhiteSpace(path))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
+
+            expandElapsedMs = expandTiming.ElapsedMilliseconds;
+            dbRoundTrips = sqliteLookupSession is null
+                ? 0
+                : Math.Max(0, sqliteLookupSession.EstimatedDbRoundTrips - dbRoundTripsBeforeExpand);
             if (directMatchCount == 0 && expandedMatchCount == 0)
             {
                 _logger.LogWarning(
@@ -235,10 +335,8 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
                     snapshotPackageCount);
             }
 
-            var filePaths = directMatch.DirectMatches
-                .Concat(expansion.ExpandedMatches)
-                .Select(match => match.FilePath)
-                .Where(path => !string.IsNullOrWhiteSpace(path))
+            var filePaths = directPaths
+                .Concat(expandedPaths)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
@@ -276,7 +374,12 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
                     candidateIdCount,
                     snapshotPackageCount,
                     directMatchCount,
-                    expandedMatchCount));
+                    expandedMatchCount,
+                    expansionMode,
+                    graphVisitedNodes,
+                    graphVisitedEdges,
+                    dbRoundTrips,
+                    expandElapsedMs));
             _logger.LogInformation(
                 "{Event} status={Status} trayItemKey={TrayItemKey} success={Success} copiedTrayFiles={CopiedTrayFiles} copiedModFiles={CopiedModFiles} warnings={Warnings} failures={Failures} elapsedMs={ElapsedMs}",
                 result.Success ? "trayexport.item.done" : "trayexport.item.fail",
@@ -290,6 +393,30 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
                 timing.ElapsedMilliseconds);
             return result;
         }, cancellationToken);
+    }
+
+    private static bool IsGraphLegacyDiffValidationEnabled()
+    {
+        var value = Environment.GetEnvironmentVariable("SMD_TRAY_GRAPH_DIFF_VALIDATE");
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool SetEqualsIgnoreCase(IReadOnlyList<string> left, IReadOnlyList<string> right)
+    {
+        if (left.Count == 0 && right.Count == 0)
+        {
+            return true;
+        }
+
+        var leftSet = new HashSet<string>(left.Where(path => !string.IsNullOrWhiteSpace(path)), StringComparer.OrdinalIgnoreCase);
+        var rightSet = new HashSet<string>(right.Where(path => !string.IsNullOrWhiteSpace(path)), StringComparer.OrdinalIgnoreCase);
+        return leftSet.SetEquals(rightSet);
     }
 
     private static bool TryCopyTrayFiles(
@@ -368,7 +495,12 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
         int candidateIdCount,
         int snapshotPackageCount,
         int directMatchCount,
-        int expandedMatchCount)
+        int expandedMatchCount,
+        string expansionMode = "legacy",
+        int graphVisitedNodes = 0,
+        long graphVisitedEdges = 0,
+        int dbRoundTrips = 0,
+        long expandElapsedMs = 0)
     {
         return new TrayDependencyExportDiagnostics
         {
@@ -379,7 +511,12 @@ public sealed class TrayDependencyExportService : ITrayDependencyExportService
             CandidateIdCount = candidateIdCount,
             SnapshotPackageCount = snapshotPackageCount,
             DirectMatchCount = directMatchCount,
-            ExpandedMatchCount = expandedMatchCount
+            ExpandedMatchCount = expandedMatchCount,
+            ExpansionMode = expansionMode,
+            GraphVisitedNodes = graphVisitedNodes,
+            GraphVisitedEdges = graphVisitedEdges,
+            DbRoundTrips = dbRoundTrips,
+            ExpandElapsedMs = expandElapsedMs
         };
     }
 
@@ -1310,6 +1447,10 @@ internal sealed class DependencyExpandEngine
         var pooledReadBytes = 0L;
         var sessionsOpened = 0;
         var sessionReuseHits = 0;
+        var candidates = new List<ExpansionCandidate>(directMatch.DirectMatches.Count);
+        var globalExactKeys = new HashSet<TrayResourceKey>();
+        var globalTypedDependencies = new List<TypedInstanceDependency>();
+        var globalFallbackIds = new HashSet<ulong>();
 
         try
         {
@@ -1362,6 +1503,7 @@ internal sealed class DependencyExpandEngine
                     TryResolveExact(lookup, exactBatch: null, siblingKey, out var siblingObjectDefinition))
                 {
                     Register(results, siblingObjectDefinition with { Parent = match });
+                    extraction.ExactKeys.Add(siblingKey);
 
                     pooledReadAttempts++;
                     if (TryReadPayload(siblingObjectDefinition, sessions, siblingPayload, out var siblingBytes, out var siblingOpenedSession, out _))
@@ -1384,66 +1526,71 @@ internal sealed class DependencyExpandEngine
                 {
                     BinaryReferenceScanner.Scan(payload.WrittenSpan, extraction.FallbackIds, extraction.ExactKeys);
                 }
+                var candidate = new ExpansionCandidate(
+                    match,
+                    extraction.ExactKeys.ToArray(),
+                    extraction.TypedInstances.ToArray(),
+                    extraction.FallbackIds.ToArray());
+                candidates.Add(candidate);
+                globalExactKeys.UnionWith(candidate.ExactKeys);
+                globalTypedDependencies.AddRange(candidate.TypedInstances);
+                globalFallbackIds.UnionWith(candidate.FallbackIds);
+            }
 
-                IReadOnlyDictionary<TrayResourceKey, ResolvedResourceRef[]>? exactBatch = null;
-                IReadOnlyDictionary<TypeInstanceKey, ResolvedResourceRef[]>? typeBatch = null;
-                IReadOnlyDictionary<ulong, bool>? supportedBatch = null;
-                if (batchLookup is not null)
+            IReadOnlyDictionary<TrayResourceKey, ResolvedResourceRef[]>? exactBatch = null;
+            IReadOnlyDictionary<TypeInstanceKey, ResolvedResourceRef[]>? typeBatch = null;
+            IReadOnlyDictionary<ulong, bool>? supportedBatch = null;
+            if (batchLookup is not null)
+            {
+                if (globalExactKeys.Count > 0)
                 {
-                    var exactKeys = extraction.ExactKeys
-                        .Distinct()
-                        .ToArray();
-                    if (exactKeys.Length > 0)
-                    {
-                        exactBatch = batchLookup.QueryExactBatch(exactKeys);
-                    }
+                    exactBatch = batchLookup.QueryExactBatch(globalExactKeys.ToArray());
+                }
 
-                    var fallbackInstances = extraction.FallbackIds
-                        .Distinct()
-                        .ToArray();
-                    if (fallbackInstances.Length > 0)
-                    {
-                        supportedBatch = batchLookup.QuerySupportedInstanceBatch(fallbackInstances);
-                    }
+                if (globalFallbackIds.Count > 0)
+                {
+                    supportedBatch = batchLookup.QuerySupportedInstanceBatch(globalFallbackIds.ToArray());
+                }
 
-                    var typedKeys = extraction.TypedInstances
-                        .SelectMany(typed => typed.AllowedTypes.Select(type => new TypeInstanceKey(type, typed.Instance)))
-                        .Concat(
-                            extraction.FallbackIds
-                                .Distinct()
-                                .SelectMany(instance => KnownResourceTypes.Supported.Select(type => new TypeInstanceKey(type, instance))))
-                        .Distinct()
-                        .ToArray();
-                    if (typedKeys.Length > 0)
+                var typedKeys = globalTypedDependencies
+                    .SelectMany(typed => typed.AllowedTypes.Select(type => new TypeInstanceKey(type, typed.Instance)))
+                    .Concat(globalFallbackIds.SelectMany(instance =>
+                        KnownResourceTypes.Supported.Select(type => new TypeInstanceKey(type, instance))))
+                    .Distinct()
+                    .ToArray();
+                if (typedKeys.Length > 0)
+                {
+                    typeBatch = batchLookup.QueryTypeInstanceBatch(typedKeys);
+                }
+            }
+
+            foreach (var candidate in candidates)
+            {
+                for (var index = 0; index < candidate.ExactKeys.Length; index++)
+                {
+                    if (TryResolveExact(lookup, exactBatch, candidate.ExactKeys[index], out var resolved))
                     {
-                        typeBatch = batchLookup.QueryTypeInstanceBatch(typedKeys);
+                        Register(results, resolved with { Parent = candidate.Parent });
                     }
                 }
 
-                foreach (var exactKey in extraction.ExactKeys)
+                for (var index = 0; index < candidate.TypedInstances.Length; index++)
                 {
-                    if (TryResolveExact(lookup, exactBatch, exactKey, out var resolved))
-                    {
-                        Register(results, resolved with { Parent = match });
-                    }
-                }
-
-                foreach (var typedInstance in extraction.TypedInstances)
-                {
+                    var typedInstance = candidate.TypedInstances[index];
                     if (TryResolveByTypes(lookup, typeBatch, typedInstance.Instance, typedInstance.AllowedTypes, out var resolved))
                     {
-                        Register(results, resolved with { Parent = match });
+                        Register(results, resolved with { Parent = candidate.Parent });
                     }
                 }
 
-                foreach (var id in extraction.FallbackIds)
+                for (var index = 0; index < candidate.FallbackIds.Length; index++)
                 {
-                    if (!TryResolveAny(lookup, typeBatch, supportedBatch, id, out var resolved))
+                    if (!TryResolveAny(lookup, typeBatch, supportedBatch, candidate.FallbackIds[index], out var resolved))
                     {
                         continue;
                     }
 
-                    Register(results, resolved with { Parent = match });
+                    Register(results, resolved with { Parent = candidate.Parent });
                 }
             }
         }
@@ -1468,6 +1615,12 @@ internal sealed class DependencyExpandEngine
 
         return new DependencyExpandResult(results.Values.OrderBy(item => item.FilePath, StringComparer.OrdinalIgnoreCase).ToArray(), issues.ToArray());
     }
+
+    private sealed record ExpansionCandidate(
+        ResolvedResourceRef Parent,
+        TrayResourceKey[] ExactKeys,
+        TypedInstanceDependency[] TypedInstances,
+        ulong[] FallbackIds);
 
     private static bool TryResolveExact(
         ITrayDependencyLookupSession lookup,

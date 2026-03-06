@@ -4,7 +4,8 @@ namespace SimsModDesktop.TrayDependencyEngine;
 
 internal sealed class ParallelModFileCopier
 {
-    private const int GlobalMaxConcurrentCopies = 8;
+    private const int GlobalMaxConcurrentCopies = 12;
+    private const int CopyBufferSizeBytes = 8 * 1024 * 1024;
     private static readonly SemaphoreSlim GlobalCopyGate = new(GlobalMaxConcurrentCopies, GlobalMaxConcurrentCopies);
 
     public async Task<ParallelModFileCopyResult> CopyAsync(
@@ -31,7 +32,7 @@ internal sealed class ParallelModFileCopier
                 await GlobalCopyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    File.Copy(item.SourcePath, item.TargetPath, overwrite: false);
+                    await CopyFileAsync(item.SourcePath, item.TargetPath, cancellationToken).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
@@ -85,7 +86,7 @@ internal sealed class ParallelModFileCopier
                             break;
                         }
 
-                        File.Copy(item.SourcePath, item.TargetPath, overwrite: false);
+                        await CopyFileAsync(item.SourcePath, item.TargetPath, cancellationToken).ConfigureAwait(false);
                         var copied = Interlocked.Increment(ref copiedFileCount);
                         progress?.Report(new TrayDependencyExportProgress
                         {
@@ -119,6 +120,25 @@ internal sealed class ParallelModFileCopier
         cancellationToken.ThrowIfCancellationRequested();
 
         return new ParallelModFileCopyResult(copiedFileCount, failureIssue);
+    }
+
+    private static async Task CopyFileAsync(string sourcePath, string targetPath, CancellationToken cancellationToken)
+    {
+        await using var source = new FileStream(
+            sourcePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            CopyBufferSizeBytes,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await using var target = new FileStream(
+            targetPath,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            CopyBufferSizeBytes,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await source.CopyToAsync(target, CopyBufferSizeBytes, cancellationToken).ConfigureAwait(false);
     }
 }
 

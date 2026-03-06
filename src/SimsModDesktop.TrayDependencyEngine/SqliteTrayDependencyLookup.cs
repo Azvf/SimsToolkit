@@ -1,5 +1,6 @@
 ﻿using System.Text;
 using Dapper;
+using System.Threading;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using SimsModDesktop.PackageCore;
@@ -30,25 +31,33 @@ internal sealed class SqliteTrayDependencyLookup : ITrayDependencyLookup
 internal sealed class SqliteTrayDependencyLookupSession : IBatchTrayDependencyLookupSession
 {
     private static readonly uint[] SupportedTypes = KnownResourceTypes.Supported;
-    private const int BatchInsertChunkSize = 200;
+    private const int BatchInsertChunkSize = 1000;
 
     private readonly SqliteConnection _connection;
     private readonly string _modsRootPath;
     private readonly long _inventoryVersion;
     private readonly ILogger _logger;
+    private readonly bool _ownsConnection;
     private readonly string _sessionId = Guid.NewGuid().ToString("N");
-    private readonly LruCache<TrayResourceKey, ResolvedResourceRef[]> _exactCache = new(4096);
-    private readonly LruCache<TypeInstanceKey, ResolvedResourceRef[]> _typeInstanceCache = new(8192);
-    private readonly LruCache<ulong, bool> _supportedCache = new(8192);
+    private readonly LruCache<TrayResourceKey, ResolvedResourceRef[]> _exactCache = new(16384);
+    private readonly LruCache<TypeInstanceKey, ResolvedResourceRef[]> _typeInstanceCache = new(65536);
+    private readonly LruCache<ulong, bool> _supportedCache = new(65536);
+    private int _estimatedDbRoundTrips;
     private bool _batchModeDisabled;
     private bool _batchModeDisabledLogged;
 
-    public SqliteTrayDependencyLookupSession(SqliteConnection connection, string modsRootPath, long inventoryVersion, ILogger logger)
+    public SqliteTrayDependencyLookupSession(
+        SqliteConnection connection,
+        string modsRootPath,
+        long inventoryVersion,
+        ILogger logger,
+        bool ownsConnection = true)
     {
         _connection = connection;
         _modsRootPath = modsRootPath;
         _inventoryVersion = inventoryVersion;
         _logger = logger;
+        _ownsConnection = ownsConnection;
     }
 
     public bool TryGetExact(TrayResourceKey key, out ResolvedResourceRef[] matches)
@@ -103,10 +112,13 @@ internal sealed class SqliteTrayDependencyLookupSession : IBatchTrayDependencyLo
                 Instance = instance,
                 SupportedTypes
             }) > 0;
+        AddRoundTrips(1);
 
         _supportedCache.Set(instance, found);
         return found;
     }
+
+    public int EstimatedDbRoundTrips => Volatile.Read(ref _estimatedDbRoundTrips);
 
     public IReadOnlyDictionary<TrayResourceKey, ResolvedResourceRef[]> QueryExactBatch(IReadOnlyCollection<TrayResourceKey> keys)
     {
@@ -355,7 +367,10 @@ internal sealed class SqliteTrayDependencyLookupSession : IBatchTrayDependencyLo
 
     public void Dispose()
     {
-        _connection.Dispose();
+        if (_ownsConnection)
+        {
+            _connection.Dispose();
+        }
     }
 
     private void DisableBatchMode(string method, int keyCount, Exception ex)
@@ -422,7 +437,7 @@ internal sealed class SqliteTrayDependencyLookupSession : IBatchTrayDependencyLo
 
     private ResolvedResourceRef[] QueryExact(TrayResourceKey key)
     {
-        return _connection.Query<LookupRow>(
+        var rows = _connection.Query<LookupRow>(
                 """
                 SELECT
                     manifest.PackagePath AS FilePath,
@@ -457,11 +472,13 @@ internal sealed class SqliteTrayDependencyLookupSession : IBatchTrayDependencyLo
                 })
             .Select(ToResolved)
             .ToArray();
+        AddRoundTrips(1);
+        return rows;
     }
 
     private ResolvedResourceRef[] QueryTypeInstance(TypeInstanceKey key)
     {
-        return _connection.Query<LookupRow>(
+        var rows = _connection.Query<LookupRow>(
                 """
                 SELECT
                     manifest.PackagePath AS FilePath,
@@ -494,6 +511,8 @@ internal sealed class SqliteTrayDependencyLookupSession : IBatchTrayDependencyLo
                 })
             .Select(ToResolved)
             .ToArray();
+        AddRoundTrips(1);
+        return rows;
     }
 
     private BatchResourceLookupQueryResult<TrayResourceKey> QueryExactBatchCore(IReadOnlyList<TrayResourceKey> keys)
@@ -581,6 +600,7 @@ internal sealed class SqliteTrayDependencyLookupSession : IBatchTrayDependencyLo
             .ToDictionary(
                 group => group.Key,
                 group => group.Select(ToResolved).ToArray());
+        AddRoundTrips(statementCount);
         return new BatchResourceLookupQueryResult<TrayResourceKey>(map, statementCount, insertChunkCount);
     }
 
@@ -665,6 +685,7 @@ internal sealed class SqliteTrayDependencyLookupSession : IBatchTrayDependencyLo
             .ToDictionary(
                 group => group.Key,
                 group => group.Select(ToResolved).ToArray());
+        AddRoundTrips(statementCount);
         return new BatchResourceLookupQueryResult<TypeInstanceKey>(map, statementCount, insertChunkCount);
     }
 
@@ -680,7 +701,7 @@ internal sealed class SqliteTrayDependencyLookupSession : IBatchTrayDependencyLo
             );
             """);
         statementCount++;
-        foreach (var chunk in ChunkBatch(instances, 400))
+        foreach (var chunk in ChunkBatch(instances, BatchInsertChunkSize))
         {
             var sql = new StringBuilder("INSERT INTO TempLookupSupportedInstance ([Instance]) VALUES ");
             var parameters = new DynamicParameters();
@@ -729,7 +750,18 @@ internal sealed class SqliteTrayDependencyLookupSession : IBatchTrayDependencyLo
         _connection.Execute("DROP TABLE IF EXISTS TempLookupSupportedInstance;");
         statementCount++;
         var map = rows.ToDictionary(row => row.Instance, row => row.HasMatch != 0);
+        AddRoundTrips(statementCount);
         return new BatchSupportedLookupQueryResult(map, statementCount, insertChunkCount);
+    }
+
+    private void AddRoundTrips(int count)
+    {
+        if (count <= 0)
+        {
+            return;
+        }
+
+        Interlocked.Add(ref _estimatedDbRoundTrips, count);
     }
 
     private static ResolvedResourceRef ToResolved(LookupRow row)
